@@ -28,9 +28,10 @@ still true, a notice that under-includes is not.
 
 Contents
   1. Bundled agent engine -- OpenCode and what the engine itself embeds
-  2. Rust crates linked into the shipped executable (429 crates)
-  3. npm packages in the shipped frontend (286 packages)
-  4. Licence texts (192 distinct Rust licence texts plus the npm texts)
+  2. Bundled fonts -- the woff2 files the app renders its own typography with
+  3. Rust crates linked into the shipped executable (429 crates)
+  4. npm packages in the shipped frontend (286 packages)
+  5. Licence texts (192 distinct Rust licence texts plus the npm texts)
 
 ------------------------------------------------------------------------------------------------
 1. BUNDLED AGENT ENGINE
@@ -189,13 +190,65 @@ for what this leaves open.
     github.com/ziglang/zig-bootstrap
 
 ------------------------------------------------------------------------------------------------
-2. RUST CRATES LINKED INTO THE SHIPPED EXECUTABLE (429 crates)
+2. BUNDLED FONTS
+------------------------------------------------------------------------------------------------
+
+The woff2 files in `apps/desktop/public/fonts/`, copied verbatim into `dist/fonts/` by the
+bundler and declared by `apps/desktop/src/styles/fonts.css`. They are not dependencies of the
+frontend in the sense section 4 means: nothing imports them, so the production closure cannot
+reach them and they are listed here instead. Total 5,201,044 bytes (5.0 MB).
+
+Eight families are the published Fontsource 5.3.0 artifacts, byte for byte, unmodified:
+https://www.npmjs.com/package/@fontsource-variable/<id>  (Fontsource, the npm distribution of
+the upstream projects). The two Chinese families are NOT published at this size by anyone and
+were subset here; their sources and the exact commands are below the table.
+
+FILE                                    BYTES      SHA-256
+--------------------------------------- ---------- ----------------------------------------------------------------
+cascadia-code-latin-var-italic.woff2         54508 9f681a26409a06e391870b55bb8ef35202a94e3352204d1ce1667781c25e3e25
+cascadia-code-latin-var-normal.woff2         48600 a3018c0c6b4ed21b123349cc6c8d4d35d32cb11f91fe5e960aa4886eb27a9209
+ibm-plex-sans-latin-var-italic.woff2         50184 4363757d2695c7633f98472855849f7c30528eba869d7968ee35b58c87cf14c1
+ibm-plex-sans-latin-var-normal.woff2         45712 e2291e842cf5af167122a22881a740c7f2dda7716f1e8cd76680264f4a859470
+inter-latin-var-italic.woff2                 51832 7291b5970da2237441273c03b424a504b70b18f09791473fab99687dcc314720
+inter-latin-var-normal.woff2                 48256 3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62
+jetbrains-mono-latin-var-italic.woff2        42964 a8afa085e9ca5e53434e2ee918ba6b65c7dd4dda56509976b36591478c99d62e
+jetbrains-mono-latin-var-normal.woff2        40404 18be452724bfdc236c074ca94a249a7f41a86752c7d04ab258ce9ed5651f6a7e
+lilex-latin-var-italic.woff2                 44148 e50f21c76003a0dd65abafbe609487e44336ed2cb225bb8d08c8af14b81dc7c6
+lilex-latin-var-normal.woff2                 39600 889525645b0409723b5c1e62ac891e238e3878958d5e2445a235b92d4136d101
+literata-latin-var-italic.woff2              53728 ab198d6616c7cc966f26a4a5b28a3977dc47439640f09d9b3361226bd465c404
+literata-latin-var-normal.woff2              52496 9adbeac5b167fe5ad6c49d9e29aa0c76e2f1bb3b46bf4ebf12a9eca7d3525384
+noto-sans-sc-gb2312-var.woff2              1899344 2938fdc5c89b2333c344fc87cadd19a9f5f9965933477663d4ad6cd1a26d941f
+noto-serif-sc-gb2312-var.woff2             2546040 c7770c612d134a5e963e874f630e15ef33db30cd03723b17a6cb2de414c64e0e
+nunito-latin-var-italic.woff2                41760 6cfcc3786d5ba3b5c3a41797f95272e57f4290ccbd283a4bfd0033a3d857e64c
+nunito-latin-var-normal.woff2                39128 ba344451eab25b217a165363b1982048a5e5830a0daf36577973955a04cac793
+source-serif-4-latin-var-italic.woff2        51516 663e7ef3037a56dce81dfc33f68c1e6445995ffd8887991b3c0b68a7689c9da5
+source-serif-4-latin-var-normal.woff2        50824 c1df4596be5029233ed2afbb8b2f6ea20784b3fb1aa5d6b5c6519ccd85eb3dfb
+
+Sources of the two subsetted files, both read from the upstream Google Fonts repository on
+2026-09-17 and neither modified before subsetting:
+
+  NotoSansSC[wght].ttf   https://github.com/google/fonts/raw/main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf
+  NotoSerifSC[wght].ttf  https://github.com/google/fonts/raw/main/ofl/notoserifsc/NotoSerifSC%5Bwght%5D.ttf
+
+  # `text-file=gb2312.txt` is the repertoire of the GB2312 codec: 6,763 hanzi plus the 682
+  # symbol, kana, Greek, Cyrillic and full-width characters the standard encodes.
+  pyftsubset "<face>[wght].ttf" --text-file=gb2312.txt \
+    --layout-features='kern,liga,locl,ccmp' \
+    --drop-tables+=DSIG,BASE,STAT,VORG,vhea,vmtx --output-file=<face>.ttf
+  woff2_compress <face>.ttf
+
+pyftsubset writes woff2 through the python `brotli` module, which is not installed here, so
+the flavour is applied by the system `woff2_compress` — the same encoder Fontsource uses. The
+`wght` variable axis survives both steps; `fonts.css` declares each family's real axis range.
+
+------------------------------------------------------------------------------------------------
+3. RUST CRATES LINKED INTO THE SHIPPED EXECUTABLE (429 crates)
 ------------------------------------------------------------------------------------------------
 
 Every crate the release dependency graph reaches through normal (not build, not dev) edges, for
 x86_64-unknown-linux-gnu. Build-script-only crates such as tauri-build, cc and pkg-config are
 excluded because their code is not in the binary. Full licence text for each identifier is in
-section 4.
+section 5.
 
 CRATE                                    VERSION        LICENCE
 ---------------------------------------- -------------- ----------------------------------------
@@ -630,11 +683,11 @@ zvariant_derive                          5.15.0         MIT
 zvariant_utils                           4.2.0          MIT
 
 ------------------------------------------------------------------------------------------------
-3. npm PACKAGES IN THE SHIPPED FRONTEND (286 packages)
+4. npm PACKAGES IN THE SHIPPED FRONTEND (286 packages)
 ------------------------------------------------------------------------------------------------
 
 The production dependency closure of the frontend bundle. Licence identifiers are read from each
-package's own package.json; the texts in section 4 are the licence files those packages ship.
+package's own package.json; the texts in section 5 are the licence files those packages ship.
 
 PACKAGE                                              VERSION        LICENCE
 ---------------------------------------------------- -------------- ------------------------------
@@ -935,16 +988,16 @@ zwitch                                               2.0.4          MIT
     Public License (AGPL) ... either version 3 of the AGPL, or (at your option) any later version".
     Its package.json declares the SPDX expression "CPAL-1.0 OR AGPL-1.0", which names AGPL version 1
     and disagrees with the LICENSE file it ships; the LICENSE file is the grant and is reproduced
-    below. Full CPAL-1.0 and AGPL-3.0 texts follow in section 4. Whoever distributes a NekoWite
+    below. Full CPAL-1.0 and AGPL-3.0 texts follow in section 5. Whoever distributes a NekoWite
     artifact must make and record this election first.
 
 ------------------------------------------------------------------------------------------------
-4. LICENCE TEXTS
+5. LICENCE TEXTS
 ------------------------------------------------------------------------------------------------
 
-Section 4.1 lists the licence texts of the Rust crates in section 2, grouped so that an
-identical text appears once with the crates that use it. Section 4.2 does the same for the npm
-packages in section 3. Section 4.3 holds the canonical texts of licences that some package
+Section 5.1 lists the licence texts of the Rust crates in section 3, grouped so that an
+identical text appears once with the crates that use it. Section 5.2 does the same for the npm
+packages in section 4. Section 5.3 holds the canonical texts of licences that some package
 declares but ships no copy of, and of the two copyleft licences citeproc is offered under.
 
 ................................................................................................

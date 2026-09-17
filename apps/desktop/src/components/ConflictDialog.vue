@@ -146,7 +146,13 @@ function later(): void {
   color: var(--app-text);
 }
 .conflict-path {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* The user's own monospace choice, not a stack of macOS names: this file path
+     is the one string in the dialog a reader compares character by character,
+     and "Monospace font" in Appearance is where they said what it should be
+     drawn in. `SFMono-Regular` and `Menlo` are macOS names and could never
+     resolve here, so the old value was that generic keyword plus two dead
+     entries — and no CJK at all, in a path that can contain it. */
+  font-family: var(--app-mono-font);
   background: var(--app-panel);
   padding: 1px 4px;
   border-radius: 3px;

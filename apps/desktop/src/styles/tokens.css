@@ -13,7 +13,17 @@
    `palettes.css` loads AFTER this file (main.ts is the order, and the test's
    cascade simulation mirrors it): the dark block repeats the radius ladder
    verbatim, and a re-point has to keep coming after the declaration it repeats.
-   Keep the two orders in step — see the file list in `tokens.test.ts`. */
+   Keep the two orders in step — see the file list in `tokens.test.ts`.
+
+   `fonts.css` is imported rather than named in `main.ts`, and that is a
+   requirement rather than a convenience: the pet window's page
+   (`app/desktop-pet-entry.ts`) loads THIS file and `palettes.css` and nothing
+   else, so it is the only place the `@font-face` rules can live and still reach
+   a window that draws Chinese text in a bubble. A CSS `@import` is inline and
+   not a module, so importing it here does not widen that page's module graph —
+   which `desktop-pet-entry.test.ts` pins as a contract. */
+
+@import './fonts.css';
 
 :root {
   /* Motion ladder. Pick the step by how far the thing travels and how much of
@@ -166,8 +176,17 @@
   --app-toolbar-height: 42px;
   --app-statusbar-height: 35px;
   --app-content-width: 760px;
-  --app-font: Inter, "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --app-mono-font: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Menlo, Monaco, Consolas, "PingFang SC", "Microsoft YaHei", ui-monospace, monospace;
+  /* The value a window has BEFORE `AppShell` mounts and re-points all three at
+     the user's choice — and the only value the pet's window ever gets, since it
+     mounts the pet and not the shell. It is therefore not a second opinion about
+     typography: it is `UI_FONTS.system` and `MONO_FONTS.mono` written out in
+     CSS, and `styles/fonts.test.ts` fails when the two drift apart. The macOS
+     and Windows names that used to be here (`"PingFang SC"`, `"Microsoft
+     YaHei"`, `"Segoe UI"`) are gone: this application supports Linux, and a
+     platform that is not supported does not get to decide what the default
+     resolves to on the one that is. */
+  --app-font: system-ui, ui-sans-serif, "Inter", "Noto Sans SC", sans-serif;
+  --app-mono-font: ui-monospace, "Noto Sans SC", monospace;
   --app-editor-font: var(--app-font);
   --app-body-size: 15px;
   --app-line-height: 1.8;

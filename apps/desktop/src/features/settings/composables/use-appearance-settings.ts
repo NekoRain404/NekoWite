@@ -8,6 +8,11 @@ import {
 } from '../../../stores/appearance-palette'
 import type { Accent, ColorScheme, ColorSchemePreview } from '../../../stores/appearance-palette'
 import type { ContentDirection, Theme } from '../../../stores/appearance-schema'
+import {
+  EDITOR_FONT_IDS,
+  MONO_FONT_IDS,
+  UI_FONT_IDS,
+} from '../../../stores/appearance-fonts'
 import type { EditorFontId, MonoFontId, UiFontId } from '../../../stores/appearance-fonts'
 import { useAppearanceStore } from '../../../stores/appearance'
 
@@ -47,9 +52,13 @@ export interface AppearanceSettingsModel {
   setFocusMode: (on: boolean) => void
 }
 
-const UI_FONT_OPTIONS: readonly UiFontId[] = ['system', 'inter', 'serif', 'rounded']
-const EDITOR_FONT_OPTIONS: readonly EditorFontId[] = ['system', 'serif', 'sans', 'reading']
-const MONO_FONT_OPTIONS: readonly MonoFontId[] = ['mono', 'cascadia', 'jetbrains']
+// The lists are the canonical ones, not a second copy of them. They used to be
+// written out again here, which is how a picker ends up offering fewer fonts
+// than the store knows about without anything failing: adding an id to
+// `appearance-fonts.ts` would have left it unselectable here, silently.
+const UI_FONT_OPTIONS: readonly UiFontId[] = UI_FONT_IDS
+const EDITOR_FONT_OPTIONS: readonly EditorFontId[] = EDITOR_FONT_IDS
+const MONO_FONT_OPTIONS: readonly MonoFontId[] = MONO_FONT_IDS
 
 /**
  * State and commands for the Appearance section: theme, colour scheme, accent,

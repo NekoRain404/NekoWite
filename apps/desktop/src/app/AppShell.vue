@@ -419,6 +419,17 @@ html, body, #app { margin: 0; padding: 0; height: 100%; width: 100%; }
   min-height: 0;
   overflow: hidden;
   background: var(--app-canvas);
+  /* The family has to be re-declared HERE, on the element that redefines
+     `--app-font` (the inline style above), and not only on `:root` and `body`
+     where `style.css` states it. A custom property is inherited, but a
+     `font-family` declaration is resolved where it is written: `body`'s
+     `var(--app-font)` is substituted with the value body inherits — the
+     `tokens.css` default — and every descendant inherits that RESULT, not the
+     variable. So the picker used to reach only the elements that happened to
+     read `var(--app-font)` themselves (buttons, inputs) and left everything
+     that merely inherited on the default: choosing a serif interface gave a
+     serif button inside a sans application. */
+  font-family: var(--app-font);
 }
 .shell-body {
   flex: 1;
