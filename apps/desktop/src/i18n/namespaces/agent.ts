@@ -154,6 +154,28 @@ export const agent = {
             argsUnreadable: 'The engine sent arguments this app could not read',
             outputAbsent: 'This call produced no output',
             outputUnreadable: 'This call produced output this app could not read',
+            /* The proposed change, and the four things about it this app must not round off.
+               `added`/`removed` are counts this app derived by comparing the block's own two
+               texts — ACP carries no hunks — so they are this app's arithmetic over the engine's
+               data, and the sentences say what they are instead of implying the engine sent them.
+               `identical` is drawn as a sentence rather than left as an empty row set: a call
+               that asks to touch a file while proposing the same text on both sides is a fact the
+               reader has to be told. `noOriginal` claims only what was received — the schema's
+               own gloss for an absent original is "a new file", but that same field deserializes
+               default-on-error, so an original this host could not read arrives identically, and
+               this sentence is what a surface can say without choosing between the two. */
+            diff: {
+              label: 'Proposed change',
+              added: '+{n}',
+              removed: '−{n}',
+              identical: 'The engine sent the same text on both sides, so this proposal changes nothing in this file.',
+              noOriginal: 'The engine sent no original text for this file, so every line below is shown as added.',
+              partial: 'This app compared the first {n} lines a side; the file continues past them and the change may too.',
+              beyond: 'This app compared the first {n} lines a side and they contain no change — the two sides differ past them.',
+              folded: '{n} unchanged lines',
+              reveal: 'Show these {n} unchanged lines',
+              undrawn: 'The engine attached content of a kind this version does not draw.',
+            },
           },
         },
         composer: {
@@ -951,6 +973,25 @@ export const agent = {
             argsUnreadable: '引擎发送了本应用无法读取的参数',
             outputAbsent: '这次调用没有输出',
             outputUnreadable: '这次调用产生了本应用无法读取的输出',
+            /* 引擎提议的改动，以及本应用不能含糊掉的四件事。`added`/`removed` 是本应用对
+               区块自带两段文本做比较得出的计数——ACP 不传 hunk——所以那是本应用在引擎的数据上
+               算出来的，句子要说明它是什么，而不是暗示是引擎发来的。`identical` 写成一句话而
+               不是留成空列表：一次调用要求动这个文件、两侧文本却相同，这件事必须告诉读者。
+               `noOriginal` 只声明收到的东西——schema 对「没有原文」的注解是「新文件」，但同一
+               个字段是 default-on-error 反序列化的，本应用读不出来的原文会以同样的样子到达，
+               这句话是两者都不得罪的说法。 */
+            diff: {
+              label: '提议的改动',
+              added: '+{n}',
+              removed: '−{n}',
+              identical: '引擎两侧发送的文本相同，所以这次提议不会改动这个文件里的任何内容。',
+              noOriginal: '引擎没有发送这个文件的原文，所以下面每一行都按新增显示。',
+              partial: '本应用只比较了每一侧的前 {n} 行；文件在这之后还有内容，改动也可能还在后面。',
+              beyond: '本应用只比较了每一侧的前 {n} 行，这些行里没有任何改动——两侧的差异在这些行之后。',
+              folded: '{n} 行未改动',
+              reveal: '展开这 {n} 行未改动的内容',
+              undrawn: '引擎附带了本版本不绘制的内容块。',
+            },
           },
         },
         composer: {

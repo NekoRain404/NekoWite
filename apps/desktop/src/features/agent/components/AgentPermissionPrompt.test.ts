@@ -19,6 +19,7 @@ import { getLocale, setLocale, t } from '../../../i18n'
 import type {
   AgentPermissionOption,
   AgentPermissionRequest,
+  AgentToolContent,
   AgentToolStatus,
 } from '../../../platform/gateways/agent-contracts'
 
@@ -56,6 +57,7 @@ function request(overrides: Partial<AgentPermissionRequest> = {}): AgentPermissi
 type PromptProps = {
   request: AgentPermissionRequest
   toolStatus?: AgentToolStatus | null
+  toolContent?: readonly AgentToolContent[]
   expired?: boolean
   onAnswer?: (requestId: string, optionId: string) => void
   onCancel?: () => void
@@ -424,6 +426,46 @@ describe('AgentPermissionPrompt — what the user is approving', () => {
     expect(unreadable.host.querySelector('.agent-perm-args')).toBeNull()
     expect(absent.host.querySelector('.agent-perm-args-none')).toBeTruthy()
     expect(unreadable.host.querySelector('.agent-perm-args-none')).toBeTruthy()
+  })
+
+  it('draws the change the call proposes, above the arguments', () => {
+    // §6.3's rule is that the user sees the target of the action they authorize, and for an edit
+    // the target is the text. The request carries no content of its own — the host's reader is
+    // built from the engine's title, its `rawInput` and its options
+    // (`agent_runtime/permissions.rs:370-375`) — so what is drawn here is the same call's row
+    // from the transcript, which the panel joins by `toolCallId`.
+    const { host } = mount({
+      request: request({ input: { state: 'text', json: '{"filepath":"/vault/a.md"}' } }),
+      toolContent: [
+        { type: 'diff', path: '/vault/a.md', oldText: 'alpha\nbeta\n', newText: 'alpha\nBETA\n' },
+      ],
+    })
+    const block = host.querySelector('.agent-perm-diff .agent-diff-block')
+    expect(block).toBeTruthy()
+    expect(block?.getAttribute('data-path')).toBe('/vault/a.md')
+    expect(
+      block?.querySelector('.agent-diff-line[data-type="del"] .agent-diff-text')?.textContent,
+    ).toBe('beta')
+
+    // The diff is above the arguments in the DOM, so a long one cannot push the arguments the user
+    // is also judging off the top of the card.
+    const order = [...host.querySelectorAll('.agent-perm-diff, .agent-perm-args')].map((el) =>
+      el.classList.contains('agent-perm-diff') ? 'diff' : 'args',
+    )
+    expect(order).toEqual(['diff', 'args'])
+  })
+
+  it('draws no diff frame when the call proposed no edit', () => {
+    // The ordinary prompt: the memory runtime authors its own requests and the engine measured
+    // here sends no permission request at all with the default configuration. §5.3's rule is that
+    // what the session reports is what is drawn — so a request about a non-edit call, or one whose
+    // row has not arrived, gets no diff view rather than an empty one.
+    const none = mount({ request: request() })
+    expect(none.host.querySelector('.agent-perm-diff .agent-diff-block')).toBeNull()
+    expect(none.host.querySelector('[data-agent-diff]')).toBeNull()
+
+    const other = mount({ toolContent: [{ type: 'unrecognised' }] })
+    expect(other.host.querySelector('.agent-perm-diff .agent-diff-block')).toBeNull()
   })
 
   it('gains the arguments when a later update fills them in', async () => {

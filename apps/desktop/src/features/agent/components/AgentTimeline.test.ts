@@ -63,6 +63,7 @@ const ROWS: readonly AgentTimelineEntry[] = [
     toolKind: 'read',
     status: 'completed',
     paths: ['notes/2026-09/a.md'],
+    content: [],
     input: { state: 'absent' },
     output: { state: 'absent' },
   },

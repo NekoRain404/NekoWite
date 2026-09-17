@@ -160,6 +160,7 @@ describe('the mapping from the runtime’s frames to the contract', () => {
       kind: 'read',
       status: 'pending',
       paths: [],
+      content: [],
       input: { state: 'text', json: '{}' },
       output: { state: 'absent' },
     })
@@ -181,9 +182,105 @@ describe('the mapping from the runtime’s frames to the contract', () => {
       kind: 'read',
       status: 'completed',
       paths: ['/vault/note.md'],
+      // The measured frame's own `content`, in the one arm this contract draws no shape for: it
+      // is the wire's standard content block (`{type: 'content', content: {type: 'text', …}}`),
+      // a sibling of `Diff`, and a read of a note is exactly the kind of call that carries one.
+      // Folding it into `unrecognised` is the point — a call whose content this version cannot
+      // draw is not a call that produced none — and it is also what keeps the block from being
+      // refused: `readToolContent` treats an arm it has no shape for as a stated fact, so this
+      // frame is still a frame the validator accepts.
+      content: [{ type: 'unrecognised' }],
       input: { state: 'text', json: '{"filePath":"/vault/note.md"}' },
       output: { state: 'text', json: '{"output":"<path>…</path>"}' },
     })
+  })
+
+  it('carries a proposed edit’s diff block through, in the contract’s own two arms', () => {
+    // The wire shape the block actually has: `ToolCallContent` is internally tagged with a
+    // snake_case `type` (`agent-client-protocol-schema` 1.7.0, `src/v1/tool_call.rs:569-583`), and
+    // the `Diff` arm carries the file's text before and after. This is the frame the whole
+    // projection exists for — a call the user is asked to allow.
+    const tools = new ToolProjection()
+    const edit = mappedEvent(
+      'tool-update',
+      {
+        update: {
+          toolCallId: 'call_diff',
+          title: 'Editing note.md',
+          kind: 'edit',
+          status: 'pending',
+          locations: [{ path: '/vault/note.md' }],
+          content: [
+            { type: 'diff', path: '/vault/note.md', oldText: 'one\ntwo\n', newText: 'one\nthree\n' },
+          ],
+        },
+      },
+      tools,
+    )
+    expect((edit.payload as { content: unknown }).content).toEqual([
+      { type: 'diff', path: '/vault/note.md', oldText: 'one\ntwo\n', newText: 'one\nthree\n' },
+    ])
+
+    // The schema's own gloss for an absent `oldText` is a new file, and the projection carries
+    // the absence rather than inventing an empty baseline: `null` is "the engine stated none",
+    // which is what the contract says and the only thing this layer can honestly report — the
+    // field deserializes default-on-error, so an unreadable original arrives the same way.
+    const created = mappedEvent(
+      'tool-update',
+      {
+        update: {
+          toolCallId: 'call_new',
+          title: 'Writing new.md',
+          kind: 'edit',
+          status: 'pending',
+          content: [{ type: 'diff', path: '/vault/new.md', newText: 'hello\n' }],
+        },
+      },
+      tools,
+    )
+    expect((created.payload as { content: unknown }).content).toEqual([
+      { type: 'diff', path: '/vault/new.md', oldText: null, newText: 'hello\n' },
+    ])
+
+    // And a later frame that says nothing about content keeps the diff the first one established
+    // — the schema's rule for the collection ("overwritten, not extended", `tool_call.rs:262-265`)
+    // read the way `locations` already is: absent means "not mentioned", present means "replace".
+    const settled = mappedEvent(
+      'tool-update',
+      { update: { toolCallId: 'call_diff', status: 'completed' } },
+      tools,
+    )
+    expect((settled.payload as { content: unknown }).content).toEqual([
+      { type: 'diff', path: '/vault/note.md', oldText: 'one\ntwo\n', newText: 'one\nthree\n' },
+    ])
+  })
+
+  it('names a block it cannot draw instead of dropping it or refusing the frame', () => {
+    // Every arm of the wire's union that is not a diff — the standard content block, the terminal
+    // reference, and any type a later schema adds — arrives as one arm, and the frame is still a
+    // frame the validator accepts. A reader that refused them would turn one unknown block into a
+    // dropped tool call, and one that dropped them would report a call as having produced less
+    // than it did.
+    const event = mappedEvent('tool-update', {
+      update: {
+        toolCallId: 'call_mixed',
+        title: 'Editing note.md',
+        kind: 'edit',
+        status: 'completed',
+        content: [
+          { type: 'terminal', terminalId: 'term-1' },
+          { type: 'diff', path: '/vault/note.md', oldText: '', newText: 'x\n' },
+          { type: 'diff', path: '/vault/note.md', newText: 7 },
+          { type: 'something_new' },
+        ],
+      },
+    })
+    expect((event.payload as { content: unknown }).content).toEqual([
+      { type: 'unrecognised' },
+      { type: 'diff', path: '/vault/note.md', oldText: '', newText: 'x\n' },
+      { type: 'unrecognised' },
+      { type: 'unrecognised' },
+    ])
   })
 
   it('falls back to the engine’s own kind and id when a frame has no title to show', () => {

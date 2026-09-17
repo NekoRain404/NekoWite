@@ -97,6 +97,7 @@ import type {
   AgentCommand,
   AgentGateway,
   AgentSession,
+  AgentToolContent,
   AgentToolStatus,
 } from '../../../platform/gateways/agent-contracts'
 import { t } from '../../../i18n'
@@ -274,12 +275,14 @@ const pending = computed(() => {
 })
 
 /**
- * The status of the tool call the request is about, when the transcript already shows it.
+ * The transcript's row for the tool call the pending request is about, when it already has one.
  *
- * `null` is "the host knows nothing here", which T7's prompt must not read as "this call is
- * over": a request whose row has not arrived yet is still waiting for its answer.
+ * The join is by `toolCallId`, which is what the contract carries on both sides for exactly this
+ * (`AgentPermissionRequest.toolCallId`'s own comment). It is made once, here, and everything the
+ * prompt needs from that row is read off it — the status and the blocks an edit proposed — rather
+ * than two searches that could disagree about which row they found.
  */
-const pendingToolStatus = computed<AgentToolStatus | null>(() => {
+const pendingToolRow = computed<AgentToolEntry | null>(() => {
   const request = pending.value
   if (request === null) return null
   // The predicate is the guard, not only the test: without it `find` answers with the whole
@@ -290,8 +293,30 @@ const pendingToolStatus = computed<AgentToolStatus | null>(() => {
     (entry): entry is AgentToolEntry =>
       entry.kind === 'tool' && entry.toolCallId === request.payload.toolCallId,
   )
-  return row === undefined ? null : row.status
+  return row ?? null
 })
+
+/**
+ * The status of that call, as the prompt reads it.
+ *
+ * `null` is "the host knows nothing here", which T7's prompt must not read as "this call is
+ * over": a request whose row has not arrived yet is still waiting for its answer.
+ */
+const pendingToolStatus = computed<AgentToolStatus | null>(
+  () => pendingToolRow.value?.status ?? null,
+)
+
+/**
+ * The content blocks of that same row, for the prompt to draw.
+ *
+ * The request itself carries none — see `AgentPermissionPrompt`'s `toolContent` — so this is the
+ * join by `toolCallId`, made once here and read by both the status and the diff. An empty list is
+ * both the ordinary case (a call that proposed no edit) and the "the row has not arrived yet"
+ * case, and neither of them draws anything.
+ */
+const pendingToolContent = computed<readonly AgentToolContent[]>(
+  () => pendingToolRow.value?.content ?? [],
+)
 
 /** Whether the request can no longer be answered — the store's own rule, not a second opinion:
  *  an answer for a request whose run is not live is refused there. */
@@ -668,6 +693,7 @@ function onHistoryPick(sessionId: string): void {
       class="agent-panel-permission"
       :request="pending.payload"
       :tool-status="pendingToolStatus"
+      :tool-content="pendingToolContent"
       :expired="expired"
       @answer="answer"
       @cancel="stop"

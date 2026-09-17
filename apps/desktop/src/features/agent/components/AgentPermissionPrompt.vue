@@ -2,10 +2,12 @@
 import { computed, nextTick, ref, useId } from 'vue'
 import { Ban, Check, CheckCheck, Ellipsis, TriangleAlert, X } from 'lucide-vue-next'
 import { t } from '../../../i18n'
+import AgentToolDiff from './AgentToolDiff.vue'
 import type {
   AgentPermissionKind,
   AgentPermissionOption,
   AgentPermissionRequest,
+  AgentToolContent,
   AgentToolStatus,
 } from '../../../platform/gateways/agent-contracts'
 
@@ -49,6 +51,23 @@ const props = withDefaults(
   }>(),
   { toolStatus: null, expired: false },
 )
+
+/**
+ * The blocks to draw: **the request's own**, and nothing else.
+ *
+ * They arrive on the request — the engine attaches them to the frame it asks with, and the
+ * host carries them through (`agent_runtime/permissions.rs`'s `content_of`) — so this prompt
+ * needs no second reading of the same call. It used to take them from the transcript's row,
+ * joined by `toolCallId`; that join is gone deliberately. A row's blocks are whatever the
+ * transcript last held, which is not what this request said, and with the two merged there
+ * was no way to tell at the pixels between "this request carried no diff" and "its diff
+ * happens to equal the row's" — the case a person allowing an edit is least able to check.
+ *
+ * Empty is the ordinary answer for a request that proposed no edit. Nothing is drawn for it,
+ * and nothing else is consulted: an empty frame would be a statement about the engine that
+ * the engine did not make.
+ */
+const content = computed<readonly AgentToolContent[]>(() => props.request.content)
 
 const emit = defineEmits<{
   /** The user's answer: the engine's own option id, under the request it came from. */
@@ -261,6 +280,16 @@ nextTick(() => rootEl.value?.focus())
       </span>
     </div>
 
+    <!-- The change itself, above the arguments: this is the surface where the decision is
+         taken (§6.3 「等待授权时不锁死整个编辑器」, and the prompt sits beside the composer
+         precisely so it does not scroll away), and §6.3 requires the user to see the
+         target of the action they authorize. Where the call proposed an edit, the target
+         is the text — so the diff is drawn here rather than only one click deep in the
+         transcript, and it draws nothing at all when the call reported no diff block. -->
+    <AgentToolDiff
+      class="agent-perm-diff"
+      :content="content"
+    />
     <!-- `tabindex="0"`: the block scrolls, and a diff is exactly the thing that
          overflows it. Without a tab stop the arguments §6.3 requires the user to read
          before approving are the one part of this prompt a keyboard cannot reach. -->
@@ -410,6 +439,13 @@ nextTick(() => rootEl.value?.focus())
   color: var(--app-muted);
   font-size: 11px;
   line-height: 1.3;
+}
+/* The proposed change, given the prompt's own gutter and nothing else: the component draws its
+   own frame, and a second border around it would be this prompt's chrome rather than the diff's.
+   It sits above the arguments so that a long diff does not push the one thing the buttons are
+   about off the top of the card. */
+.agent-perm-diff {
+  margin: 0 8px 6px;
 }
 .agent-perm-args {
   margin: 0;

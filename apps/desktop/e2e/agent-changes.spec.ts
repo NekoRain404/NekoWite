@@ -185,6 +185,7 @@ async function open(page: Page): Promise<void> {
               kind,
               status,
               paths,
+              content: [],
               input: { state: 'absent' },
               output: { state: 'absent' },
             },

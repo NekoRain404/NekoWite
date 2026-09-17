@@ -2,12 +2,12 @@
 /**
  * The copy a tool row needs, handed in rather than reached for.
  *
- * The app's catalogue has no keys for any of this — `src/i18n/namespaces/agent.ts` holds the
- * command menu's and the permission prompt's sentences and nothing else — and this task does
- * not own that file. So the sentences arrive as a prop, which is the same arrangement
- * `AgentCommandMenu` used while its keys did not exist: a missing sentence stays a visible
- * integration point instead of an English string shipped in its place. When the keys land,
- * the defaults move here and the prop becomes the override.
+ * These sentences arrived as a prop while the catalogue had no keys for them, and they stay one:
+ * the caller that mounts the panel is the caller that supplies every word it shows, and
+ * `AgentRailBody` reads them from `agent.panel.timeline.tool.*`. The newer components beside this
+ * one take the other direction — the catalogue's own key, with an optional override — which is
+ * what `AgentToolDiff` does for the sentences it owns. Both are supported; neither is a missing
+ * sentence waiting to become an English string.
  *
  * `status` is a record over the contract's own statuses, not a free map: a status the engine
  * adds later fails to typecheck here rather than rendering as a blank word.
@@ -57,6 +57,7 @@ export interface AgentToolLabels {
  *    icon and the word: a reader who cannot tell the two reds apart still reads "Failed".
  */
 import { computed, ref } from 'vue'
+import AgentToolDiff from './AgentToolDiff.vue'
 import {
   Brain,
   ChevronDown,
@@ -198,6 +199,11 @@ function toggle(): void {
       v-if="open"
       class="agent-tool-body"
     >
+      <!-- First, and above the arguments, because it is the thing the row is about: where the
+           engine proposes a change, the change is what the reader came for and the arguments are
+           the working. It draws nothing at all for a call that reported no `diff` block, which is
+           every call of every other kind. -->
+      <AgentToolDiff :content="entry.content" />
       <section class="agent-tool-section">
         <h4 class="agent-tool-label">
           {{ labels.args }}

@@ -6,7 +6,7 @@
  * and `ToolCallUpdate` verbatim inside `{ "update": … }` — "the shape is the schema's, and
  * re-packaging it here would only lose the fields T5 needs to correlate them" — while the
  * contract's payload is flat **and complete**: `toolCallId`, `title`, `kind`, `status`, `paths`,
- * `input` and `output` are all required.
+ * `content`, `input` and `output` are all required.
  *
  * The wire is not complete. A `tool_call_update` carries only what changed, and P0 §6.1's
  * measured frames show it: the first update has no `title`, the second has no `locations` and
@@ -20,6 +20,7 @@
  */
 
 import type {
+  AgentToolContent,
   AgentToolInput,
   AgentToolKind,
   AgentToolStatus,
@@ -42,6 +43,7 @@ export interface PublishedToolCall {
   kind: AgentToolKind
   status: AgentToolStatus
   paths: string[]
+  content: AgentToolContent[]
   input: AgentToolInput
   output: AgentToolInput
 }
@@ -145,6 +147,7 @@ export function mapToolUpdate(
     kind: toolKind(wrapped.kind) ?? prior?.kind ?? 'other',
     status: toolStatus(wrapped.status) ?? prior?.status ?? 'pending',
     paths: toolPaths(wrapped.locations) ?? prior?.paths ?? [],
+    content: toolContent(wrapped.content, prior?.content),
     input: toolInput(wrapped.rawInput, prior?.input),
     output: toolInput(wrapped.rawOutput, prior?.output),
   }
@@ -194,6 +197,64 @@ function toolPaths(raw: unknown): string[] | null {
     if (isRecord(entry) && nonEmpty(entry.path)) paths.push(entry.path)
   }
   return paths
+}
+
+/**
+ * The content blocks a call produced, in the two shapes the contract carries.
+ *
+ * The wire's `ToolCallContent` is internally tagged (`#[serde(tag = "type", rename_all =
+ * "snake_case")]`), so a block arrives as `{ type: 'diff', path, oldText?, newText }` and the
+ * discriminator is the whole of how the arms are told apart. The two the contract does not draw —
+ * the schema's `content` and `terminal` — are mapped to `unrecognised` rather than dropped, so a
+ * surface can say a block arrived that this version does not draw instead of reporting the call as
+ * having produced nothing.
+ *
+ * **Absent means keep, present means replace.** `ToolCallUpdateFields` says so in its own words —
+ * "Collections (content, locations) are overwritten, not extended" (`tool_call.rs:262-265`) — which
+ * is the same rule {@link toolPaths} applies to the other collection, and the reason a
+ * status-only update cannot blank a diff the first frame established.
+ *
+ * A `diff` whose required fields are not strings is `unrecognised` and not a refusal: the reader
+ * would refuse the whole payload for a malformed block, and a call the user can see is worth more
+ * than a strict answer about one block inside it. The SDK has already been through this frame —
+ * it deserializes `content` with skip-invalid-items, so a block that is not a `ToolCallContent` at
+ * all never reaches the window — which is why this arm is a floor rather than the usual path.
+ */
+function toolContent(
+  raw: unknown,
+  prior: AgentToolContent[] | undefined,
+): AgentToolContent[] {
+  if (raw === undefined) return prior ?? []
+  if (!Array.isArray(raw)) return prior ?? []
+  const content: AgentToolContent[] = []
+  for (const entry of raw) {
+    if (!isRecord(entry) || typeof entry.type !== 'string') {
+      content.push({ type: 'unrecognised' })
+      continue
+    }
+    if (entry.type !== 'diff') {
+      content.push({ type: 'unrecognised' })
+      continue
+    }
+    const { path, newText, oldText } = entry
+    // Both of these may legitimately be empty — the engine's own builder produces `path: ""` and
+    // an empty file as `newText` — so this is a type test and not `nonEmpty`'s.
+    if (typeof path !== 'string' || typeof newText !== 'string') {
+      content.push({ type: 'unrecognised' })
+      continue
+    }
+    if (oldText !== undefined && oldText !== null && typeof oldText !== 'string') {
+      content.push({ type: 'unrecognised' })
+      continue
+    }
+    content.push({
+      type: 'diff',
+      path,
+      oldText: typeof oldText === 'string' ? oldText : null,
+      newText,
+    })
+  }
+  return content
 }
 
 /**

@@ -58,6 +58,64 @@ export type AgentToolKind =
   | 'other'
 
 /**
+ * One block of content a tool call produced, as this window can honestly carry it.
+ *
+ * The wire's `ToolCallContent` is a union of three (`agent-client-protocol-schema` 1.7.0,
+ * `src/v1/tool_call.rs:572-583`): a standard content block, a `Diff`, and a `Terminal`. Exactly
+ * one of them is modelled here:
+ *
+ *  - **the diff is carried**, because it is the block a person acts on — §6.3 requires the user to
+ *    see the target of the action they authorize, and a proposed edit's target is its text — and
+ *    because the engine sends the whole of what it proposes rather than a summary of it:
+ *    `oldText` and `newText` are the file's own text before and after, so the change can be
+ *    reconstructed here instead of being taken on trust.
+ *  - **everything else is one arm.** A standard content block is a union of its own (text, image,
+ *    audio, a resource link, an embedded resource) and this contract does not model it; a
+ *    `Terminal` block carries nothing but an engine-side id, and this host runs no ACP terminal at
+ *    all, so the id names nothing a component could open. Carrying either one half-shaped would
+ *    hand a component a field it cannot act on, and dropping either one silently would report the
+ *    call as having produced less than it did. So the arm states the one true thing: a block
+ *    arrived that this version does not draw.
+ *
+ * The list is a *collection*, and the schema says what an update does with it — "Collections
+ * (content, locations) are overwritten, not extended" (`tool_call.rs:262-265`) — which is why this
+ * is an array that a later frame replaces whole rather than one a frame appends to.
+ */
+export type AgentToolContent =
+  | {
+      type: 'diff'
+      /**
+       * The file being modified, as the engine named it (the schema's "absolute file path").
+       * Carried verbatim, including an empty string: the engine measured here builds the field as
+       * `z(filePath) ?? ""`, so a blank path is a value it states rather than one that is missing,
+       * and a surface that filled the blank in from somewhere else would be answering a question
+       * the engine left open.
+       */
+      path: string
+      /**
+       * The original text, or `null` when the engine stated none — which the schema defines as
+       * "None for new files" (`tool_call.rs:703-707`).
+       *
+       * **`null` is not proof of that, and no surface may read it as one.** The field deserializes
+       * with `x-deserialize-default-on-error`, so original text that failed to deserialize becomes
+       * `None` as well: "the engine said this is a new file" and "the engine sent text this host
+       * could not read" arrive here as one value. That is the same conflation acp-spec #1979
+       * records for `rawInput`, and the same one {@link AgentToolInput} splits into three states —
+       * but the split cannot be made at this layer, because it is the schema's own deserializer
+       * that merges the two before a typed frame exists. What follows from it is a rule for the
+       * render rather than a shape for this type: an absence is reported as an absence, and no
+       * surface may say "new file" on the strength of it.
+       */
+      oldText: string | null
+      /**
+       * The text the engine proposes to leave in the file. The one field the schema requires, so a
+       * block without it is not a diff this contract can carry.
+       */
+      newText: string
+    }
+  | { type: 'unrecognised' }
+
+/**
  * The arguments a tool ran with, or the ones a user is being asked to approve.
  *
  * Three states, not two, because the wire conflates the last two: ACP deserializes
@@ -129,6 +187,23 @@ export interface AgentPermissionRequest {
    * must not look the same to them.
    */
   input: AgentToolInput
+  /**
+   * The content blocks **this request's own `tool_call`** carried — the proposed change
+   * among them, which is the thing a person decides on.
+   *
+   * Carried by the request rather than joined from the transcript, and that is the whole
+   * point of the field. The engine attaches the blocks to the frame it asks with (P0 §7.1
+   * measured a request whose `toolCall` carries the diff), and a prompt that read the
+   * same call's *row* instead would show whatever the transcript happened to hold: on a
+   * host where the request is the first frame to carry a block, nothing at all — a person
+   * asked to allow an edit, shown the file's path and no text.
+   *
+   * **Empty means the request stated no block, and the prompt then draws none.** It is not
+   * a gap to be filled from the row: "this request carried no diff" and "this request's
+   * diff happens to equal the row's" are different facts, and a surface that lent the row's
+   * blocks in the first case would draw both as one picture.
+   */
+  content: AgentToolContent[]
   /** Exactly the options the engine offered, in its order. */
   options: AgentPermissionOption[]
 }
@@ -383,6 +458,20 @@ export interface AgentPayloads {
     /** Files the call touches — the "target" the row shows, and what follow-along
      *  anchors on. Empty when the engine named none. */
     paths: string[]
+    /**
+     * What the call produced as content blocks, in the engine's order, and empty when it reported
+     * none. Required like its siblings rather than optional: the adapter completes every frame
+     * from the last one published for the same call, so "this frame said nothing about content"
+     * is a question the projection answers before a payload exists, and a consumer that had to
+     * tell `undefined` from `[]` would be re-deciding it.
+     *
+     * A call's content and its {@link output} are different facts and both are kept: the output is
+     * what the engine reported as the tool's raw result, while a `diff` block here is the change
+     * the engine proposes to make. On the engine measured here they are not even produced at the
+     * same layer — the diff is built from the tool's own arguments against the file on disk, and
+     * the engine returns no block at all when it cannot compute one.
+     */
+    content: AgentToolContent[]
     /** What the tool ran with, or was asked to run with. */
     input: AgentToolInput
     /** What it produced: `absent` when the engine has reported no output (yet or at

@@ -295,6 +295,7 @@ async function emitToolRow(page: Page, base: string, count: number, long = false
             kind: 'read',
             status: 'completed',
             paths: [`notes/2026-09/${name}-${i}.md`],
+            content: [],
             input: { state: 'absent' },
             output: { state: 'text', json: '{"ok":true}' },
           },
@@ -535,6 +536,87 @@ test.describe('agent panel — a row that grows', () => {
     expect(after.scrollHeight).toBeGreaterThan(before.scrollHeight)
     // …and the row the reader was on is still where it was on screen.
     expect(Math.abs((await offsetOfRow(page, anchor.row)) - anchor.offset)).toBeLessThanOrEqual(1)
+  })
+})
+
+test.describe('agent panel — the change an edit proposes', () => {
+  /**
+   * The whole chain, in a browser: a `tool_call_update` frame from the runtime's own shape, through
+   * the contract, into the store's timeline, out of the transcript's tool row and onto the screen.
+   *
+   * This is the assertion the unit tests cannot make. `AgentToolDiff.test.ts` mounts the component
+   * with a hand-built content array, which proves the render and nothing about whether anything
+   * ever hands it one; the projection test proves the adapter maps the wire frame. Neither proves
+   * the two are joined — and this project's signature defect is exactly the surface that was
+   * built, tested and never reached.
+   */
+  test('a proposed edit’s diff is on screen when the reader opens its row', async ({ page }) => {
+    await mount(page)
+    // A live turn: a frame for no run is not a frame this host applies, and the tool row has to
+    // belong to something. The turn says one thing first, because a run is bound by the first
+    // content frame that names it.
+    await scriptTurns(page, { chunks: ['Looking at the note. '], hang: true })
+    await page.locator('.agent-composer-field').fill('fix the note')
+    await page.locator('.agent-composer [data-action="send"]').click()
+    await expect.poll(async () => state(page)).toBe('running')
+
+    await page.evaluate(() => {
+      const harness = window.__agentPanel
+      if (harness === undefined) throw new Error('the panel is not mounted')
+      harness.gateway.emit(harness.session, {
+        kind: 'tool-update',
+        payload: {
+          toolCallId: 'edit-1',
+          title: 'Editing notes/a.md',
+          kind: 'edit',
+          status: 'pending',
+          paths: ['notes/a.md'],
+          content: [
+            {
+              type: 'diff',
+              path: 'notes/a.md',
+              oldText: 'alpha\nbeta\ngamma\n',
+              newText: 'alpha\nBETA\ngamma\n',
+            },
+          ],
+          input: { state: 'absent' },
+          output: { state: 'absent' },
+        },
+      })
+    })
+    await nextFrames(page)
+
+    const row = page.locator('.agent-tool[data-call="edit-1"]')
+    await expect(row).toHaveCount(1)
+    // Collapsed, the row draws no diff at all: the transcript of a long session is not a wall of
+    // diffs, and this is the disclosure the reader is given.
+    await expect(row.locator('.agent-diff-block')).toHaveCount(0)
+
+    await row.locator('.agent-tool-head').click()
+    const block = row.locator('.agent-diff-block')
+    await expect(block).toBeVisible()
+    // The engine's own path, and the exact line it proposes to change, on both sides.
+    await expect(block).toHaveAttribute('data-path', 'notes/a.md')
+    await expect(block.locator('.agent-diff-line[data-type="del"] .agent-diff-text')).toHaveText(
+      'beta',
+    )
+    await expect(block.locator('.agent-diff-line[data-type="add"] .agent-diff-text')).toHaveText(
+      'BETA',
+    )
+    // Both changed lines are inside the box the row scrolls rather than widening the panel.
+    const box = await block.evaluate((el) => ({
+      width: el.getBoundingClientRect().width,
+      panel: (el.closest('.agent-tool') as HTMLElement).getBoundingClientRect().width,
+    }))
+    expect(box.width).toBeLessThanOrEqual(box.panel)
+
+    // The reader keeps working from the same composer: the surface this row is for — allowing the
+    // edit — is the permission prompt beside it, and the prompt draws the same block when the
+    // engine asks. That half is unit-tested (`AgentPermissionPrompt.test.ts`) because the memory
+    // runtime authors its own prompts; what is proved here is that the row and its diff are
+    // reachable from the real panel.
+    await page.locator('.agent-composer [data-action="stop"]').click()
+    await expect.poll(async () => state(page), { timeout: 5000 }).toBe('cancelled')
   })
 })
 

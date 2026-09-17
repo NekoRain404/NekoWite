@@ -81,6 +81,7 @@ function write(
     kind: options.tool ?? 'edit',
     status: options.status ?? 'completed',
     paths,
+    content: [],
     input: { state: 'text', json: '{}' },
     output: { state: 'absent' },
   })
@@ -405,6 +406,7 @@ function toolPayload(toolCallId: string, paths: string[]): AgentPayloads['tool-u
     kind: 'edit',
     status: 'completed',
     paths,
+    content: [],
     input: { state: 'absent' },
     output: { state: 'absent' },
   }

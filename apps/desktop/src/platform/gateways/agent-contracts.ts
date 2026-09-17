@@ -44,6 +44,7 @@ export type {
   AgentRunEnding,
   AgentRunResult,
   AgentStopReason,
+  AgentToolContent,
   AgentToolInput,
   AgentToolKind,
   AgentToolStatus,

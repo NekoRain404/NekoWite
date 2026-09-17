@@ -22,6 +22,7 @@
 
 import type {
   AgentPayloads,
+  AgentToolContent,
   AgentToolInput,
   AgentToolKind,
   AgentToolStatus,
@@ -66,6 +67,12 @@ export interface AgentToolEntry {
   toolKind: AgentToolKind
   status: AgentToolStatus
   paths: string[]
+  /**
+   * The blocks the call reported. Carried on the row rather than read at render time because
+   * there is no second read to make: the projection is the only layer that sees the frame, and
+   * a `diff` block's text is in it.
+   */
+  content: AgentToolContent[]
   input: AgentToolInput
   output: AgentToolInput
 }
@@ -105,6 +112,9 @@ export function toolRow(runId: string | null, call: AgentPayloads['tool-update']
     toolKind: call.kind,
     status: call.status,
     paths: [...call.paths],
+    // Copied, like the paths: the row is what the view renders, and a payload that is later
+    // reused must not be able to change a row the reader has already read.
+    content: call.content.map((block) => ({ ...block })),
     input: call.input,
     output: call.output,
   }
