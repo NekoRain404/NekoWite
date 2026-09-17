@@ -1,6 +1,25 @@
 * { box-sizing: border-box; }
 html, body, #app { margin: 0; padding: 0; height: 100%; width: 100%; }
-body { font-family: var(--app-font); font-size: var(--app-body-size); line-height: var(--app-line-height); }
+/* `body`'s typography is gone, and its absence is a claim rather than a tidy-up.
+
+   It read `font-family: var(--app-font); font-size: var(--app-body-size); line-height:
+   var(--app-line-height)` — the user's three settings, stated on an element *outside* `.shell`, the
+   only element `AppShell.vue:285-292` writes the appearance on. A declaration is resolved where it
+   is written, so `var(--app-body-size)` was substituted with `tokens.css`'s `15px` and everything
+   under `body` inherited that result rather than the user's number; `appShell-chrome.css:51-53` is
+   where the three live now, on the element that redefines the variables they read.
+
+   What kept a copy here was the family of surfaces that teleported to `body` and therefore had no
+   `.shell` ancestor to inherit from — and there are none left: `components/popup-host.ts` is the
+   rule the seven of them resolve their host with, and `e2e/popup-host-scope.spec.ts` and
+   `e2e/agent-popup-host-scope.spec.ts` hold every one of them to being a descendant of `.shell`
+   when it is open. With that true, this declaration reached only `#app`, whose only child is
+   `.shell` (`App.vue:143`), and `.shell` states all three itself. The one page that has no shell —
+   the pet window's (`desktop-pet.html`) — does not load this file at all: `app/desktop-pet-entry.ts`
+   imports `styles/tokens.css` and `styles/palettes.css` and nothing else.
+
+   The two rules above stay: `box-sizing` and the `html, body, #app` frame are geometry, not
+   appearance, and nothing about the user's choices is stated here any more. */
 /* 滚动条 */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--app-border) 120%, transparent); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }

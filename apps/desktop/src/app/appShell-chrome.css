@@ -84,6 +84,27 @@ html, body, #app { margin: 0; padding: 0; height: 100%; width: 100%; }
   width: 24px;
   height: 22px;
   padding: 0;
+  /* The buttons take the bar's typography, and this is the declaration that makes them.
+     Without it they drew at the user agent's `font: 13.3333px Arial` on `<button>`: measured in
+     Chromium, the two status-bar buttons computed to `13.3333px` while every span beside them in
+     the same bar computed to the bar's `11px`. That is neither the user's setting nor the chrome's
+     — a form control's UA `font` shorthand is a *declaration*, so it resets inheritance and the
+     shell's typography can never reach the control at any setting.
+
+     The decision, since the report named it as one: **the chrome's, not the user's.** The bar is
+     chrome and declares `11px` of its own (`ui/StatusBar.vue:128`), pinned at both ends of the
+     body-size range by `e2e/app-shell-type.spec.ts`; a control inside it is part of that bar
+     rather than the app's body text, and a button that grew to 20px because the user asked the
+     *document* for a larger size would be the one control on the bar that disagreed with the
+     words next to it. `font: inherit` and not a second `font-size: 11px`: the bar already states
+     the size, and repeating it here is the second table this whole pass exists to remove — this
+     way the button follows `ui/StatusBar.vue` even if that number ever moves.
+
+     Nothing visible moves today: both buttons hold an icon with an explicit `:size` and no text
+     (`AppShell.vue:445-465`), so this is fixing what the element resolves rather than what it
+     currently paints — the value any text in a status-bar button would be drawn at, and the value
+     every `em` inside it would be measured against. */
+  font: inherit;
   border: none;
   border-radius: var(--app-radius-sm);
   background: transparent;

@@ -21,6 +21,10 @@
  *  - **Choosing a row closes the menu and leaves as an event.** Nothing in this tree opens the
  *    settings dialog or switches the rail; both belong to the layers that own them, exactly as
  *    `resume` and `new-session` do.
+ *
+ * The panel renders *two* teleported popups — this menu and the engine's session list — and both
+ * are rendered by `AgentPanel.vue`'s own template, so the file that mounts the whole panel is the
+ * one that can ask where each of them lands.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createApp, nextTick, type App as VueApp } from 'vue'
@@ -130,7 +134,14 @@ beforeEach(async () => {
   setLocale('en')
   pinia = createPinia()
   setActivePinia(pinia)
-  gateway = createMemoryAgentGateway({ agentId: 'memory', profileId: 'test' })
+  // `session/list` is declared available so that the bar draws its history control: without it the
+  // panel's second popup has no control to be opened from, and the case about where it lands would
+  // pass by never rendering it.
+  gateway = createMemoryAgentGateway({
+    agentId: 'memory',
+    profileId: 'test',
+    capabilities: { 'session-list': { status: 'available' } },
+  })
   await gateway.start()
   session = await gateway.openSession({ vaultId: 'vault', cwd: '/vault' })
 })
@@ -141,9 +152,26 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-async function mountPanel(carries: { settings?: boolean; chat?: boolean }): Promise<Harness> {
+/**
+ * Mount the panel where the app mounts it.
+ *
+ * `where.shell` adds `AppShell.vue`'s element around the panel — the one that carries the user's
+ * appearance (the four `data-*` axes and the eight inline `--app-*` properties), and therefore the
+ * element each popup is teleported into. Left off, the panel is in a page the product does not
+ * have: a page with no shell, which is where the `body` fallback applies.
+ */
+async function mountPanel(
+  carries: { settings?: boolean; chat?: boolean; shell?: boolean },
+): Promise<Harness> {
+  const shell = document.createElement('div')
+  if (carries.shell === true) {
+    shell.className = 'shell'
+    shell.dataset.theme = 'dark'
+    shell.style.setProperty('--app-text', '#e8f3e2')
+  }
+  document.body.appendChild(shell)
   const host = document.createElement('div')
-  document.body.appendChild(host)
+  shell.appendChild(host)
   const emitted: string[] = []
   const app = createApp(AgentPanel, {
     gateway,
@@ -167,8 +195,8 @@ async function mountPanel(carries: { settings?: boolean; chat?: boolean }): Prom
   }
   await settle()
 
-  // Read off the document rather than off `host`: the popup is teleported to the body, so the
-  // rows are not inside the panel's own subtree once the menu is up.
+  // Read off the document rather than off `host`: the popup is teleported out of the panel's own
+  // subtree, so the rows are not inside it once the menu is up.
   return {
     emitted,
     el: (selector) => document.querySelector<HTMLElement>(selector),
@@ -181,7 +209,7 @@ async function mountPanel(carries: { settings?: boolean; chat?: boolean }): Prom
   }
 }
 
-/** The popup is teleported to the body: the panel's own subtree does not contain it. */
+/** The popup is teleported out of the panel's subtree: the panel itself does not contain it. */
 const popup = (): HTMLElement | null =>
   document.querySelector<HTMLElement>('[data-agent-menu-popup]')
 const row = (id: string): HTMLElement | null =>
@@ -271,5 +299,44 @@ describe('AgentPanel — the options menu', () => {
       expect(harness.emitted.length, `the "${id}" row emitted nothing`).toBe(before + 1)
     }
     expect(harness.emitted.sort()).toEqual(['open-settings', 'use-chat'])
+  })
+})
+
+/**
+ * Both popups are teleported, and this is the one thing that matters about *where*.
+ *
+ * They have to leave the panel's subtree — the rail body scrolls and would clip them, and their
+ * placement is a viewport rectangle (`useDetachedPopup`, `use-agent-panel-menu`), which is only an
+ * answer while their containing block is the viewport. What they must not leave is the element
+ * that carries the user's appearance: `AppShell.vue:285` puts `data-theme`, `data-color-scheme`,
+ * `data-accent`, `data-contrast` and the eight inline `--app-*` properties on `.shell` and nowhere
+ * else in the page, so a popup left under `body` resolves `palettes.css`'s `:root` block — the
+ * light palette, the default accent, the default face — inside a window told to draw a dark theme.
+ */
+describe('AgentPanel — where its popups land', () => {
+  const shell = (): HTMLElement | null => document.body.querySelector<HTMLElement>('.shell')
+
+  it('renders the options menu inside the element that carries the appearance', async () => {
+    const harness = await mountPanel({ settings: true, shell: true })
+    await harness.click('[data-agent-menu]')
+
+    expect(popup()).not.toBeNull()
+    expect(shell()).not.toBeNull()
+    expect(popup()?.parentElement).toBe(shell())
+    expect(popup()?.parentElement).not.toBe(document.body)
+  })
+
+  it('renders the session list inside the element that carries the appearance', async () => {
+    const harness = await mountPanel({ shell: true })
+    await harness.click('[data-agent-history]')
+    const list = document.querySelector<HTMLElement>('.agent-history-popup')
+
+    // The control is drawn on the engine's own `session/list` answer, so a panel whose engine
+    // cannot list sessions has no list to render — asserted rather than assumed, because
+    // `parentElement` of a missing element is `undefined` and would read as "not the body".
+    expect(list).not.toBeNull()
+    expect(shell()).not.toBeNull()
+    expect(list?.parentElement).toBe(shell())
+    expect(list?.parentElement).not.toBe(document.body)
   })
 })

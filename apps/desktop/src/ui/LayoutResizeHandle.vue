@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { popupHostOf } from '../components/popup-host'
 
 const props = withDefaults(
   defineProps<{
@@ -46,6 +47,36 @@ const emit = defineEmits<{
 
 const dragging = ref(false)
 const rootEl = ref<HTMLElement | null>(null)
+
+/**
+ * What the drag guide's `<Teleport>` is aimed at: the handle's nearest `.shell`, or `body` when
+ * the page has none.
+ *
+ * The guide is `color-mix(in srgb, var(--app-accent) 62%, transparent)` — a hairline drawn in the
+ * *user's* accent — and `--app-accent` is resolved from the four `data-*` axes `AppShell.vue:285-292`
+ * puts on `.shell` and nowhere else. Teleported to `body`, the line resolved `palettes.css`'s
+ * `:root` block instead: measured in Chromium, a dark window the user had set to the `teal` accent
+ * drew the guide as `color(srgb 0.203922 0.207843 0.196078 / 0.62)` — the `ink` accent's grey —
+ * while the handle it followed and the shell around it drew `#2e9e8f`.
+ *
+ * Resolved from the handle rather than written as `to=".shell"`, because a `<Teleport>` whose
+ * selector matches nothing renders *nothing*: the guide would simply never appear on a page
+ * without a shell rather than appear unthemed. `components/popup-host.ts` names the carrier once
+ * for the whole family.
+ *
+ * The teleport stays, and this one is a retarget rather than a removal because the guide's two
+ * coordinates are its *containing block's*: `top: 0; bottom: 0` is a window-height line only while
+ * nothing between it and the viewport carries `transform`, `translate`, `filter`,
+ * `backdrop-filter` or `contain`. The handle's own ancestors carry none of those today — measured,
+ * and it is why rendering it in place would also work today — but this app animates its columns
+ * and its rail with exactly `translate` (`appShell.css:115-190`), so "today" is one wrapper away
+ * from being false, and a hairline that silently shortened to a column's height is a defect nobody
+ * would attribute to this file. A retarget has the same guarantee for a one-line diff.
+ */
+const popupHost = ref<Element | string>('body')
+onMounted(() => {
+  popupHost.value = popupHostOf(rootEl.value)
+})
 
 interface DragState {
   onMove: (event: PointerEvent) => void
@@ -215,7 +246,7 @@ defineOptions({ inheritAttrs: false })
     @dblclick="onDoubleClick"
     @keydown="onKeydown"
   />
-  <Teleport to="body">
+  <Teleport :to="popupHost">
     <div
       v-if="previewX !== null"
       class="resize-guide-line"
@@ -264,7 +295,8 @@ body.is-layout-resizing * {
   user-select: none !important;
 }
 /* VS Code-style drag guide: a full-height accent line following the pointer.
-   Rendered via Teleport to <body>, so it must live outside the scoped style. */
+   Rendered via Teleport — into `.shell`, since the accent it is drawn in comes
+   from there — so it must live outside the scoped style. */
 .resize-guide-line {
   position: fixed;
   top: 0;

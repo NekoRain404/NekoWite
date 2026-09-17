@@ -34,10 +34,11 @@ let instances = 0
  * where the popup goes. The list — its element, its option ids, its scrolling —
  * is `ComboBoxList.vue`, teleported under the field here.
  */
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { modalStack } from '../services/modal-stack'
 import ComboBoxList from './ComboBoxList.vue'
 import { comboOptionId } from './combo-option-id'
+import { popupHostOf } from './popup-host'
 
 // `class`, `placeholder`, `title` and any listener are the closed control's
 // look and behaviour, and the closed control is the input — not the wrapper
@@ -84,6 +85,36 @@ const pos = ref<{ left: number; top: number; minWidth: number; drop: 'down' | 'u
 
 const inputEl = ref<HTMLInputElement | null>(null)
 const listEl = ref<InstanceType<typeof ComboBoxList> | null>(null)
+
+/**
+ * What the list's `<Teleport>` is aimed at: the field's nearest `.shell`, or `body` when the page
+ * has none.
+ *
+ * `body` is outside `.shell` — the one element `AppShell.vue:285-292` puts the user's appearance
+ * on — so a list rendered there resolved `palettes.css`'s `:root` block instead: measured in a
+ * dark `forest` window at `17px` and Source Serif 4, the field's own list drew
+ * `color(srgb 0.998431 0.994353 0.982275)` on `--app-elevated: #fffefb` with the light border, the
+ * light shadow, `system-ui` on its rows and the `ink` `--app-accent` on the selected one, while
+ * the field beside it drew `rgb(232, 243, 226)`. `components/SelectMenu.vue` is the same fix and
+ * `components/popup-host.ts` is where the carrier is named once for both.
+ *
+ * Resolved from the field rather than written as `to=".shell"`, because a `<Teleport>` whose
+ * selector matches nothing renders *nothing*: `resolveTarget` returns null and `TeleportImpl`
+ * never mounts the slot's nodes, so a static selector would trade a wrong-looking list for an
+ * invisible one on any page without a shell. A page that publishes on the document element — the
+ * pet window's own page (`features/desktop-pet/services/pet-page-appearance.ts`) — is that page,
+ * and `body`, which is what this component used to teleport to, is already inside its scope.
+ *
+ * The teleport itself stays. `place()` turns the field's `getBoundingClientRect()` — a viewport
+ * rectangle — into `left`/`top`, which is only an answer while the containing block is the
+ * viewport; and a popup rendered in place would be inside the `<label class="settings-field">`
+ * that wraps this field at its one call site (`features/settings/components/AiSettings.vue:83`),
+ * whose activation behaviour hands a press on the list's own padding to the input.
+ */
+const popupHost = ref<Element | string>('body')
+onMounted(() => {
+  popupHost.value = popupHostOf(inputEl.value)
+})
 
 const uid = props.id ?? `combobox-${++instances}`
 const listId = `${uid}-list`
@@ -302,7 +333,7 @@ onBeforeUnmount(() => {
       @click="show"
       @keydown="onKeydown"
     >
-    <Teleport to="body">
+    <Teleport :to="popupHost">
       <Transition name="combo-popup">
         <ComboBoxList
           v-if="open"

@@ -92,7 +92,9 @@ interface TypeReading {
   field: { fontSize: string, lineHeight: string }
   /** The status bar, which declares `11px` of its own. */
   status: { fontSize: string }
-  /** `body` — where `style.css:3` states the two properties, and outside `.shell`'s scope. */
+  /** The status bar's own buttons, which declare nothing and used to draw the UA's `13.3333px`. */
+  statusButton: { fontSize: string }
+  /** `body`, which states no typography of its own since `style.css`'s declaration was removed. */
   body: { fontSize: string }
   /** `document.documentElement`'s token block, the third number a fallback could land on. */
   token: { size: string, leading: string }
@@ -154,6 +156,7 @@ function readType(page: Page): Promise<TypeReading> {
       content: of('.dialog-content'),
       field: of('.dialog-content .settings-field'),
       status: { fontSize: of('.status-bar').fontSize },
+      statusButton: { fontSize: of('.status-btn').fontSize },
       body: { fontSize: of('body').fontSize },
       token: {
         size: rootStyle.getPropertyValue('--app-body-size').trim(),
@@ -215,6 +218,22 @@ function assertEnd(read: TypeReading, end: { size: number, leading: number }): v
   // file makes explicit rather than accidental: a surface that declares a size is not the app's body
   // text, and the setting does not reach it at either end of the range.
   expect(read.status.fontSize).toBe(`${STATUS_SIZE}px`)
+
+  // ---- And what declares nothing still draws the bar's size, not the engine's. -----------------
+  //
+  // The bar's two buttons declare no size at all, and a `<button>` carries the user agent's
+  // `font: 13.3333px Arial` — a *declaration*, so it resets inheritance and neither the bar's `11px`
+  // nor the user's setting could reach them. Measured, Chromium: `13.3333px` beside spans that drew
+  // `11px`, at every setting. `app/appShell-chrome.css`'s `.status-btn { font: inherit }` is the fix
+  // and this is the decision behind it: **the chrome's, not the user's** — a control inside the bar
+  // is part of the bar, and the assertion is the equality against the bar rather than a second
+  // `11px` written here, so this file cannot pass while the two disagree.
+  expect(
+    read.statusButton.fontSize,
+    `the buttons draw the bar's own size, not the engine's 13.3333px (read ${read.statusButton.fontSize})`,
+  ).toBe(read.status.fontSize)
+  expect(read.statusButton.fontSize).not.toBe(read.shell.fontSize)
+  expect(read.statusButton.fontSize).not.toBe('13.3333px')
 }
 
 test('the app inherits the font size and leading the shell publishes, at both ends of the range', async ({

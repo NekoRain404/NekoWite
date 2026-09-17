@@ -466,7 +466,6 @@ const shellStyle = computed<Record<string, string>>(() => ({
       </template>
     </StatusBar>
     <GhostWriter />
-    <CommandPalette />
     <Toast />
     <!-- The shell's own modals, and the only place their exit is declared; see
          the component for why they moved out of this template together. -->
@@ -486,6 +485,16 @@ const shellStyle = computed<Record<string, string>>(() => ({
       @resolve-permission="(allowed: boolean) => emit('resolve-permission', allowed)"
       @resolve-integrity="(reapprove: boolean) => emit('resolve-integrity', reapprove)"
     />
+    <!-- Last, and the position is load-bearing. `ui/CommandPalette.vue` stopped teleporting its
+         overlay to `body` (the reason is in that file: an `inset: 0` box's containing block is the
+         box it fills, and `.shell` *is* the window), so it is now a sibling of the dialog above
+         rather than an element appended after the whole application. The palette's `z-index:
+         10000` and the settings overlay's are the same number — the palette is meant to be raised
+         *over* a dialog — so the tie is broken by document order, and this is where it has to be
+         written: after `AppDialogs`, which is the order the teleport used to produce for free
+         (a `<Teleport>` appends to its target). `Toast` keeps its own 11000 and stays on top of
+         both wherever it sits. -->
+    <CommandPalette />
   </div>
 </template>
 

@@ -72,6 +72,7 @@ let instances = 0
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ChevronDown } from 'lucide-vue-next'
 import { modalStack } from '../services/modal-stack'
+import { popupHostOf } from './popup-host'
 
 const props = defineProps<{
   /** The chosen value. Picking a row emits the new one. */
@@ -107,24 +108,13 @@ const popupEl = ref<HTMLElement | null>(null)
 
 /**
  * What the popup's `<Teleport>` is aimed at: the trigger's nearest `.shell`, or
- * `body` when the page has none.
- *
- * Resolved from the trigger rather than written as `to=".shell"`, because a
- * `Teleport` whose selector matches nothing renders *nothing*: `resolveTarget`
- * returns null, warns in development, and `TeleportImpl` never calls the mount
- * the slot's nodes are handed to. That is a popup that never opens rather than a
- * popup that opens unthemed — the silent half of this project's signature
- * failure. A page that mounted a select outside the main window would have to
- * find its appearance where such a page keeps it, and `body` — what this
- * component teleported to before — is that place: `pet-page-appearance.ts`
- * publishes the same axes and properties on the *document element* of the pet
- * window's page, so everything under `body` there is already inside the scope.
- * The fallback is therefore the old behaviour and not a second declaration: it
- * repeats no value.
+ * `body` when the page has none. The rule — and the reason it is a lookup rather
+ * than `to=".shell"`, which a `<Teleport>` that matches nothing answers by
+ * rendering *nothing* — is `popup-host.ts`'s, because seven surfaces ask it.
  */
 const popupHost = ref<Element | string>('body')
 onMounted(() => {
-  popupHost.value = triggerEl.value?.closest('.shell') ?? 'body'
+  popupHost.value = popupHostOf(triggerEl.value)
 })
 
 const uid = props.id ?? `select-menu-${++instances}`

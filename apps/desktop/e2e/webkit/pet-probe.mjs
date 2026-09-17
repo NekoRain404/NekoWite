@@ -986,6 +986,72 @@ function verify(results) {
   )
 
   /*
+   * And the rest of the family `780ec5c` named, read on the same page in the same run: the command
+   * palette, the drag guide, the context menu and the AI model list. Each of these was teleported
+   * to `body` and each is read here as three elements — the popup, `.shell` and the page root —
+   * with the root as the fence, exactly as the select's popup above is.
+   *
+   * The four checks are as much a fence on *reaching* the surface as on what it resolves: a
+   * selector that found nothing would make every comparison below `undefined === undefined`, which
+   * is why each one starts by asserting the popup's own reading exists and is inside the shell.
+   */
+  const familyHolds = (popup) =>
+    popup !== null &&
+    popup?.inShell === true &&
+    popup?.elevated === preview?.shell?.elevated &&
+    popup?.elevated !== preview?.root?.elevated &&
+    popup?.accent === preview?.shell?.accent &&
+    popup?.accent !== preview?.root?.accent &&
+    popup?.text === preview?.shell?.text &&
+    popup?.text !== preview?.root?.text &&
+    popup?.font === preview?.shell?.font &&
+    popup?.font !== preview?.root?.font
+
+  run(
+    'and the command palette draws it — rendered where it is written, inside the shell',
+    `overlay in ${JSON.stringify(preview?.palette?.palette?.parent)} (shell: ${JSON.stringify(preview?.palette?.palette?.inShell)}); elevated ${JSON.stringify(preview?.palette?.palette?.elevated)} = shell ${JSON.stringify(preview?.shell?.elevated)} ≠ root ${JSON.stringify(preview?.root?.elevated)}; font ${JSON.stringify(preview?.palette?.palette?.font)}; a field’s family ${JSON.stringify(preview?.palette?.paletteInput?.family)}; face ${JSON.stringify(preview?.palette?.box?.face)}; overlay ${JSON.stringify(preview?.palette?.box?.overlay)} in a ${JSON.stringify(preview?.palette?.box?.viewport)} viewport`,
+    familyHolds(preview?.palette?.palette) &&
+      familyHolds(preview?.palette?.paletteInput) &&
+      // `inset: 0` against a containing block that has to be the window: the teleport was dropped
+      // for this one, so the box is the half of that decision that has to be measured.
+      preview?.palette?.box?.inShell === true &&
+      (preview?.palette?.box?.overlay?.[2] ?? 0) >= (preview?.palette?.box?.viewport?.[0] ?? 1) &&
+      (preview?.palette?.box?.overlay?.[3] ?? 0) >= (preview?.palette?.box?.viewport?.[1] ?? 1),
+  )
+
+  run(
+    'and the layout drag guide draws the user’s accent — a line in the colour the user picked',
+    `line in ${JSON.stringify(preview?.guide?.guide?.parent)}; accent ${JSON.stringify(preview?.guide?.guide?.accent)} = shell ${JSON.stringify(preview?.shell?.accent)} ≠ root ${JSON.stringify(preview?.root?.accent)}; drawn ${JSON.stringify(preview?.guide?.guide?.background)}; elevated ${JSON.stringify(preview?.guide?.guide?.elevated)}`,
+    familyHolds(preview?.guide?.guide) &&
+      // Not the `ink` grey the page root answers with: `color-mix(in srgb, #343532 62%, transparent)`
+      // is `color(srgb 0.203922 …)`, and the teal the shell publishes is not.
+      (preview?.guide?.guide?.background ?? '').indexOf('0.203922') < 0,
+  )
+
+  run(
+    'and the context menu draws it — inside the shell, with the palette’s own text',
+    `menu in ${JSON.stringify(preview?.ctxMenu?.ctxMenu?.parent)} (shell: ${JSON.stringify(preview?.ctxMenu?.ctxMenu?.inShell)}); elevated ${JSON.stringify(preview?.ctxMenu?.ctxMenu?.elevated)} = shell ${JSON.stringify(preview?.shell?.elevated)} ≠ root ${JSON.stringify(preview?.root?.elevated)}; a row ${JSON.stringify(preview?.ctxMenu?.ctxRow?.color)} in ${JSON.stringify(preview?.ctxMenu?.ctxRow?.family)}; face ${JSON.stringify(preview?.ctxMenu?.ctxMenu?.background)}`,
+    familyHolds(preview?.ctxMenu?.ctxMenu) &&
+      familyHolds(preview?.ctxMenu?.ctxRow) &&
+      preview?.ctxMenu?.ctxRow?.family === preview?.shell?.font &&
+      // The light palette's `--app-text`, which is what a menu on `body` painted.
+      preview?.ctxMenu?.ctxRow?.color !== 'rgb(41, 42, 39)',
+  )
+
+  run(
+    'and the AI model list draws it — and is still placed against its field',
+    `list in ${JSON.stringify(preview?.combo?.combo?.parent)} (shell: ${JSON.stringify(preview?.combo?.combo?.inShell)}); elevated ${JSON.stringify(preview?.combo?.combo?.elevated)} = shell ${JSON.stringify(preview?.shell?.elevated)} ≠ root ${JSON.stringify(preview?.root?.elevated)}; a row in ${JSON.stringify(preview?.combo?.comboRow?.family)}; face ${JSON.stringify(preview?.combo?.combo?.background)}; ${JSON.stringify(preview?.combo?.box?.gap)}px off the field, dx ${JSON.stringify(preview?.combo?.box?.dx)}`,
+    familyHolds(preview?.combo?.combo) &&
+      familyHolds(preview?.combo?.comboRow) &&
+      preview?.combo?.comboRow?.family === preview?.shell?.font &&
+      // Four pixels with a pixel of slack: this reading is taken against the field as it stood
+      // when the list was placed, and the settings section settles under it by a fraction of a
+      // pixel after that. (Measured here: 3.47. The Chromium case reads 4.00 after the re-place
+      // the control itself makes on a viewport change, and the two agree about the recipe.)
+      Math.abs((preview?.combo?.box?.gap ?? 0) - 4) < 1,
+  )
+
+  /*
    * The app's **inherited** size and leading, which is the other half of the same defect: they were
    * stated on `body` (`style.css:3`) and `body` is outside `.shell`, so `var(--app-body-size)`
    * resolved there to the token block's `15px` and the whole application inherited that result at
@@ -1317,7 +1383,15 @@ const wrote = arguments[0], done = arguments[arguments.length - 1];
     }
   }
 
-  done({
+/*
+   * The dialog's own readings, taken here rather than in the payload below, and the ordering is
+   * measured rather than tidy: the family that follows this block presses a pointer, and a
+   * pointerdown that reaches document is what the settings overlay dismisses itself on — so a
+   * payload built after those steps describes a dialog that has already closed. (The first run of
+   * this block did exactly that: overlay came back with no parent and every dialog reading was
+   * the empty string.)
+   */
+  const dialogReadings = {
     ok: true,
     // The two readings the size claim is made of: what the stage drew, and which property carried it.
     fontSize: style.fontSize,
@@ -1364,6 +1438,189 @@ const wrote = arguments[0], done = arguments[arguments.length - 1];
     contentFontSize: content ? getComputedStyle(content).fontSize : null,
     contentLineHeight: content ? getComputedStyle(content).lineHeight : null,
     bodyFontSize: getComputedStyle(document.body).fontSize,
+  };
+
+  /*
+   * The rest of the body-teleported family, in this engine.
+   *
+   * ui/ContextMenu.vue, ui/CommandPalette.vue, ui/LayoutResizeHandle.vue and
+   * components/ComboBox.vue all teleported to body, which is outside .shell — the one element
+   * carrying the four data-* axes and the eight inline --app-* properties — so every one of them
+   * resolved palettes.css's :root block. 780ec5c measured that for the select's popup above and
+   * named the rest as one family; this block is the same measurement for four more of them, taken
+   * in this engine rather than in Chromium because wry on Linux is WebKitGTK and the reading has
+   * to come from the engine that ships. (e2e/agent-popup-host-scope.spec.ts carries the fifth,
+   * sixth and seventh: they need a scripted runtime, which this page has none of.)
+   *
+   * The shape of every reading is the one the select step uses: **three elements, three answers**.
+   * The popup's own cascade, .shell's, and the page root's — the third is the fence, because a
+   * popup and a shell that both answered :root would satisfy an equality that tested nothing.
+   * The appearance is already driven (dark, forest, serif, leading 2) by the step that opened this
+   * page, and the accent is deliberately left alone there; the fence holds anyway, because the
+   * dark ink accent the shell publishes is #efede7 and the page root's is #343532.
+   */
+  const family = (selector) => {
+    const el = document.querySelector(selector);
+    if (!el) return null;
+    const cs = getComputedStyle(el);
+    return {
+      at: selector,
+      parent: el.parentElement ? String(el.parentElement.className) : null,
+      inShell: el.closest('.shell') !== null,
+      elevated: cs.getPropertyValue('--app-elevated').trim(),
+      text: cs.getPropertyValue('--app-text').trim(),
+      accent: cs.getPropertyValue('--app-accent').trim(),
+      font: cs.getPropertyValue('--app-font').trim(),
+      background: cs.backgroundColor,
+      shadow: cs.boxShadow,
+      color: cs.color,
+      family: cs.fontFamily,
+    };
+  };
+  const shellFamily = family('.shell');
+  const rootFamily = family(':root');
+  /*
+   * One shell reading and one root reading for the whole block, taken once: they are the elements
+   * the family is compared *against*, and re-reading them per surface would be four answers to one
+   * question. The popups are read where each of them is on screen.
+   */
+  const readFamily = () => ({
+    ctxMenu: family('.ctx-menu'),
+    ctxRow: family('.ctx-menu-item'),
+    palette: family('.palette-overlay'),
+    paletteInput: family('.palette-input'),
+    guide: family('.resize-guide-line'),
+    combo: family('.combo-popup'),
+    comboRow: family('.combo-option'),
+    comboField: family('#settings-ai-model'),
+  });
+
+  /*
+   * The combobox, first and by its own door: the settings dialog's AI row, then the model field.
+   * The list only opens when there is something to offer (ComboBox.show returns on an empty list),
+   * and the provider's cached model list is empty on a page that has never refreshed — so the
+   * field holds exactly one suggestion, the model id it already carries. Read before the guide
+   * below, which is the step that closes this dialog.
+   */
+  const aiRow = document.querySelectorAll('.dialog-nav .nav-row')[4];
+  if (aiRow) {
+    aiRow.click();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  const comboTrigger = document.querySelector('#settings-ai-model');
+  let comboBox = null;
+  if (comboTrigger) {
+    comboTrigger.click();
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    const list = document.querySelector('.combo-popup');
+    const field = comboTrigger.getBoundingClientRect();
+    if (list) {
+      const rect = list.getBoundingClientRect();
+      comboBox = { gap: rect.top - field.bottom, dx: rect.left - field.left };
+    }
+  }
+  const comboRead = readFamily();
+  if (comboTrigger) {
+    comboTrigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  /*
+   * The command palette, by its own door: the app's Ctrl+K listener on window, in the capture
+   * phase (ui/CommandPalette.vue's onGlobalKeydown). It is the only way in — the palette has no
+   * control and no trigger — and the one member of the family that dropped its teleport rather
+   * than retargeting it, which is why the overlay's box is read as well: an inset: 0 overlay whose
+   * containing block stopped being the window would fill something smaller than it.
+   */
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true }));
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const paletteBox = (() => {
+    const overlay = document.querySelector('.palette-overlay');
+    if (!overlay) return null;
+    const rect = overlay.getBoundingClientRect();
+    const box = document.querySelector('.palette');
+    return {
+      overlay: [rect.top, rect.left, rect.right, rect.bottom],
+      viewport: [innerWidth, innerHeight],
+      inShell: overlay.closest('.shell') !== null,
+      face: box ? getComputedStyle(box).backgroundColor : null,
+      shadow: box ? getComputedStyle(box).boxShadow : null,
+    };
+  })();
+  const paletteRead = readFamily();
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  /*
+   * The layout drag guide, by its own door: a press on a handle, a move, and a release — the
+   * pointer events ui/LayoutResizeHandle.vue listens for, dispatched rather than driven through
+   * the driver's input API because this probe has no pointer device. The rail's handle is the one
+   * that is always there once the rail is: App.vue starts railOpen false, so the status bar's own
+   * rail button is pressed first.
+   *
+   * This is the block that closes the settings dialog, which is why every reading that needs the
+   * dialog is taken above it — the same ordering the dialog's own payload follows.
+   */
+  const railButton = document.querySelectorAll('.status-btn')[0];
+  if (railButton && !document.querySelector('.layout-resize-handle')) {
+    railButton.click();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  const handles = document.querySelectorAll('.layout-resize-handle');
+  const handle = handles[handles.length - 1] ?? null;
+  let guideRead = null;
+  if (handle) {
+    const box = handle.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const y = box.top + box.height / 2;
+    const pointer = (type, target, clientX) =>
+      target.dispatchEvent(new PointerEvent(type, {
+        clientX, clientY: y, button: 0, buttons: 1, pointerId: 1, pointerType: 'mouse', bubbles: true, cancelable: true,
+      }));
+    pointer('pointerdown', handle, x);
+    pointer('pointermove', window, x - 40);
+    // A frame, not a sleep: the guide's position is written from a requestAnimationFrame the move
+    // schedules, and the element exists only once that has run.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    guideRead = readFamily();
+    pointer('pointerup', window, x - 40);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+
+  /*
+   * The context menu. **The one member of the family this probe mounts rather than reaches**, and
+   * the exception is worth its own sentence: a menu is opened by a right click on a row that only
+   * exists with a vault open, and this page has no vault — the app page is on the browser path
+   * here, where pick_folder is answered by nobody. So the menu is mounted the way its six hosts
+   * mount it (ui/TabBar.vue:179, ui/EditorPane.vue:265, …): the real component, in the real
+   * .shell, on a host element inside it. What that does not cover is a host's own @contextmenu
+   * handler, and it does not need to — what is measured is where the component renders and what it
+   * resolves, which is the whole of the fix.
+   */
+  const ctxHost = document.createElement('div');
+  document.querySelector('.shell').append(ctxHost);
+  const ctxModule = await import('/src/ui/ContextMenu.vue');
+  const ctxApp = vue.createApp(ctxModule.default, {
+    x: 120, y: 160,
+    items: [{ id: 'open', label: 'Open' }, { id: 'rename', label: 'Rename' }],
+  });
+  ctxApp.mount(ctxHost);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const ctxRead = readFamily();
+  ctxApp.unmount();
+  ctxHost.remove();
+
+  done({
+    ...dialogReadings,
+    // The family the four checks after the select's popup are about: what each surface resolved,
+    // against the two elements they are all compared with. shellFamily and rootFamily are those
+    // elements; the four keys are the surfaces, each read while it was on screen.
+    shell: shellFamily,
+    root: rootFamily,
+    palette: { ...paletteRead, box: paletteBox },
+    guide: guideRead,
+    ctxMenu: ctxRead,
+    combo: { ...comboRead, box: comboBox },
   });
 })().catch((error) => done({ ok: false, why: String((error && error.message) || error) }));
 `

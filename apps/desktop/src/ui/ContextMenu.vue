@@ -13,6 +13,7 @@ export interface ContextMenuItem {
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { pagePopupHost } from '../components/popup-host'
 import { t } from '../i18n'
 
 const props = defineProps<{
@@ -20,6 +21,36 @@ const props = defineProps<{
   y: number
   items: ContextMenuItem[]
 }>()
+
+/**
+ * Where the menu is rendered, and it is not `body`.
+ *
+ * `body` is *outside* `.shell` — the one element `AppShell.vue:285-292` puts the user's appearance
+ * on (`data-theme`, `data-color-scheme`, `data-accent`, `data-contrast` and the eight inline
+ * `--app-*` properties). So a menu rendered there resolved `palettes.css`'s `:root` block instead:
+ * measured in a dark `forest` window at `17px` and Source Serif 4, a right click on a tab drew
+ * `color(srgb 0.998431 0.994353 0.982275)` on `--app-elevated: #fffefb` with the light border, the
+ * light shadow, `system-ui` on its rows and `--app-accent: #343532`, while the tab under it drew
+ * `#243020` in `#e8f3e2` and the shell published `#2e9e8f`. `popupHostOf`'s sibling is what fixes
+ * that: the menu is rendered inside the shell and inherits the one declaration set, so nothing
+ * about the appearance is repeated here.
+ *
+ * **Why this one asks the page and not a control.** A menu is placed at a *point* — `props.x` and
+ * `props.y` are `clientX`/`clientY` from the press that opened it — so there is no element whose
+ * ancestry could be walked, which is the shape `components/SelectMenu.vue` and
+ * `components/ComboBox.vue` use. The app's window is entirely inside `.shell` (`height: 100vh`,
+ * full width), so the page's answer is the answer for every point on it.
+ *
+ * **Resolved before the first render, and that is deliberate.** This component's `<Teleport>` is
+ * its template root and its content is always mounted (a target that changed on `onMounted` would
+ * move the menu's element through the DOM on the frame after it was created). Every host mounts
+ * this with `v-if` on the press that opened it (`ui/TabBar.vue:179`, `ui/EditorPane.vue:265`,
+ * `ui/AttachmentsPanel.vue:318`, `features/notes/components/NoteListPanel.vue:228`,
+ * `features/notes/components/NoteListToolbar.vue:236`,
+ * `features/vault/components/FileTreeContextMenu.vue:52`), so the page is already in the state the
+ * press was made in when `setup` runs.
+ */
+const popupHost = ref<Element | string>(pagePopupHost())
 
 const emit = defineEmits<{
   (e: 'select', id: string): void
@@ -161,7 +192,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Teleport to="body">
+  <Teleport :to="popupHost">
     <div
       ref="menuRef"
       class="ctx-menu"

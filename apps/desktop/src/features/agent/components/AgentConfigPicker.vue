@@ -38,9 +38,10 @@ export interface AgentConfigPickerLabels {
  * The list itself is `AgentConfigOptionsPopup.vue` — the part about rows and keys — and the
  * placement and dismissal are the composable's; what is left here is the control.
  */
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ChevronDown } from 'lucide-vue-next'
 import { t } from '../../../i18n'
+import { popupHostOf } from '../../../components/popup-host'
 import { useDetachedPopup } from '../composables/use-detached-popup'
 import type { AgentConfigSelectControl } from '../services/agent-config-options'
 import AgentConfigOptionsPopup from './AgentConfigOptionsPopup.vue'
@@ -120,6 +121,33 @@ const popup = useDetachedPopup({
   claim: 'agent-config-picker',
   trigger: triggerEl,
   popup: () => popupRef.value?.element() ?? null,
+})
+
+/**
+ * What the list's `<Teleport>` is aimed at: the trigger's nearest `.shell`, or `body` when the
+ * page has none.
+ *
+ * The list leaves the trigger's subtree — it has to, for the reasons the header above gives — but
+ * it must not land on `body`, which is *outside* the one element that carries the user's
+ * appearance. `AppShell.vue:285` puts `data-theme`, `data-color-scheme`, `data-accent`,
+ * `data-contrast` and the eight inline `--app-*` properties on `.shell` and nowhere else in the
+ * page, so a list under `body` resolves `palettes.css`'s `:root` block: the light palette, the
+ * default accent and the default face inside a window the user has told to draw a dark theme —
+ * measured for every select in the app by `780ec5c`, and the defect
+ * `components/popup-host.ts` was written from.
+ *
+ * Resolved once, on mount. There is one answer for as long as this picker is up — the trigger is
+ * this component's own and is not conditional, and the element a page publishes its appearance on
+ * does not move — so a `computed` would re-walk the tree on every render to find the same element.
+ *
+ * The fallback is deliberate and is not a second answer: a `Teleport` aimed at a selector that
+ * matched nothing renders *nothing*, so a page without a shell has to keep getting a list — and
+ * the pet window's page, which publishes the appearance on its document element
+ * (`pet-page-appearance.ts`), has everything under `body` inside that scope already.
+ */
+const popupHost = ref<Element | string>('body')
+onMounted(() => {
+  popupHost.value = popupHostOf(triggerEl.value)
 })
 
 /** The engine's choices narrowed by what is being typed, in the engine's order. A filter rather
@@ -240,7 +268,7 @@ function onTriggerKeydown(event: KeyboardEvent): void {
       :stroke-width="1.8"
       aria-hidden="true"
     />
-    <Teleport to="body">
+    <Teleport :to="popupHost">
       <Transition name="agent-config-popup">
         <AgentConfigOptionsPopup
           v-if="popup.open.value"

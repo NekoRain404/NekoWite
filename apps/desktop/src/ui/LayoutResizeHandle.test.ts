@@ -32,9 +32,18 @@ interface Harness {
   resizeEnds: number
 }
 
-function mountHandle(props: Record<string, unknown>, trackWidth = 0): Harness {
+/**
+ * `shell` is `AppShell.vue`'s element: the one that carries the user's appearance (the four
+ * `data-*` axes and the eight inline `--app-*` properties), and therefore the element the drag
+ * guide is teleported into. A case that leaves it off is mounting into a page the product does not
+ * have — worth one case of its own, for the fallback, and not for the rest.
+ */
+function mountHandle(props: Record<string, unknown>, trackWidth = 0, shell = false): Harness {
+  const wrapper = document.createElement('div')
+  if (shell) wrapper.className = 'shell'
+  document.body.appendChild(wrapper)
   const host = document.createElement('div')
-  document.body.appendChild(host)
+  wrapper.appendChild(host)
   // jsdom lays nothing out, so clientWidth is always 0. A fraction handle reads
   // the track from its parent, so the width has to be stated explicitly.
   if (trackWidth > 0) {
@@ -63,6 +72,47 @@ function keydown(el: HTMLElement, key: string): void {
 function dblclick(el: HTMLElement): void {
   el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
 }
+
+describe('where the drag guide is rendered', () => {
+  /**
+   * The guide is `color-mix(in srgb, var(--app-accent) 62%, transparent)` — a hairline in the
+   * *user's* accent — and `--app-accent` is resolved from the four `data-*` axes `AppShell.vue`
+   * puts on `.shell` and nowhere else. Teleported to `body`, the line resolved the page root's
+   * block instead: measured in Chromium with the `teal` accent chosen, it drew
+   * `color(srgb 0.203922 0.207843 0.196078 / 0.62)` — the `ink` grey — while the handle it
+   * followed drew `#2e9e8f`.
+   */
+  it('renders inside the element that carries the appearance, and falls back to the body', async () => {
+    stubRaf()
+    const h = mountHandle({ value: 200, min: 180, max: 400, defaultValue: 200 }, 0, true)
+    h.el.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 100, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 120, bubbles: true }))
+    flushRaf()
+    await nextTick()
+
+    const shell = document.body.querySelector('.shell')
+    expect(shell).not.toBeNull()
+    expect(document.querySelector('.resize-guide-line')?.parentElement).toBe(shell)
+    expect(document.querySelector('.resize-guide-line')?.parentElement).not.toBe(document.body)
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    await nextTick()
+    h.app.unmount()
+
+    // And the fallback, which is deliberate: a page without a shell publishes its appearance on
+    // the document element (the pet window's page does), so everything under `body` there is
+    // already inside the scope — where a `Teleport` aimed at a selector that matched nothing would
+    // render nothing at all.
+    const bare = mountHandle({ value: 200, min: 180, max: 400, defaultValue: 200 })
+    bare.el.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 100, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 120, bubbles: true }))
+    flushRaf()
+    await nextTick()
+    expect(document.querySelector('.resize-guide-line')?.parentElement).toBe(document.body)
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    await nextTick()
+    bare.app.unmount()
+  })
+})
 
 describe('LayoutResizeHandle', () => {
   it('renders as a focusable separator with aria bounds', () => {

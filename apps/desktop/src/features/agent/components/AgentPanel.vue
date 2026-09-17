@@ -81,6 +81,7 @@ import type {
   AgentPromptAttachment,
   AgentSession,
 } from '../../../platform/gateways/agent-contracts'
+import { popupHostOf } from '../../../components/popup-host'
 import { useAgentSession } from '../composables/use-agent-session'
 import { useAgentCommandMenu } from '../composables/use-agent-command-menu'
 import { useAgentConfigRow } from '../composables/use-agent-config-row'
@@ -284,6 +285,28 @@ const historyEl = ref<InstanceType<typeof AgentSessionHistoryMenu> | null>(null)
 const menuEl = ref<InstanceType<typeof AgentPanelMenu> | null>(null)
 
 /**
+ * Where each of those two popups is teleported to: the `.shell` its own control is drawn inside,
+ * or `body` when the page has none (`components/popup-host.ts`).
+ *
+ * A popup left on `body` resolves `palettes.css`'s `:root` block — the light palette, the default
+ * accent, the default face — inside a window the user has told to draw a dark theme, because
+ * `AppShell.vue:285` publishes the appearance on `.shell` and nowhere else. Each answer is walked
+ * from the control its own popup hangs off; today the bar draws both, so they are one element.
+ *
+ * Resolved by `computed` rather than once in `onMounted`, and the history control is the reason:
+ * the bar draws it on the engine's own `session/list` answer (`AgentSessionBar.vue:354`), which
+ * arrives *after* this panel mounts — so a value taken at mount would be `body`, the fallback
+ * standing in silently for a control that was merely late. Measured: the `onMounted` shape passes
+ * for the options menu and fails for the session list.
+ *
+ * `body` is that fallback and not a second answer: a `Teleport` aimed at a selector that matched
+ * nothing renders *nothing*, so a page without a shell must still get its popups — and the pet
+ * window's page, which publishes the appearance on its document element, is that page.
+ */
+const menuHost = computed(() => popupHostOf(barEl.value?.menuElement()))
+const historyHost = computed(() => popupHostOf(barEl.value?.triggerElement()))
+
+/**
  * The engine's *other* sessions (§5.3's history control): whether the control may be drawn at all,
  * the list it opens, and the free action's two calls. The control itself is the bar's; everything
  * behind it is `use-agent-session-history`'s, which is also where each gate and each of the four
@@ -450,7 +473,7 @@ function onSend(text: string, attachments: readonly AgentPromptAttachment[]): vo
          reasons the list below is: the rail body scrolls and would clip it, and the placement is
          the composable's. It is drawn on the panel's own answer — {@link menuRows} non-empty —
          so a panel whose caller can carry no row has no popup and no control to open one. -->
-    <Teleport to="body">
+    <Teleport :to="menuHost">
       <Transition name="agent-history-popup">
         <AgentPanelMenu
           v-if="menuOpenState"
@@ -466,12 +489,12 @@ function onSend(text: string, attachments: readonly AgentPromptAttachment[]): vo
         />
       </Transition>
     </Teleport>
-    <!-- The engine's sessions, teleported to the body and placed against the control in the bar
-         by `useDetachedPopup`: the rail body scrolls, and a list drawn inside it would be clipped
-         by a container it has nothing to do with. It is the panel's list rather than the bar's
-         because the gateway and the session are here — the bar draws the control and nothing
+    <!-- The engine's sessions, teleported into the shell and placed against the control in the
+         bar by `useDetachedPopup`: the rail body scrolls, and a list drawn inside it would be
+         clipped by a container it has nothing to do with. It is the panel's list rather than the
+         bar's because the gateway and the session are here — the bar draws the control and nothing
          else. -->
-    <Teleport to="body">
+    <Teleport :to="historyHost">
       <Transition name="agent-history-popup">
         <AgentSessionHistoryMenu
           v-if="historyOpen"

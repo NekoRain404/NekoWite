@@ -252,65 +252,92 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Teleport to="body">
+  <!-- Rendered here, and not teleported. This is the one member of the body-teleported family
+       that drops its `<Teleport>` rather than retargeting it, and the reason is the shape of the
+       box rather than a preference.
+
+       `780ec5c` kept the teleport for `components/SelectMenu.vue` because `place()` turns a
+       `getBoundingClientRect()` — a *viewport* rectangle — into `left`/`top`, which is only an
+       answer while the popup's containing block is the viewport: an ancestor carrying `transform`,
+       `translate`, `filter`, `backdrop-filter` or `contain` becomes that containing block instead,
+       and every coordinate is then measured from its padding box. A select's popup is also a box
+       whose position is *computed* from a measurement, which is why the retarget it got is a
+       retarget and not a removal.
+
+       This overlay computes nothing. It is `position: fixed; inset: 0`, so its containing block
+       *is* the box it is meant to fill — and the element it is now a child of, `.shell`
+       (`AppShell.vue:285`), is `height: 100vh` across the whole window (`appShell-chrome.css:20`).
+       An ancestor that became a containing block would therefore cost it nothing: `inset: 0`
+       against `.shell` is the same rectangle as `inset: 0` against the viewport. It also has no
+       trigger and no `<label for>` to be swallowed by — it is raised by the app's own Ctrl+K
+       listener (`onGlobalKeydown`) and by nothing else — so the two measured reasons `SelectMenu`
+       kept its teleport do not apply to it, and what the teleport *did* cost was the whole
+       appearance: rendered on `body` it resolved `palettes.css`'s light `:root` block in a dark
+       window, drawing `color(srgb 0.998824 0.994784 0.982784)` under `system-ui`.
+
+       Being a child of `.shell` at the end of that element's children is also what keeps it above
+       the settings dialog: both overlays are `z-index: 10000` (`features/palette/styles/
+       commandPalette.css:12` and the dialog's own), so the tie is broken by document order, and
+       `AppShell.vue` renders this after `AppDialogs`. On `body` it was last for the same reason —
+       a teleport appends to its target — and that is the property the move had to preserve, not a
+       coincidence it may lose. -->
+  <div
+    v-if="mounted"
+    class="palette-overlay"
+    :class="{ 'is-open': visible }"
+    role="presentation"
+    @pointerdown.self="hide"
+  >
     <div
-      v-if="mounted"
-      class="palette-overlay"
-      :class="{ 'is-open': visible }"
-      role="presentation"
-      @pointerdown.self="hide"
+      ref="paletteEl"
+      class="palette"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="t('palette.aria')"
     >
-      <div
-        ref="paletteEl"
-        class="palette"
-        role="dialog"
-        aria-modal="true"
-        :aria-label="t('palette.aria')"
-      >
-        <div class="palette-search">
-          <Search
-            class="palette-search-icon"
-            :size="15"
-            :stroke-width="1.8"
-          />
-          <input
-            ref="inputRef"
-            v-model="query"
-            class="palette-input"
-            type="text"
-            :placeholder="t('palette.placeholder')"
-            role="combobox"
-            aria-autocomplete="list"
-            aria-expanded="true"
-            :aria-controls="PALETTE_LIST_ID"
-            :aria-activedescendant="activeId"
-            autocomplete="off"
-            spellcheck="false"
-            @keydown="onInputKeydown"
-          >
-        </div>
-        <p
-          v-if="!hasDocument"
-          class="palette-note"
-        >
-          {{ t('palette.noDocument') }}
-        </p>
-        <PaletteList
-          ref="listRef"
-          :rows="rows"
-          :active-index="activeIndex"
-          :show-empty="!flatRows.length && hasDocument"
-          @activate="execute"
-          @highlight="setActive"
+      <div class="palette-search">
+        <Search
+          class="palette-search-icon"
+          :size="15"
+          :stroke-width="1.8"
         />
-        <div class="palette-footer">
-          <span><kbd>↑</kbd><kbd>↓</kbd> {{ t('palette.footerSelect') }}</span>
-          <span><kbd>Enter</kbd> {{ t('palette.footerExecute') }}</span>
-          <span><kbd>Esc</kbd> {{ t('palette.footerClose') }}</span>
-        </div>
+        <input
+          ref="inputRef"
+          v-model="query"
+          class="palette-input"
+          type="text"
+          :placeholder="t('palette.placeholder')"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded="true"
+          :aria-controls="PALETTE_LIST_ID"
+          :aria-activedescendant="activeId"
+          autocomplete="off"
+          spellcheck="false"
+          @keydown="onInputKeydown"
+        >
+      </div>
+      <p
+        v-if="!hasDocument"
+        class="palette-note"
+      >
+        {{ t('palette.noDocument') }}
+      </p>
+      <PaletteList
+        ref="listRef"
+        :rows="rows"
+        :active-index="activeIndex"
+        :show-empty="!flatRows.length && hasDocument"
+        @activate="execute"
+        @highlight="setActive"
+      />
+      <div class="palette-footer">
+        <span><kbd>↑</kbd><kbd>↓</kbd> {{ t('palette.footerSelect') }}</span>
+        <span><kbd>Enter</kbd> {{ t('palette.footerExecute') }}</span>
+        <span><kbd>Esc</kbd> {{ t('palette.footerClose') }}</span>
       </div>
     </div>
-  </Teleport>
+  </div>
 </template>
 
 <style scoped src="../features/palette/styles/commandPalette.css"></style>

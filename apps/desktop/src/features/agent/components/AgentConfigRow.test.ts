@@ -67,9 +67,25 @@ interface Harness {
 
 let mounted: VueApp[] = []
 
-function mount(options: AgentConfigOption[] = REPORTED): Harness {
+/**
+ * `where.shell` mounts the row where the app mounts it — inside `AppShell.vue`'s element, the one
+ * that carries the user's appearance (the four `data-*` axes and the eight inline `--app-*`
+ * properties). Left off, the row is in a page the product does not have: a page with no shell,
+ * which is worth one case of its own, for the fallback, and not for the rest.
+ */
+function mount(
+  options: AgentConfigOption[] = REPORTED,
+  where: { shell?: boolean } = {},
+): Harness {
+  const shell = document.createElement('div')
+  if (where.shell === true) {
+    shell.className = 'shell'
+    shell.dataset.theme = 'dark'
+    shell.style.setProperty('--app-text', '#e8f3e2')
+  }
+  document.body.appendChild(shell)
   const host = document.createElement('div')
-  document.body.appendChild(host)
+  shell.appendChild(host)
   const choices: Array<[string, string | boolean]> = []
   const props = reactive<RowProps>({
     controls: configControls(SESSION, options),
@@ -298,5 +314,40 @@ describe('a frame that changes the engine’s own value', () => {
     const harness = mount()
     await harness.report([REPORTED[1]])
     expect(triggers(harness.host).map((trigger) => trigger.dataset.option)).toEqual(['mode'])
+  })
+})
+
+/** The list's host, which is the picker's half of the defect and not the row's: `AgentConfigRow`
+ *  only draws the control, and `AgentConfigPicker` decides where the list it opens is rendered. */
+describe('where the list is rendered', () => {
+  const popup = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>('.agent-config-popup')
+
+  it('renders it inside the element that carries the appearance', async () => {
+    const { host } = mount(REPORTED, { shell: true })
+    triggers(host)[0].click()
+    await flush()
+
+    // The list is teleported — it has to be, so that no ancestor can become the containing block
+    // of a `position: fixed` box and answer its coordinates from somewhere else — but *where* it
+    // is teleported to is the whole of this case. `.shell` is `AppShell.vue`'s element and the
+    // only place `data-theme` and the inline `--app-*` properties live; `body` is outside it, so a
+    // list left there resolves `palettes.css`'s `:root` block and draws the light palette in a
+    // dark theme (measured for every select in the app by `780ec5c`).
+    const shell = document.body.querySelector('.shell')
+    expect(shell).not.toBeNull()
+    expect(popup()?.parentElement).toBe(shell)
+    expect(popup()?.parentElement).not.toBe(document.body)
+  })
+
+  it('falls back to the body on a page that has no shell', async () => {
+    // The pet window's page is the shape: it publishes the appearance on the document element
+    // (`pet-page-appearance.ts`), so everything under `body` there is inside the scope — and a
+    // `Teleport` aimed at a selector that matched nothing would render *nothing* rather than an
+    // unthemed list. This is the case that says the fallback is deliberate.
+    const { host } = mount()
+    triggers(host)[0].click()
+    await flush()
+    expect(popup()?.parentElement).toBe(document.body)
   })
 })

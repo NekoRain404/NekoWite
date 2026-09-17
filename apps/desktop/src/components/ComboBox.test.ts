@@ -27,9 +27,24 @@ afterEach(() => {
   modalStack.resetModalStack()
 })
 
-function mount(options: { value?: string, options?: readonly string[], attrs?: Record<string, unknown> } = {}) {
+/**
+ * Mount the field where the app mounts it.
+ *
+ * `shell` is `AppShell.vue`'s element: the one that carries the user's appearance (the four
+ * `data-*` axes and the eight inline `--app-*` properties), and therefore the element the list is
+ * teleported into. A case that leaves it off is mounting into a page the product does not have —
+ * which is worth one case of its own, for the fallback, and not for the rest.
+ */
+function mount(options: { value?: string, options?: readonly string[], attrs?: Record<string, unknown>, shell?: boolean } = {}) {
+  const shell = document.createElement('div')
+  if (options.shell === true) {
+    shell.className = 'shell'
+    shell.dataset.theme = 'dark'
+    shell.style.setProperty('--app-text', '#e8f3e2')
+  }
+  document.body.appendChild(shell)
   const host = document.createElement('div')
-  document.body.appendChild(host)
+  shell.appendChild(host)
   const model = ref(options.value ?? '')
   const app = createApp({
     setup: () => () => h(ComboBox, {
@@ -96,6 +111,35 @@ describe('ComboBox', () => {
     expect(input().hasAttribute('list')).toBe(false)
     expect(document.body.querySelector('datalist')).toBeNull()
     expect(popup()).toBeNull()
+  })
+
+  it('renders the list inside the element that carries the appearance', async () => {
+    mount({ value: 'gpt-4o-mini', shell: true })
+    input().click()
+    await nextTick()
+
+    // The list is teleported out of the field's subtree — it has to be: `place()` turns a
+    // *viewport* rectangle into `left`/`top`, which is only an answer while the containing block
+    // is the viewport, and the field's one call site wraps it in a `<label>` that would hand a
+    // press on the list's own padding to the input. Where it is teleported *to* is the whole of
+    // this case: `.shell` is where `AppShell.vue:285-292` publishes the user's appearance, and
+    // `body` is outside it — which is why every one of these lists used to draw the page root's
+    // light palette, its `system-ui` and its `ink` accent inside a dark window.
+    const shell = document.body.querySelector('.shell')
+    expect(shell).not.toBeNull()
+    expect(popup()?.parentElement).toBe(shell)
+    expect(popup()?.parentElement).not.toBe(document.body)
+  })
+
+  it('falls back to the body on a page that has no shell', async () => {
+    // The pet window's page is the shape: it publishes the appearance on the document element
+    // (`pet-page-appearance.ts`), so everything under `body` there is inside the scope — and a
+    // `Teleport` aimed at a selector that matched nothing would render *nothing* rather than an
+    // unthemed list. This is the case that says the fallback is deliberate.
+    mount({ value: 'gpt-4o-mini' })
+    input().click()
+    await nextTick()
+    expect(popup()?.parentElement).toBe(document.body)
   })
 
   it('opens on a click with every option, and names the listbox from the input', async () => {

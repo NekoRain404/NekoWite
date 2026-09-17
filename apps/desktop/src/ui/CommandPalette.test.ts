@@ -59,9 +59,24 @@ function stubMotion(): void {
   }))
 }
 
-function mount(): void {
+/**
+ * Mount the palette where the app mounts it.
+ *
+ * `shell` is `AppShell.vue`'s element: the one that carries the user's appearance, and the
+ * element `AppShell.vue` renders this component inside (`<CommandPalette />` is a direct child of
+ * `.shell`). It is not teleported — the reason is in the component, and it comes down to an
+ * `inset: 0` overlay's containing block being the box it is meant to fill. A case that leaves the
+ * shell off is mounting into a page the product does not have.
+ */
+function mount(options: { shell?: boolean } = {}): void {
+  const shell = document.createElement('div')
+  if (options.shell === true) {
+    shell.className = 'shell'
+    shell.dataset.theme = 'dark'
+  }
+  document.body.appendChild(shell)
   const host = document.createElement('div')
-  document.body.appendChild(host)
+  shell.appendChild(host)
   const app = createApp(CommandPalette)
   app.use(pinia)
   app.mount(host)
@@ -309,5 +324,40 @@ describe('CommandPalette commands without an open document', () => {
     itemWithLabel(t('command.bold'))?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await nextTick()
     expect(runEditorCommandMock).toHaveBeenCalledWith('bold')
+  })
+})
+
+describe('where the palette is rendered', () => {
+  /**
+   * The overlay used to be teleported to `body`, which is outside `.shell` — the element
+   * `AppShell.vue:285-292` puts the user's appearance on. Measured in Chromium with dark, `forest`
+   * and the serif interface font driven through the Appearance page: the palette drew
+   * `color(srgb 0.998824 0.994784 0.982784)` on the light `--app-elevated`, with the light shadow
+   * and `system-ui` on its own search field.
+   *
+   * This is the one member of that family that drops its teleport instead of retargeting it, and
+   * the case is written as the *absence* of one: the overlay is a child of the element the
+   * component was mounted in.
+   */
+  it('renders where it is written, inside the element that carries the appearance', async () => {
+    // This file's `beforeEach` mounts one palette of its own, without a shell — and a second one
+    // beside it would make every `overlay()` below read whichever came first in the body. So the
+    // first goes away and this case mounts the one it is about.
+    for (const app of mounted) app.unmount()
+    mounted = []
+    document.body.innerHTML = ''
+    mount({ shell: true })
+    pressCtrlK()
+    await nextTick()
+
+    const shell = document.body.querySelector('.shell')
+    expect(shell).not.toBeNull()
+    expect(overlay(), 'the palette opened').not.toBeNull()
+    expect(overlay()?.closest('.shell')).toBe(shell)
+    // A teleport is what would have put it on `body` — that is where this one used to be — and one
+    // copy of the overlay is the whole of it.
+    expect(overlay()?.parentElement).not.toBe(document.body)
+    expect(document.querySelectorAll('.palette-overlay')).toHaveLength(1)
+    expect(document.body.querySelector(':scope > .palette-overlay')).toBeNull()
   })
 })

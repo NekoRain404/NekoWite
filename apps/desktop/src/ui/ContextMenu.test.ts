@@ -33,10 +33,22 @@ afterEach(() => {
  * A host with something focusable ("the card"), the menu, and a select handler
  * the test can swap — including one that moves focus somewhere else, which is
  * what picking "rename" does in the note list.
+ *
+ * `shell` is `AppShell.vue`'s element: the one that carries the user's appearance (the four
+ * `data-*` axes and the eight inline `--app-*` properties), and therefore the element the menu is
+ * rendered into. A case that leaves it off is mounting into a page the product does not have —
+ * worth one case of its own, for the fallback, and not for the rest.
  */
-function mountHost() {
+function mountHost(options: { shell?: boolean } = {}) {
+  const shell = document.createElement('div')
+  if (options.shell === true) {
+    shell.className = 'shell'
+    shell.dataset.theme = 'dark'
+    shell.style.setProperty('--app-text', '#e8f3e2')
+  }
+  document.body.appendChild(shell)
   const host = document.createElement('div')
-  document.body.appendChild(host)
+  shell.appendChild(host)
   const open = ref(false)
   const card = ref<HTMLButtonElement | null>(null)
   const other = ref<HTMLButtonElement | null>(null)
@@ -130,5 +142,37 @@ describe('ContextMenu focus', () => {
 
     expect(document.querySelector('.ctx-menu')).toBeNull()
     expect(document.activeElement).toBe(panel.other.value)
+  })
+})
+
+describe('where the menu is rendered', () => {
+  /**
+   * The menu used to be teleported to `body`, which is *outside* `.shell` — the one element
+   * `AppShell.vue:285-292` puts the user's appearance on (the four `data-*` axes and the eight
+   * inline `--app-*` properties). So a right click on a tab, measured in a dark `forest` window,
+   * drew `color(srgb 0.998431 0.994353 0.982275)` on `--app-elevated: #fffefb` with the light
+   * border, the light shadow and `system-ui` on its rows.
+   */
+  it('renders inside the element that carries the appearance', async () => {
+    const panel = mountHost({ shell: true })
+    await nextTick()
+    await panel.showMenu()
+
+    const shell = document.body.querySelector('.shell')
+    expect(shell).not.toBeNull()
+    expect(document.querySelector('.ctx-menu')?.parentElement).toBe(shell)
+    expect(document.querySelector('.ctx-menu')?.parentElement).not.toBe(document.body)
+  })
+
+  it('falls back to the body on a page that has no shell', async () => {
+    // The pet window's page is the shape: it publishes the appearance on the document element
+    // (`pet-page-appearance.ts`), so everything under `body` there is inside the scope — and a
+    // `Teleport` aimed at a selector that matched nothing would render *nothing* rather than an
+    // unthemed menu. This is the case that says the fallback is deliberate.
+    const panel = mountHost()
+    await nextTick()
+    await panel.showMenu()
+
+    expect(document.querySelector('.ctx-menu')?.parentElement).toBe(document.body)
   })
 })
