@@ -162,7 +162,6 @@ async fn agent_close_session() -> Result<Value, String> {
     Ok(json!({ "reached": "agent_close_session" }))
 }
 
-
 /// The pet's five granted commands, each answering whether it was reached.
 #[tauri::command]
 async fn desktop_pet_state() -> Result<Value, String> {

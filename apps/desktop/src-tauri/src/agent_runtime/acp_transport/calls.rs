@@ -24,8 +24,9 @@ use std::time::Duration;
 use agent_client_protocol::schema::v1::{
     CancelNotification, CloseSessionRequest, CloseSessionResponse, ContentBlock, InitializeRequest,
     InitializeResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionRequest,
-    LoadSessionResponse, NewSessionRequest, NewSessionResponse, PromptRequest, SessionConfigValueId,
-    SessionId, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, TextContent,
+    LoadSessionResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
+    SessionConfigValueId, SessionId, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
+    TextContent,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{JsonRpcRequest, UntypedMessage};

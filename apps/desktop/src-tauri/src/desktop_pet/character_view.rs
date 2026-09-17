@@ -95,9 +95,7 @@ pub enum PetCharacterFiles {
 #[serde(tag = "status", rename_all = "kebab-case")]
 pub enum PetAppearance {
     /// No character is chosen. The window says so and draws nothing.
-    Unset {
-        motion: Motion,
-    },
+    Unset { motion: Motion },
     /// A character is chosen and cannot be produced, with the reason in the host's words.
     Missing {
         #[serde(rename = "characterId")]
@@ -777,7 +775,9 @@ mod tests {
 
         assert_eq!(
             appearance(&record(None, 200), Motion::DEFAULT, Some(&library)),
-            PetAppearance::Unset { motion: Motion::DEFAULT }
+            PetAppearance::Unset {
+                motion: Motion::DEFAULT
+            }
         );
     }
 
@@ -919,9 +919,10 @@ mod tests {
         let mut record = PetSettingsRecord::defaults(PetSettingsDomain::General);
         match motion {
             Some(value) => {
-                record
-                    .values
-                    .insert("motion".to_string(), serde_json::Value::String(value.to_string()));
+                record.values.insert(
+                    "motion".to_string(),
+                    serde_json::Value::String(value.to_string()),
+                );
             }
             // Removed rather than set to the default, because "absent" is a state of its own: a
             // record an older build wrote carries no such field at all.

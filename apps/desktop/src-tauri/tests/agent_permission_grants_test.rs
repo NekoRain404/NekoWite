@@ -144,10 +144,7 @@ fn fixture_agent_via_opencode(script: &Path) -> AgentRegistration {
         display_name: "Fixture under the OpenCode adapter".to_string(),
         source: InstallSource::External,
         program: PathBuf::from("/bin/sh"),
-        args: vec![
-            script.to_string_lossy().into_owned(),
-            "good".to_string(),
-        ],
+        args: vec![script.to_string_lossy().into_owned(), "good".to_string()],
         env: EnvPolicy::UserEnvironment,
         env_extra: Vec::new(),
         enabled: true,
@@ -221,7 +218,9 @@ async fn an_engine_with_no_declared_surface_is_reported_as_unsupported() {
     let instance = start(&registry, "generic", &root).await;
     assert_eq!(instance.http(), None);
     assert_eq!(
-        permission_grants::list(instance.http()).await.expect("answered"),
+        permission_grants::list(instance.http())
+            .await
+            .expect("answered"),
         GrantsReadout::Unsupported,
         "the connected agent cannot be asked, which is not the same claim as an empty list"
     );
@@ -253,7 +252,9 @@ fn fake_engine(replies: Vec<(u16, String)>) -> FakeEngine {
     let (tx, seen) = mpsc::channel();
     thread::spawn(move || {
         for (status, body) in replies {
-            let Ok((stream, _)) = listener.accept() else { return };
+            let Ok((stream, _)) = listener.accept() else {
+                return;
+            };
             let request = read_request(&stream);
             let _ = tx.send(request);
             write_response(stream, status, &body);
@@ -308,7 +309,8 @@ fn received(engine: &FakeEngine) -> Seen {
 async fn the_engines_own_four_fields_are_read_verbatim() {
     let engine = fake_engine(vec![(
         200,
-        r#"{"data":[{"id":"psv_1","projectID":"global","action":"edit","resource":"*"}]}"#.to_string(),
+        r#"{"data":[{"id":"psv_1","projectID":"global","action":"edit","resource":"*"}]}"#
+            .to_string(),
     )]);
     let readout = permission_grants::list(Some(http_at(engine.port)))
         .await
@@ -337,10 +339,7 @@ async fn the_engines_own_four_fields_are_read_verbatim() {
 async fn a_removal_goes_to_the_id_path_and_answers_the_list_afterwards() {
     let engine = fake_engine(vec![
         (204, String::new()),
-        (
-            200,
-            r#"{"data":[]}"#.to_string(),
-        ),
+        (200, r#"{"data":[]}"#.to_string()),
     ]);
     let readout = permission_grants::remove(Some(http_at(engine.port)), "psv_1")
         .await
@@ -428,7 +427,9 @@ async fn no_engine_and_no_surface_are_two_answers_the_client_never_confuses_with
         GrantsReadout::Unsupported
     );
     assert_eq!(
-        permission_grants::remove(None, "psv_1").await.expect("answered"),
+        permission_grants::remove(None, "psv_1")
+            .await
+            .expect("answered"),
         GrantsReadout::Unsupported
     );
 }

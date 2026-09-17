@@ -233,7 +233,10 @@ async fn start(
 fn collector(
     mut events: AgentRuntimeEvents,
     quiet: Duration,
-) -> (Arc<Mutex<Vec<AgentEventEnvelope>>>, tokio::task::JoinHandle<()>) {
+) -> (
+    Arc<Mutex<Vec<AgentEventEnvelope>>>,
+    tokio::task::JoinHandle<()>,
+) {
     let seen: Arc<Mutex<Vec<AgentEventEnvelope>>> = Arc::new(Mutex::new(Vec::new()));
     let sink = Arc::clone(&seen);
     let handle = tokio::spawn(async move {
@@ -259,7 +262,11 @@ fn summary(event: &AgentEventEnvelope) -> String {
 }
 
 /// The turn a session's history is made of: one prompt, answered.
-async fn take_one_turn(runtime: &AgentRuntime, events: &mut AgentRuntimeEvents, workspace: &Path) -> String {
+async fn take_one_turn(
+    runtime: &AgentRuntime,
+    events: &mut AgentRuntimeEvents,
+    workspace: &Path,
+) -> String {
     let opened = runtime
         .open_session(workspace)
         .await
@@ -292,7 +299,12 @@ async fn take_one_turn(runtime: &AgentRuntime, events: &mut AgentRuntimeEvents, 
             .await
             .unwrap_or_else(|_| panic!("the turn did not end within {RUN_PATIENCE:?}"))
             .expect("the runtime should still be running");
-        eprintln!("  first-engine frame seq={} run={:?} {}", event.sequence, event.run_id, summary(&event));
+        eprintln!(
+            "  first-engine frame seq={} run={:?} {}",
+            event.sequence,
+            event.run_id,
+            summary(&event)
+        );
         if event.kind == AgentEventKind::TextDelta {
             if let Some(chunk) = event.payload["text"].as_str() {
                 text.push_str(chunk);
@@ -332,18 +344,23 @@ async fn session_load_replays_the_conversation_through_this_runtime() {
     let workspace = scratch("workspace");
 
     // ---- the first engine: one real turn, so the session has a history ------------------------
-    let (first, mut first_events) = start(&artifact, &key, &profile, &workspace, "epoch-replay-1").await;
-    first
-        .initialize()
-        .await
-        .expect("the engine initializes");
+    let (first, mut first_events) =
+        start(&artifact, &key, &profile, &workspace, "epoch-replay-1").await;
+    first.initialize().await.expect("the engine initializes");
     let answered = take_one_turn(&first, &mut first_events, &workspace).await;
     eprintln!("the assistant answered {answered:?}");
 
     // The session id has to outlive the process; the runtime's own table is the only place it is.
     let session = {
-        let listed = first.list_sessions().await.expect("session/list before the restart");
-        assert_eq!(listed.sessions.len(), 1, "one session was opened: {listed:?}");
+        let listed = first
+            .list_sessions()
+            .await
+            .expect("session/list before the restart");
+        assert_eq!(
+            listed.sessions.len(),
+            1,
+            "one session was opened: {listed:?}"
+        );
         listed.sessions[0].session_id.clone()
     };
     first.shutdown();
@@ -352,7 +369,8 @@ async fn session_load_replays_the_conversation_through_this_runtime() {
     tokio::time::sleep(EXIT_GRACE).await;
 
     // ---- the second engine: an app restart, and the load -------------------------------------
-    let (second, second_events) = start(&artifact, &key, &profile, &workspace, "epoch-replay-2").await;
+    let (second, second_events) =
+        start(&artifact, &key, &profile, &workspace, "epoch-replay-2").await;
     second
         .initialize()
         .await
@@ -381,7 +399,12 @@ async fn session_load_replays_the_conversation_through_this_runtime() {
         replayed.len()
     );
     for frame in &replayed {
-        eprintln!("  seq={} run={:?} {}", frame.sequence, frame.run_id, summary(frame));
+        eprintln!(
+            "  seq={} run={:?} {}",
+            frame.sequence,
+            frame.run_id,
+            summary(frame)
+        );
     }
 
     let loaded = loaded.unwrap_or_else(|error| {
@@ -407,11 +430,16 @@ async fn session_load_replays_the_conversation_through_this_runtime() {
     eprintln!("--- replayed assistant text: {replayed_text:?}");
 
     assert!(
-        replayed.iter().any(|frame| frame.kind == AgentEventKind::TextDelta),
+        replayed
+            .iter()
+            .any(|frame| frame.kind == AgentEventKind::TextDelta),
         "session/load produced no text frame for a session with a turn in it, so either the \
          engine does not replay history or this host drops it: {} frame(s) arrived: {:?}",
         replayed.len(),
-        replayed.iter().map(|frame| summary(frame)).collect::<Vec<_>>()
+        replayed
+            .iter()
+            .map(|frame| summary(frame))
+            .collect::<Vec<_>>()
     );
     assert!(
         replayed_text.contains(answered.trim()),
@@ -447,7 +475,8 @@ async fn a_load_whose_session_has_no_turns_replays_nothing() {
 
     // No credential: nothing in this test reaches a provider, and an empty value is the honest
     // statement that the run had none to give.
-    let (first, _first_events) = start(&artifact, "", &profile, &workspace, "epoch-control-1").await;
+    let (first, _first_events) =
+        start(&artifact, "", &profile, &workspace, "epoch-control-1").await;
     first.initialize().await.expect("the engine initializes");
     let opened = first
         .open_session(&workspace)
@@ -463,7 +492,10 @@ async fn a_load_whose_session_has_no_turns_replays_nothing() {
     let refused = first.load_session(&session, &workspace).await;
     eprintln!("session/load of an open session answered {refused:?}");
     assert!(
-        matches!(refused, Err(nekowite_lib::agent_runtime::session::SessionError::AlreadyOpen { .. })),
+        matches!(
+            refused,
+            Err(nekowite_lib::agent_runtime::session::SessionError::AlreadyOpen { .. })
+        ),
         "a load of a session this host already holds must be refused by the host, not sent to the \
          engine: {refused:?}"
     );
@@ -472,15 +504,21 @@ async fn a_load_whose_session_has_no_turns_replays_nothing() {
     drop(first);
     tokio::time::sleep(EXIT_GRACE).await;
 
-    let (second, second_events) = start(&artifact, "", &profile, &workspace, "epoch-control-2").await;
-    second.initialize().await.expect("the second engine initializes");
+    let (second, second_events) =
+        start(&artifact, "", &profile, &workspace, "epoch-control-2").await;
+    second
+        .initialize()
+        .await
+        .expect("the second engine initializes");
     let (seen, handle) = collector(second_events, REPLAY_SETTLE);
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let loaded = second
         .load_session(&session, &workspace)
         .await
-        .unwrap_or_else(|error| panic!("the engine refused a load of its own empty session: {error:?}"));
+        .unwrap_or_else(|error| {
+            panic!("the engine refused a load of its own empty session: {error:?}")
+        });
     tokio::time::sleep(REPLAY_SETTLE).await;
     handle.abort();
 

@@ -252,8 +252,8 @@ impl Engine {
         // The shipped port pinning, not a copy of it: the routes below must address the process
         // this launch starts, and the flag that makes that possible is the adapter's — asked for
         // through the seam, the way `registry::start` asks for it.
-        let api = adapters::lookup(adapters::opencode::ADAPTER_ID)
-            .and_then(|adapter| adapter.http_api());
+        let api =
+            adapters::lookup(adapters::opencode::ADAPTER_ID).and_then(|adapter| adapter.http_api());
         let http = permission_grants::pin_http(&mut launch, api)
             .expect("the bundled adapter declares an HTTP surface");
 
@@ -608,16 +608,17 @@ async fn engine_call(
     path: &str,
     body: Option<serde_json::Value>,
 ) -> serde_json::Value {
-    let client = reqwest::Client::builder()
-        .build()
-        .expect("an HTTP client");
+    let client = reqwest::Client::builder().build().expect("an HTTP client");
     let mut request = client
         .request(method, format!("http://127.0.0.1:{}{path}", http.port))
         .timeout(Duration::from_secs(15));
     if let Some(body) = body {
         request = request.json(&body);
     }
-    let response = request.send().await.expect("the engine answers its own route");
+    let response = request
+        .send()
+        .await
+        .expect("the engine answers its own route");
     let status = response.status();
     let text = response.text().await.unwrap_or_default();
     assert!(
@@ -652,7 +653,9 @@ async fn effect_of(engine: &Engine, session: &str, target: &Path) -> String {
     // beside the effect because for `ask` they are the two halves of the same answer.
     if effect == "ask" {
         assert!(
-            answer["data"]["id"].as_str().is_some_and(|id| id.starts_with("per")),
+            answer["data"]["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("per")),
             "an `ask` names the request it raised: {answer}"
         );
     }

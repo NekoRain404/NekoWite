@@ -105,7 +105,11 @@ pub struct SavedGrant {
 /// nothing down, [`Unsupported`](Self::Unsupported) is an agent that cannot be asked, and
 /// [`NotRunning`](Self::NotRunning) is a question with nothing to answer it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(tag = "kind", rename_all = "kebab-case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
 pub enum GrantsReadout {
     /// The engine answered, and this is what it holds for this profile.
     Listed { grants: Vec<SavedGrant> },

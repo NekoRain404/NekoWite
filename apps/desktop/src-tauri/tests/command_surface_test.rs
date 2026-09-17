@@ -34,10 +34,9 @@ use serde_json::Value;
 /// Read from the source rather than from the generated ACL, because the generated ACL is derived
 /// from this file: reading it back would compare `build.rs` with itself.
 fn declared_commands() -> Vec<String> {
-    let source = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("build.rs"),
-    )
-    .expect("build.rs declares the surface");
+    let source =
+        std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("build.rs"))
+            .expect("build.rs declares the surface");
     let list = source
         .split("const COMMANDS: &[&str] = &[")
         .nth(1)

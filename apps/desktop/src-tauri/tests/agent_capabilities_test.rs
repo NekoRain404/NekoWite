@@ -592,9 +592,8 @@ fn the_session_management_group_is_read_from_the_handshake_by_presence() {
     use nekowite_lib::agent_runtime::capabilities::SessionCapabilities;
 
     fn facts(capabilities: AgentCapabilities) -> SessionCapabilities {
-        let mut response = InitializeResponse::new(
-            agent_client_protocol::schema::ProtocolVersion::V1,
-        );
+        let mut response =
+            InitializeResponse::new(agent_client_protocol::schema::ProtocolVersion::V1);
         response.agent_capabilities = capabilities;
         let mut facts = SessionCapabilities::default();
         facts.negotiated(nekowite_lib::agent_runtime::capabilities::Handshake::of(
@@ -626,7 +625,8 @@ fn the_session_management_group_is_read_from_the_handshake_by_presence() {
     // This is the shape the schema's own words describe, and the shape the pinned engine's
     // measured handshake does *not* have — it carries all four (`fake_agent.sh:22`).
     let partial = facts(
-        AgentCapabilities::new().session_capabilities(Wire::new().list(SessionListCapabilities::new())),
+        AgentCapabilities::new()
+            .session_capabilities(Wire::new().list(SessionListCapabilities::new())),
     );
     assert_eq!(partial.session_capability_list(), Some(true));
     assert_eq!(partial.session_capability_resume(), Some(false));

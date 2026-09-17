@@ -580,7 +580,6 @@ impl AgentRuntime {
         session_id: &str,
         cwd: &Path,
     ) -> Result<SessionInfo, SessionError> {
-
         // Registered before the request — see this method's own note. The run is minted from the
         // same counter `prompt` uses, so a load and a turn can never share an id.
         let load_run = format!("load-{}", self.run_counter.fetch_add(1, Ordering::Relaxed));
