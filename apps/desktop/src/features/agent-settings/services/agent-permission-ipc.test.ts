@@ -140,6 +140,17 @@ describe('the permission readout', () => {
   it('refuses a record with no permissions member at all', async () => {
     await expect(client(undefined).read()).rejects.toThrow(/permissions/)
   })
+
+  it('refuses an absent document rather than reading it as null', async () => {
+    // The one case the five clients’ narrowing copies disagreed on, and this is the copy that lost
+    // it: an absent `document` was read as `null`, which is the "not this host's document" arm —
+    // a state the backend never stated. The host sends the member as a path or as an explicit
+    // `null` (`agent_settings.rs`'s `profile_view`), so a member that is not there at all is an
+    // answer this build cannot read, and it takes the same rejection as every other field.
+    await expect(
+      client({ state: 'not-this-host', rules: [] }).read(),
+    ).rejects.toThrow(/permissions\.document/)
+  })
 })
 
 describe('the grants readout', () => {

@@ -161,8 +161,26 @@ export function mintSession(
   models: readonly AgentModelOption[],
   initialModelId: string,
   options: readonly AgentConfigOption[],
+  /**
+   * The engine's own title for this session, when the call behind the handle was told one.
+   *
+   * `null` on a path where the engine has stated nothing yet — which is `openSession` here for the
+   * same reason it is `agent_open_session` in the real host: a session the engine has just been
+   * asked to create has no name in any answer this window has read, and the bar's own fallback
+   * sentence is the honest thing to draw. A *reopen* is the other case: the engine's table already
+   * carried the name, `session/list` is where this app reads it, and the handle it answers with
+   * carries it so the panel that mounts after the resume draws the name the reader just picked a
+   * row by.
+   */
+  title: string | null,
 ): AgentSession {
-  return { ...identity, models, initialModelId, options } as unknown as AgentSession
+  return {
+    ...identity,
+    models,
+    initialModelId,
+    options,
+    title: title === '' ? null : title,
+  } as unknown as AgentSession
 }
 
 /**

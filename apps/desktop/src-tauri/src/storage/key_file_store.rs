@@ -226,6 +226,35 @@ pub fn read_existing_vault_key_state(path: &Path) -> Result<Option<VaultKeyState
     }
 }
 
+/// The vault's key-file state as it is on disk **right now**, creating nothing.
+///
+/// [`read_vault_key_state`] is the *opening* read: a missing `master.key` with nothing beside it
+/// is a first run there, and it answers by generating one. A caller that only has to *describe*
+/// the vault must not do that. A status read that minted a key file would be a write wearing a
+/// read's name — it would answer "no master password is set" by creating the very file that makes
+/// the answer true, and the user would be told about a vault they had not asked to touch.
+///
+/// So this is the same resolution with the creating arm removed, and `None` is the one outcome
+/// [`read_vault_key_state`] never returns: there is no key material on disk at all, which is a
+/// fresh install rather than a vault in any particular state.
+///
+/// **"Creating nothing" is exact, and it is not the same as "writing nothing".** A key file that
+/// is there is read by [`read_existing_vault_key_state`], which upgrades a 32-byte legacy bare key
+/// to the versioned format in place — an existing file, rewritten atomically, with the 32 bytes
+/// carried over verbatim. That happens on every read path in this module and is the reason a
+/// legacy vault keeps working at all, so refusing it here would make this function read one
+/// vault two ways. What it can never do is bring a key file into being: the only arm that does
+/// that is [`create_first_run_keyfile`], and this function does not reach it.
+pub fn existing_vault_key_state(path: &Path) -> Result<Option<VaultKeyState>, String> {
+    match read_existing_vault_key_state(path)? {
+        Some(state) => Ok(Some(state)),
+        // No `master.key`. The backups are read through the same function the load path uses, so
+        // the order they are tried in and the rule that a passwordless one wins are stated once
+        // (see [`state_from_backups`]) rather than restated for the readers of this one.
+        None => Ok(state_from_backups(path)),
+    }
+}
+
 /// Read a master key file and return its [`VaultKeyState`].
 ///
 /// **A missing file is a first run only when there is nothing beside it**: then

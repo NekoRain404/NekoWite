@@ -40,6 +40,7 @@ import {
   readCapabilityReports,
   readSessionHistory,
   type AgentCapabilityReport,
+  type AgentConfigOptionList,
   type AgentEvent,
   type AgentGateway,
   type AgentIdentity,
@@ -57,7 +58,7 @@ import {
   type AgentIpc,
   type AgentRuntimeHandle,
 } from './tauri-agent/ipc'
-import { createSessionBook } from './tauri-agent/session'
+import { createSessionBook, readRefreshedOptions } from './tauri-agent/session'
 
 export { AGENT_EVENT_CHANNEL, createTauriAgentIpc } from './tauri-agent/ipc'
 export type { AgentIpc, AgentRuntimeHandle } from './tauri-agent/ipc'
@@ -113,6 +114,22 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
   let runtime: AgentRuntimeHandle | null = null
 
   const book = createSessionBook(() => runtime !== null)
+  /**
+   * The names the engine gave the sessions in its most recent `session/list` answer, by id.
+   *
+   * Kept because a *reopen* needs a title the load call cannot carry: ACP's load response has no
+   * title field, and the frame that would state one (`SessionInfoUpdate`) is not mapped, so the
+   * row the reader picked from is the only place this app ever reads a session's name — and the
+   * row is answered to *this* adapter (`listSessions`), which is where it is held until the pick
+   * it belongs to (`loadSession`) asks for it. A name the engine wrote is the only thing that can
+   * enter this map, which is what keeps the bar from ever drawing a name this app made up.
+   *
+   * Replaced rather than merged on every list — a page is the engine's answer about the sessions
+   * that exist, and a name from a list two reads ago is a claim nothing has asked the engine
+   * again — and cleared with the handles, because an id alone does not survive a runtime the way
+   * a session id of the same engine does (the epoch is part of every handle).
+   */
+  let listedTitles = new Map<string, string>()
   const channel = createEventChannel({
     ipc,
     tools,
@@ -174,14 +191,20 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
    * front of it: the handle has to be one this gateway minted for a runtime that is still the
    * live one (§6.1). `selectModel` is the model's name for this, and adds the one check only a
    * model can carry — that the value is in the catalog this session published.
+   *
+   * The engine's answer is read rather than dropped: it is the refreshed option list, in the
+   * same schema shape the session opened with, and `readRefreshedOptions` is the same reader
+   * `openSession` uses. `null` means the answer was not a list this window can read, which the
+   * caller must treat as "nothing changed" rather than "no options" — see
+   * {@link AgentGateway.setConfigOption}.
    */
   async function setConfigOption(
     session: AgentSession,
     configId: string,
     value: string,
-  ): Promise<void> {
+  ): Promise<AgentConfigOptionList> {
     book.recordFor(session)
-    await ipc.selectModel(session.sessionId, configId, value)
+    return readRefreshedOptions(await ipc.selectModel(session.sessionId, configId, value))
   }
 
   return {
@@ -201,8 +224,11 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
       const failure = new AgentFailure('cancelled', 'the runtime stopped while the turn was running')
       for (const run of [...pending.values()]) run.fail(failure)
       pending.clear()
-      // The handles name a runtime that is over, and the projection is keyed by its epoch.
+      // The handles name a runtime that is over, and the projection is keyed by its epoch. The
+      // listed names go with them: a session id is the engine's, but "the last list this window
+      // read" is not, and a row picked before the stop is not one the next runtime answered for.
       book.clear()
+      listedTitles = new Map()
       await channel.closeAll()
     },
 
@@ -216,7 +242,9 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
         vaultId: request.vaultId,
         sessionId: answer.sessionId,
       }
-      return book.open(identity, answer)
+      // A new session has no name: the engine names one on its own terms, and nothing has stated
+      // one by the time this call answers.
+      return book.open(identity, answer, null)
     },
 
     async listSessions(): Promise<AgentSessionHistory> {
@@ -240,6 +268,13 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
           'the host answered a session list this window could not read',
         )
       }
+      // Held for the reopen this page is read *for*: it is the only place a session's name is
+      // ever stated by the engine, and the pick that follows is answered by `loadSession`, one
+      // method down. Read after the refusal check, so a page this window could not read leaves
+      // the names of the last good answer alone rather than half-replacing them.
+      listedTitles = new Map(
+        history.sessions.flatMap((row) => (row.title === null ? [] : [[row.sessionId, row.title]])),
+      )
       return history
     },
 
@@ -250,14 +285,16 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
       // The same call the host makes for a new session, one method over: `agent_load_session`
       // answers the identical handle shape, and the engine replays the restored conversation as
       // ordinary events on the channel this gateway is already listening to. So there is no
-      // second path here, and the record is built the same way `openSession` builds one.
+      // second path here, and the record is built the same way `openSession` builds one — plus
+      // the one thing a reopen has and a new session does not: a name the engine already gave it,
+      // read off the row the reader picked (see `listedTitles`).
       const answer = await ipc.loadSession(request.vaultId, request.cwd, sessionId)
       const identity: AgentIdentity = {
         ...runtime,
         vaultId: request.vaultId,
         sessionId: answer.sessionId,
       }
-      return book.open(identity, answer)
+      return book.open(identity, answer, listedTitles.get(sessionId) ?? null)
     },
 
     async closeSession(sessionId: string): Promise<void> {
@@ -273,7 +310,7 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
 
     setConfigOption,
 
-    async selectModel(session: AgentSession, modelId: string): Promise<void> {
+    async selectModel(session: AgentSession, modelId: string): Promise<AgentConfigOptionList> {
       const record = book.recordFor(session)
       // The same rule as the double's, and §6.3's for permission options: the host does not
       // forward a choice it never published. Whether the *engine* would refuse the value is not
@@ -287,7 +324,7 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
       if (record.modelOptionId === null) {
         throw new AgentFailure('invalid-response', 'this engine has no model option to move')
       }
-      await setConfigOption(session, record.modelOptionId, modelId)
+      return setConfigOption(session, record.modelOptionId, modelId)
     },
 
     async prompt(session: AgentSession, text: string): Promise<AgentRunResult> {

@@ -15,7 +15,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { createApp, defineComponent, h, nextTick, reactive, type App as VueApp } from 'vue'
 import AgentPermissionPrompt from './AgentPermissionPrompt.vue'
-import { t } from '../../../i18n'
+import { getLocale, setLocale, t } from '../../../i18n'
 import type {
   AgentPermissionOption,
   AgentPermissionRequest,
@@ -441,6 +441,20 @@ describe('AgentPermissionPrompt — what the user is approving', () => {
   })
 })
 
+/**
+ * The three names the lasting-grant sentence is built from, read from the catalogue itself.
+ *
+ * They are the settings rail's own row, the permission page's own heading and the grants list's
+ * own heading — the same three keys those surfaces draw their names from. Nothing here is a copy
+ * of a string in the sentence: the guarantee being held is that a reader sent to look for what
+ * "always allow" wrote arrives at a place wearing the name the sentence used.
+ */
+const GRANT_PLACES = {
+  section: t('settings.section.agents'),
+  page: t('agent.settings.permission.section.title'),
+  surface: t('agent.settings.permission.grants.title'),
+}
+
 describe('AgentPermissionPrompt — what a lasting answer commits the user to', () => {
   it('says what “Always allow” does, when the engine offered one', () => {
     // The engine's own label for the option does not say how long the grant lasts, and the answer
@@ -448,10 +462,49 @@ describe('AgentPermissionPrompt — what a lasting answer commits the user to', 
     // arrives to tell the user either. This sentence is the only place that gap is closed.
     const { host } = mount()
     const note = host.querySelector('[data-test="permission-lasting-note"]')
-    expect(note?.textContent?.trim()).toBe(t('agent.permission.lastingGrant'))
+    expect(note?.textContent?.trim()).toBe(t('agent.permission.lastingGrant', GRANT_PLACES))
     // An undefined key renders as the key, so equality alone would hold for a string the catalogue
     // never had — which is the failure this block exists to prevent.
     expect(note?.textContent?.trim()).not.toBe('agent.permission.lastingGrant')
+  })
+
+  it('names the page that lists and takes a lasting grant back, instead of denying one', async () => {
+    // The sentence this replaced said, in **both** languages, that this app «has no surface that
+    // lists or takes it back» — which stopped being true when the grants page landed, and it is
+    // drawn at the exact moment the reader decides whether to give the grant. So the note is read
+    // in both languages here: a correction that reached one catalogue and not the other is exactly
+    // how the false sentence was written twice in the first place.
+    const { host } = mount()
+    const note = (): string =>
+      host.querySelector('[data-test="permission-lasting-note"]')?.textContent ?? ''
+    // The claim itself, as the phrases the two sentences shipped: the English said the app «has no
+    // surface that lists or takes it back», the Chinese said 「也没有任何地方能列出或收回它」.
+    // Matched on the phrase rather than the whole sentence, so the warning may be reworded for any
+    // other reason without this assertion being about wording.
+    const gaveUpOn = /has no surface|没有任何地方/
+
+    // The default this file's other cases read: restored at the end of the loop below, because a
+    // locale left switched is a change to what every later case asserts.
+    const before = getLocale()
+    for (const locale of ['zh', 'en'] as const) {
+      setLocale(locale)
+      await nextTick()
+      const places = {
+        section: t('settings.section.agents'),
+        page: t('agent.settings.permission.section.title'),
+        surface: t('agent.settings.permission.grants.title'),
+      }
+      const text = note()
+      expect(text).toContain(places.section)
+      expect(text).toContain(places.page)
+      expect(text).toContain(places.surface)
+      expect(text).not.toMatch(gaveUpOn)
+      // The slots are the page's own names, so a sentence that rendered them literally — or one
+      // that named a place by a name nothing else in the app uses — fails here rather than
+      // pointing the reader at a heading they will not find.
+      expect(text).not.toMatch(/\{(section|page|surface)\}/)
+    }
+    setLocale(before)
   })
 
   it('says nothing about it when the request offers no lasting answer', () => {

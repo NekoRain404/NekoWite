@@ -34,8 +34,8 @@ pub use crate::domain::key_files::{sibling_suffixed, stronghold_tmp_path, VaultK
 // of the key store had to be edited for the split.
 pub use crate::storage::key_file_store::{
     decode_keyfile, derive_master_key, encode_keyfile_password, encode_keyfile_passwordless,
-    ensure_keyfile, read_existing_vault_key_state, read_vault_key_state, validate_password,
-    verifier_of, write_key_file_at,
+    ensure_keyfile, existing_vault_key_state, read_existing_vault_key_state, read_vault_key_state,
+    validate_password, verifier_of, write_key_file_at,
 };
 
 /// Client id used for the single provider-key client inside the vault.

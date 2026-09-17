@@ -9,6 +9,7 @@ pub mod ai;
 pub mod desktop_pet;
 pub mod desktop_pet_surface;
 pub mod fs;
+pub mod key_vault;
 pub mod keys;
 pub mod open;
 pub mod recovery;

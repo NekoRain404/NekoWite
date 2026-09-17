@@ -14,6 +14,9 @@
 BEHAVIOUR=${1:-good}
 SESSION=ses_fake_1
 PROMPT_ID=
+# A literal newline, spelled this way because the fixture is POSIX shell and has no `$'…'`.
+NL='
+'
 
 # The handshake is P0 §2.1's measured answer, verbatim apart from the agent's
 # own name: it is the one response in this fixture whose exact shape is known
@@ -63,6 +66,20 @@ TOOL_CALL='{"sessionId":"ses_fake_1","update":{"sessionUpdate":"tool_call","tool
 TOOL_IN_PROGRESS='{"sessionId":"ses_fake_1","update":{"sessionUpdate":"tool_call_update","toolCallId":"call_fake_1","status":"in_progress","locations":[{"path":"/tmp/note.md"}],"rawInput":{"filePath":"/tmp/note.md"}}}'
 TOOL_COMPLETED='{"sessionId":"ses_fake_1","update":{"sessionUpdate":"tool_call_update","toolCallId":"call_fake_1","status":"completed","title":"note.md","content":[{"type":"content","content":{"type":"text","text":"# fake workspace"}}],"rawOutput":{"output":"<path>note.md</path>"}}}'
 CMDS='{"sessionId":"ses_fake_1","update":{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"init","description":"Start a session"},{"name":"review","description":"Review the working tree"}]}}'
+# `session/load`'s two halves, which the fixture had none of: the response the load answers with,
+# and the conversation it replays. The replay arrives as ordinary `session/update` notifications
+# while the request is outstanding and the response is the last thing on the wire — that ordering
+# is the measured one (`agent_session_replay_live_test.rs`, against the pinned engine), and it is
+# the ordering that decides whether a host which drops a finished run's frames can still carry a
+# restored conversation at all.
+LOAD='{"configOptions":[{"id":"model","name":"Model","type":"select","currentValue":"fake/model-a","options":[{"value":"fake/model-a","name":"Model A"}]}]}'
+load_user() { notify "{\"sessionId\":\"$1\",\"update\":{\"sessionUpdate\":\"user_message_chunk\",\"content\":{\"type\":\"text\",\"text\":\"ping\"}}}"; }
+load_thought() { notify "{\"sessionId\":\"$1\",\"update\":{\"sessionUpdate\":\"agent_thought_chunk\",\"content\":{\"type\":\"text\",\"text\":\"thinking\"}}}"; }
+load_answer() { notify "{\"sessionId\":\"$1\",\"update\":{\"sessionUpdate\":\"agent_message_chunk\",\"content\":{\"type\":\"text\",\"text\":\"pong\"}}}"; }
+# How many frames the burst behaviour replays. Large enough that the host cannot have drained
+# them all by the time the response beside them is read — which is the harsher of the two
+# orderings a real engine can produce, and the one a replay that arrives in a single read gives.
+LOAD_BURST=200
 
 # `id_of` reads the JSON-RPC id out of a request and keeps it as it arrived,
 # quotes and all: the SDK numbers its requests with UUID strings, and a reply
@@ -207,6 +224,59 @@ while IFS= read -r line; do
             if [ "$BEHAVIOUR" = config-update ]; then
                 notify "$CFG"
             fi
+            ;;
+        *'"method":"session/load"'*)
+            # Four behaviours, and the differences between them are the whole question. `replay` is
+            # the measured ordering (the conversation on the wire, the response last, one frame per
+            # write). `replay-burst` is that same ordering with the whole replay and the response in
+            # a *single* write — which is what one read of a pipe hands the host, and the ordering
+            # that decides whether a host which drops a finished run's frames can still carry a
+            # restored conversation. `replay-late` is an engine that answers first and replays
+            # afterwards. `replay-nothing` answers an empty session, which is the control: it is
+            # what a load with nothing to replay has always looked like here.
+            # Every one of them records what it sent, so a host that shows nothing can be told apart
+            # from an engine that said nothing.
+            loaded=$(printf '%s' "$line" | sed -n 's/.*"sessionId":"\([^"]*\)".*/\1/p')
+            case "$BEHAVIOUR" in
+                replay)
+                    capture "load-replay-sent=user+thought+answer"
+                    load_user "$loaded"
+                    load_thought "$loaded"
+                    load_answer "$loaded"
+                    reply "$id" "$LOAD"
+                    capture "load-response=after-replay"
+                    ;;
+                replay-burst)
+                    # Built in one variable and written with one printf: the frames and the response
+                    # arrive together, so the host's queue holds a whole conversation's worth of
+                    # frames at the instant the load's own answer is parsed. `$NL` is added back
+                    # because a command substitution strips the newline each frame ended with —
+                    # without it the frames would concatenate into one unparseable line, which is
+                    # a different measurement (a protocol violation) from the one this behaviour is
+                    # for.
+                    payload=""
+                    i=0
+                    while [ "$i" -lt "$LOAD_BURST" ]; do
+                        payload="$payload$(printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"%s","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"burst-%s"}}}}\n' "$loaded" "$i")$NL"
+                        i=$((i + 1))
+                    done
+                    payload="$payload$(printf '{"jsonrpc":"2.0","id":%s,"result":%s}' "$id" "$LOAD")$NL"
+                    capture "load-replay-sent=burst:$LOAD_BURST"
+                    capture "load-response=in-the-same-write"
+                    capture "payload-bytes=$(printf '%s' "$payload" | wc -c)"
+                    capture "payload-lines=$(printf '%s' "$payload" | wc -l)"
+                    printf '%s' "$payload"
+                    ;;
+                replay-late)
+                    reply "$id" "$LOAD"
+                    capture "load-response=before-replay"
+                    sleep 0.3
+                    capture "load-replay-sent=user+thought+answer"
+                    load_user "$loaded"
+                    load_thought "$loaded"
+                    load_answer "$loaded"
+                    ;;
+            esac
             ;;
         *'"method":"session/prompt"'*)
             PROMPT_ID=$id

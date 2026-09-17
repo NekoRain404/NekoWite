@@ -8,7 +8,7 @@
  */
 
 import type { AgentEvent, AgentIdentity } from './envelope'
-import type { AgentConfigOption, AgentRunResult } from './payloads'
+import type { AgentConfigOption, AgentConfigOptionList, AgentRunResult } from './payloads'
 
 /**
  * The session lifecycle, exactly as the plan spells it out:
@@ -182,6 +182,29 @@ export interface AgentSession extends AgentIdentity {
    * list before any frame could, which is exactly why the row needs this one as well.
    */
   readonly options: readonly AgentConfigOption[]
+  /**
+   * The engine's own title for this session, as the engine gave it — or `null` when it has
+   * named none, or when this window has not been told one.
+   *
+   * Carried because a *reopen* answers with a session the engine has already named, and the only
+   * route this app has to that name is the `session/list` row the reader picked it from
+   * (`AgentSessionSummary.title`): the load response carries no title, and the frame that would
+   * say one — `SessionInfoUpdate` — is not mapped. Zed carries it the same way and for the same
+   * reason: its restore path hands `info.title` to `load_agent_thread`
+   * (`agent_ui/src/agent_panel.rs`, the archive row's own title), which passes it to the session
+   * it opens, and the panel header falls back to `"New Agent Thread"` only when nothing carried
+   * one.
+   *
+   * Two rules on who may write it, and they are the surface's own honesty rules:
+   *
+   *  - **Only the engine's words.** The value is the string the engine put in that row. An empty
+   *    title is `null` rather than `''`, because a blank name is not a name, and a name this app
+   *    wrote for a session the engine left untitled would be a fact the engine never stated.
+   *  - **A seed, like {@link initialModelId}.** It is what the engine had said when the handle
+   *    was minted; a later `session-changed` frame is newer and wins wherever both are read
+   *    (`AgentSessionView.title`).
+   */
+  readonly title: string | null
 }
 
 /**
@@ -210,6 +233,22 @@ export interface AgentSessionSummary {
   readonly title: string | null
   /** ISO 8601 last-activity stamp, when the engine sent one. */
   readonly updatedAt: string | null
+  /**
+   * Whether the host holds this session right now — the one field on a row the engine did not
+   * answer.
+   *
+   * `session/list` is the engine's own table, and a real engine's table outlives the process that
+   * wrote it: sessions a previous run of this app opened are still listed, which is exactly what a
+   * history is for. The host's table is narrower by §6.1 — it forwards only ids it received a
+   * `session/new` or `session/load` answer for — so a row this flag is false for is one
+   * `closeSession` will refuse, and it will refuse it *before* the engine is asked.
+   *
+   * A surface that offers the free action is offering that call, so this is half of whether it may
+   * be offered at all; the other half is the engine's own `session-close` report
+   * (`AgentCapabilityReport`). Neither can stand in for the other: the engine's report says it
+   * answers the method, and this says the host has something it may ask about.
+   */
+  readonly held: boolean
 }
 
 /**
@@ -373,7 +412,7 @@ export interface AgentGateway {
    * adapter resolves the engine's own option id and holds the value to the session's published
    * catalog. A model is one instance of a config option, not a second mechanism beside one.
    */
-  selectModel(session: AgentSession, modelId: string): Promise<void>
+  selectModel(session: AgentSession, modelId: string): Promise<AgentConfigOptionList>
   /**
    * Move any one of the session's own configuration options — the general call {@link selectModel}
    * is the model's special case of.
@@ -387,8 +426,25 @@ export interface AgentGateway {
    * `configId` and `value` are constraints the *engine* has: it refuses an option it did not
    * publish, and a value that option does not offer. The adapter checks the handle before it
    * forwards anything (§6.1) and reports the engine's own refusal otherwise.
+   *
+   * **It answers with the engine's refreshed option list, and that is not a convenience.**
+   * `session/set_config_option` returns the full set with its current values, and the Rust
+   * command passes it through rather than discarding it (`commands/agent.rs`, which took the
+   * decision from Zed's `connection.rs:311`). A caller that ignores the answer is relying on the
+   * engine *also* announcing the change as {`config-changed`} — which the pinned engine does, and
+   * which an engine that answered without notifying would not. So a caller whose row shows the
+   * option takes this answer as the new state and lets the notification be the second path to the
+   * same list.
+   *
+   * `null` means the answer was not a list this window can read. It is deliberately not an empty
+   * list: the caller's current list is then the only thing this window knows, and clearing a row
+   * because an answer could not be read would be this app stating a change the engine never made.
    */
-  setConfigOption(session: AgentSession, configId: string, value: string): Promise<void>
+  setConfigOption(
+    session: AgentSession,
+    configId: string,
+    value: string,
+  ): Promise<AgentConfigOptionList>
   /**
    * Send one turn. Resolves when the turn ends, because that is when the protocol
    * answers the prompt request (P0 §2.3: the response carries the stop reason and

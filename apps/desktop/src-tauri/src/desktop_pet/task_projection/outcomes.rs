@@ -98,6 +98,11 @@ pub(super) fn outcome_of(envelope: &AgentEventEnvelope) -> Option<Outcome> {
         // model a turn ran with is not a state of the turn, and reading one as progress would
         // be the percentage §6.2 forbids this table from guessing.
         | AgentEventKind::ConfigChanged
+        // How full the context window is says nothing about what a task is doing, and a pet state
+        // derived from it would be the percentage §6.2 forbids this table from guessing — the same
+        // judgement the window's own projection makes (`pet-contracts/events.ts` maps
+        // `'usage-changed'` to `noPetFact`).
+        | AgentEventKind::UsageChanged
         | AgentEventKind::FilesChanged => None,
     }
 }

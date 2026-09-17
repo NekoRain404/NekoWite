@@ -56,12 +56,17 @@ const PAGE: AgentSessionHistory = {
       cwd: '/notes/vault',
       title: 'New session - 2026-01-01T00:00:02Z',
       updatedAt: '2026-01-01T00:00:02Z',
+      held: true,
     },
     {
       sessionId: 'session-1',
       cwd: '/notes/other',
       title: null,
       updatedAt: null,
+      // The engine's table outlives the run that wrote it: this is a session an earlier runtime
+      // instance opened, which is the case a history exists for and the one this host refuses to
+      // close (`held` is read, never derived).
+      held: false,
     },
   ],
   nextCursor: null,

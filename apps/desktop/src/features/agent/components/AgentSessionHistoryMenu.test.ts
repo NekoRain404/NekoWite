@@ -23,6 +23,8 @@ const ROW: AgentSessionHistoryRow = {
   title: 'New session - 2026-01-01T00:00:09Z',
   cwd: '/notes/vault',
   updatedAt: '2026-01-01T00:00:09Z',
+  // Held by the host and not the session on screen: the shape the free action is offered for.
+  held: true,
   current: false,
   elsewhere: false,
 }

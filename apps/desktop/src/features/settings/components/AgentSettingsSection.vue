@@ -160,6 +160,19 @@ const skillsClient = computed(() =>
 )
 
 /**
+ * The credential write, behind the same gate and for its own reason.
+ *
+ * What it writes is a key *into one profile's file*, so a client built for a guessed pair would be
+ * this app putting a credential where the user is not looking. The provider page is mounted with
+ * the same pair in the same breath, and both are built from the registry's answer.
+ */
+const credentialClient = computed(() =>
+  identity.value === null
+    ? null
+    : props.clients.credentials(identity.value.agentId, identity.value.profileId),
+)
+
+/**
  * The entry the catalogue handed to the registry's add form, or `null`.
  *
  * The catalogue's only control is "register this one", and the add form is the registry page's — so
@@ -245,8 +258,9 @@ const gaps = [
         :prefill="cataloguePrefill"
       />
       <AgentProviderSettings
-        v-if="identity"
+        v-if="identity && credentialClient"
         :client="props.clients.provider"
+        :credential-client="credentialClient"
         :agent-id="identity.agentId"
         :profile-id="identity.profileId"
       />

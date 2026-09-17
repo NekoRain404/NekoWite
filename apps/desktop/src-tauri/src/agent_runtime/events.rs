@@ -23,8 +23,8 @@
 //! and NOT an import.
 
 use agent_client_protocol::schema::v1::{
-    ContentBlock, ContentChunk, SessionConfigKind, SessionConfigOption, SessionConfigSelectOption,
-    SessionConfigSelectOptions, SessionUpdate,
+    ContentBlock, ContentChunk, Cost, SessionConfigKind, SessionConfigOption,
+    SessionConfigSelectOption, SessionConfigSelectOptions, SessionUpdate,
 };
 use serde::Serialize;
 
@@ -86,6 +86,14 @@ pub enum AgentEventKind {
     PermissionRequest,
     CommandsChanged,
     ConfigChanged,
+    /// The session's context occupancy and cumulative cost (`usage_update`).
+    ///
+    /// The contract has carried this kind since T1 — `payloads.ts`'s `'usage-changed'`,
+    /// `readContextUsage`, the reducer's arm and the view's `usage` — with no producer on this
+    /// side, so the window was built to render a fact nothing here sent. **The pinned engine was
+    /// measured sending the frame** (see the mapping below for where the sending code is), which is
+    /// what makes this arm a producer rather than a promise.
+    UsageChanged,
     FilesChanged,
     RunFinished,
     RunFailed,
@@ -374,7 +382,50 @@ pub fn normalize_update(update: &SessionUpdate) -> Option<(AgentEventKind, Value
             AgentEventKind::ConfigChanged,
             json!({ "options": config_options(&update.config_options) }),
         )),
+        // The session's context window and its cumulative cost. The kind, the reader
+        // (`readers/session.ts`'s `readContextUsage`), the reducer's arm and the view's `usage`
+        // were all placed at T1; this arm is the producer they were missing, and the reason it was
+        // missing is that nothing in this tree had seen the frame on the wire.
+        //
+        // **The engine was measured sending it, in the pinned artifact itself.** The binary P0 §1
+        // pins (`binaries/opencode-x86_64-unknown-linux-gnu`) builds and sends this frame in two
+        // places, both named `usage.*sendUpdate` in its own source strings: one on the ACP
+        // session path (`ACPUsage.sendUpdate`) and one after a prompt (`ACP.promptUsage.sendUpdate`).
+        // Both take the same three facts — the last assistant message's context tokens as `used`,
+        // the model's own context limit as `size`, and the session's cumulative cost — and both are
+        // guarded: no message, no provider or model id, or no known context limit for that model
+        // means *no frame at all*. So this arm is correct and may be invisible on a provider whose
+        // model the engine has no limit for; that is a fact about the engine's guard rather than
+        // about this mapping, and it is why the window must treat `usage === null` as "nothing has
+        // been reported" (§5.1) rather than as a zero.
+        //
+        // **The payload is mapped, not passed through**, for the reason `config_options` below
+        // gives: the contract is the frozen side, and it reads `{ usedTokens, contextTokens, cost }`
+        // — `cost` present as numbers or as an explicit null, so a consumer is never left guessing
+        // between "no cost" and "the field was forgotten".
+        SessionUpdate::UsageUpdate(update) => Some((
+            AgentEventKind::UsageChanged,
+            json!({
+                "usedTokens": update.used,
+                "contextTokens": update.size,
+                "cost": context_cost(update.cost.as_ref()),
+            }),
+        )),
         _ => None,
+    }
+}
+
+/// ACP's cumulative cost in the contract's shape, or an explicit `null`.
+///
+/// `null` rather than an absent member, and the difference is load-bearing: ACP makes `cost`
+/// optional, the contract's `AgentContextUsage.cost` is `AgentCost | null`, and
+/// `readContextUsage` refuses a payload where the member is missing — because "the engine
+/// reported no cost" and "this producer forgot to say" are different statements, and §5.1 lets a
+/// surface show only the first (§5.1: an unknown cost is not zero).
+fn context_cost(cost: Option<&Cost>) -> Value {
+    match cost {
+        Some(cost) => json!({ "amount": cost.amount, "currency": cost.currency }),
+        None => Value::Null,
     }
 }
 

@@ -17,6 +17,7 @@ import type { ReasoningEffort } from '../../../stores/settings'
 import { useAiSettings } from '../composables/use-ai-settings'
 import AiPermissionSettings from './AiPermissionSettings.vue'
 import AiPromptSettings from './AiPromptSettings.vue'
+import VaultKeySettings from './VaultKeySettings.vue'
 
 const {
   providers,
@@ -175,6 +176,10 @@ const showKeySet = computed(() => keyConfigured.value && apiKey.value === '')
       {{ t('aiSettings.saveKey') }}
     </button>
     <span class="settings-note">{{ t('aiSettings.keyNote') }}</span>
+    <!-- The control the sentence above is about: it says the keys are protected by a master
+         password, and until this block existed there was no way to set one. Immediately under the
+         key it protects, because that is what a reader who has just saved a key is looking at. -->
+    <VaultKeySettings />
     <label class="settings-field settings-toggle">
       <span>{{ t('aiSettings.systemPrompt') }}</span>
       <input

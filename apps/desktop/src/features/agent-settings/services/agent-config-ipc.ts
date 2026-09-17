@@ -33,6 +33,13 @@
  * which an edit could be built from nothing.
  */
 
+import {
+  asBoolean,
+  asNullableString,
+  asRecord,
+  asString,
+  oneOf,
+} from './agent-wire-narrowing'
 import type { AgentProviderClient } from './agent-profile-ipc'
 import type { ConfigEdit, ConfigRead } from './agent-settings-policy'
 
@@ -190,39 +197,4 @@ function outcome(value: unknown): AgentConfigEditOutcome {
       text: asString(held['text'], 'an edit answer.current.text'),
     },
   }
-}
-
-// ---------------------------------------------------------------------------
-// Narrowing
-// ---------------------------------------------------------------------------
-
-/** A failed call. The page's unreadable state is the answer to this, and it is not "no document". */
-function malformed(what: string): never {
-  throw new Error(`the configuration document answered something this window does not understand: ${what}`)
-}
-
-function asRecord(value: unknown, what: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return malformed(what)
-  return value as Record<string, unknown>
-}
-
-function asString(value: unknown, what: string): string {
-  if (typeof value !== 'string') return malformed(what)
-  return value
-}
-
-function asNullableString(value: unknown, what: string): string | null {
-  if (value === null) return null
-  return asString(value, what)
-}
-
-function asBoolean(value: unknown, what: string): boolean {
-  if (typeof value !== 'boolean') return malformed(what)
-  return value
-}
-
-function oneOf<T extends string>(value: unknown, allowed: readonly T[], what: string): T {
-  const text = asString(value, what)
-  if (!(allowed as readonly string[]).includes(text)) return malformed(what)
-  return text as T
 }

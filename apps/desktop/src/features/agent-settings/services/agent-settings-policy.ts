@@ -526,6 +526,26 @@ export function credentialRows(
   }))
 }
 
+/**
+ * The form's fields, one per credential the readout names, all of them untouched.
+ *
+ * `draft: null` for every one, which is what {@link credentialSubmission} reads as "the user did
+ * not touch this" — so a form opened and saved without an edit sends an empty patch rather than
+ * re-submitting the placeholder as the value. That is why the draft is nullable rather than an
+ * empty string: `""` is a value the user typed, and it means *clear the credential*.
+ *
+ * The set of names is the backend's, not this page's. Which credentials an engine needs is the
+ * adapter's answer (§3.4.5), so the form renders the ones the readout carries and invents none —
+ * a page that offered a fixed list would be recommending names for an engine it does not know.
+ */
+export function credentialFields(readout: AgentProfileReadout): CredentialField[] {
+  return readout.credentials.map((entry) => ({
+    name: entry.name,
+    display: entry.value === '' ? '' : REDACTED_CREDENTIAL,
+    draft: null,
+  }))
+}
+
 /** What one credential field of the form holds. */
 export interface CredentialField {
   name: string

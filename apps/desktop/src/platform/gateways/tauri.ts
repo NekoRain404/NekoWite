@@ -22,6 +22,7 @@ import type {
   HistoryEntry,
   KeyPort,
   TrashEntry,
+  VaultKeyStatus,
 } from './contracts'
 
 export const tauriFsPort: FsPort = {
@@ -86,4 +87,11 @@ export const tauriAiPort: AiPort = {
 export const tauriKeyPort: KeyPort = {
   storeAiKey: (provider, key) => invoke<void>('store_ai_key', { provider, key }),
   loadAiKey: (provider) => invoke<string | null>('load_ai_key', { provider }),
+  vaultStatus: () => invoke<VaultKeyStatus>('key_vault_status'),
+  // The two commands that take a password. Neither answers anything on success, and a refusal is
+  // the backend's `VaultCommandError` — an object with a `code` and a `message`, which is what
+  // Tauri rejects with. The password is an argument and never appears in either the answer or a
+  // refusal (see `commands/key_vault.rs`), so nothing here can carry it further than the call.
+  setMasterPassword: (password) => invoke<void>('set_master_password', { password }),
+  unlockVault: (password) => invoke<void>('unlock_vault', { password }),
 }

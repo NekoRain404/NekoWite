@@ -26,6 +26,7 @@ import type {
   AgentSession,
 } from '../../../platform/gateways/agent-contracts'
 import { useAgentSessionStore } from '../stores/agent-session'
+import { setLocale } from '../../../i18n'
 
 /**
  * The copy the caller supplies, which is the whole of the panel's words: the components have
@@ -331,5 +332,121 @@ describe('AgentPanel — the transcript before it has a row', () => {
     // an empty list here means "not yet", which is worth waiting for and does not look the same
     // as an engine that has nothing to offer.
     expect(harness.el('.agent-command-menu')?.getAttribute('data-view')).toBe('waiting')
+  })
+})
+
+/**
+ * The panel mounting on a session the host has **reopened** — 「重开会话，看见那段对话」.
+ *
+ * This is the layer the shipped feature was false at, and no test in this tree stood on it. The
+ * Rust tests stop at the host's own answer; the frontend tests drive the memory double, which
+ * replays in its own book-keeping rather than in the shape a load produces; and the panel was
+ * covered only for the states a *new* session passes through. So a snapshot carrying a restored
+ * conversation, read by the panel that mounts on it, went unchecked — and what the reader saw was
+ * the empty-transcript line over a conversation the engine had just handed back.
+ *
+ * The shape is the host's, not the double's, and it is the shape `agent_session_ipc_test.rs` reads
+ * back out of `SessionSnapshots` for a load: `state: 'ready'` — the engine admitted the session and
+ * nothing has been asked of it — `runId: null`, because a load is not a turn and there is no turn
+ * to point at, and the conversation carried by frames stamped with the load's own run (the only run
+ * id a replayed frame can carry: the engine's notifications name no run and the host stamps them).
+ *
+ * Frames are put into the double through its own `emit`, so that its buffer, its subscription and
+ * everything downstream stay real; the two fields overridden are exactly the two that are the
+ * host's reading of a load rather than the double's of a turn.
+ */
+describe('AgentPanel — a session that was reopened', () => {
+  it('draws the restored conversation and leaves the session able to be asked again', async () => {
+    gateway.emit(session, { kind: 'user-delta', payload: { text: 'ping' }, runId: 'load-0' })
+    gateway.emit(session, { kind: 'thought-delta', payload: { text: 'thinking' }, runId: 'load-0' })
+    gateway.emit(session, { kind: 'text-delta', payload: { text: 'pong' }, runId: 'load-0' })
+    const snapshot = gateway.snapshot.bind(gateway)
+    gateway.snapshot = async (target) => ({
+      ...(await snapshot(target)),
+      state: 'ready',
+      runId: null,
+    })
+
+    const harness = await mountPanel({ chunks: [] })
+
+    // The conversation, both halves, on the panel's own rows.
+    expect(harness.el('[data-agent-empty]')).toBeNull()
+    expect(harness.text('.agent-row-user')).toContain('ping')
+    expect(harness.text('.agent-row-reply')).toContain('pong')
+    // And the session is not drawn as a generation in flight: the badge says what the host says,
+    // and the composer offers send rather than stop — a reopened session nobody is answering is
+    // one the reader can talk to.
+    expect(harness.text('.agent-bar-state')).toContain('Ready')
+    expect(harness.el('.agent-composer [data-action="send"]')).not.toBeNull()
+    expect(harness.el('.agent-composer [data-action="stop"]')).toBeNull()
+    expect(harness.state()).toBe('ready')
+  })
+})
+
+/**
+ * Frames the window refused. The store has counted them since it was written — "a window that is
+ * dropping frames should be able to say so rather than look merely quiet" — and nothing drew the
+ * count. What is asserted here is the whole of the render's claim: drawn above zero, absent at
+ * zero, and *what it says* is the truth for the commonest refusal rather than the alarming
+ * sentence a slightly different reading of the counter would have produced.
+ */
+describe('AgentPanel — the frames this window refused', () => {
+  it('says so when frames were refused, names the reason, and says nothing at zero', async () => {
+    setLocale('en')
+    const harness = await mountPanel({ chunks: ['done. '] })
+
+    // The ordinary state is a naught, and a naught gets no line: a badge reading "0" is a state
+    // that says nothing.
+    expect(harness.el('[data-agent-dropped]')).toBeNull()
+
+    const store = useAgentSessionStore()
+    const key = store.activeKey
+    if (key === null) throw new Error('the panel is not bound to a session')
+    gateway.emit(session, { kind: 'commands-changed', payload: { commands: [] } })
+    await harness.settle()
+    const applied = store.records[key].view.sequence
+
+    // The same frame a second time, which is what a re-subscription and a reload both produce:
+    // the transport re-sends what the view already has. It is refused — that is the duplicate
+    // guard working — and the panel says so without claiming the transcript lost anything.
+    gateway.emit(session, {
+      kind: 'commands-changed',
+      payload: { commands: [] },
+      sequence: applied,
+    })
+    await harness.settle()
+
+    expect(store.records[key].dropped).toBe(1)
+    expect(harness.text('[data-agent-dropped]')).toBe(
+      'Frames this window refused for this session: 1 (last: duplicate-sequence).',
+    )
+    // A refusal is not a hole, and the two notices are two different facts: the sequence was
+    // continuous, so nothing about this session's record is missing and the reload button that
+    // belongs to a gap is not offered for it.
+    expect(store.records[key].view.gap).toBeNull()
+    expect(harness.el('.agent-panel-resync')).toBeNull()
+  })
+
+  it('counts the refusals rather than showing the last one alone', async () => {
+    setLocale('en')
+    const harness = await mountPanel({ chunks: ['done. '] })
+
+    const store = useAgentSessionStore()
+    const key = store.activeKey
+    if (key === null) throw new Error('the panel is not bound to a session')
+    gateway.emit(session, { kind: 'commands-changed', payload: { commands: [] } })
+    await harness.settle()
+    const applied = store.records[key].view.sequence
+    for (let i = 0; i < 3; i += 1) {
+      gateway.emit(session, {
+        kind: 'commands-changed',
+        payload: { commands: [] },
+        sequence: applied,
+      })
+    }
+    await harness.settle()
+
+    expect(store.records[key].dropped).toBe(3)
+    expect(harness.text('[data-agent-dropped]')).toContain('3')
   })
 })

@@ -149,6 +149,63 @@ fn an_option_list_with_no_options_is_still_a_list() {
     assert_eq!(payload, json!({ "options": [] }));
 }
 
+/// The session's context window and cost, as the pinned engine sends it.
+///
+/// The frame's shape is the schema's own test vector (`agent-client-protocol-schema` 1.7.0,
+/// `test_usage_update_serialization`: `used: 53_000, size: 200_000, cost: {0.045, "USD"}`), and
+/// the field names are the ones the pinned *engine* writes — its two send sites build
+/// `{sessionUpdate: "usage_update", used, size, cost: {amount, currency}}` literally. The contract
+/// reads `{ usedTokens, contextTokens, cost }`, so this is one of the mappings that has to happen
+/// here rather than on the window's side.
+#[test]
+fn a_usage_update_is_mapped_into_the_contracts_payload() {
+    let update = wire_update(json!({
+        "sessionUpdate": "usage_update",
+        "used": 53_000,
+        "size": 200_000,
+        "cost": { "amount": 0.045, "currency": "USD" }
+    }));
+
+    let (kind, payload) = normalize_update(&update).expect("a usage update must be forwarded");
+
+    // The kind's wire spelling rather than the variant: this file is compiled against the
+    // vocabulary that exists, and the envelope's `kind` is a string on the wire — which is also
+    // what the window matches on.
+    assert_eq!(
+        serde_json::to_value(kind).expect("a kind is a name"),
+        json!("usage-changed")
+    );
+    assert_eq!(
+        payload,
+        json!({
+            "usedTokens": 53_000,
+            "contextTokens": 200_000,
+            "cost": { "amount": 0.045, "currency": "USD" }
+        })
+    );
+}
+
+#[test]
+fn a_usage_update_with_no_cost_says_so_rather_than_leaving_the_member_out() {
+    // ACP makes `cost` optional and the pinned engine always sends one; the arm still has to state
+    // the absence, because `readContextUsage` refuses a payload with no `cost` member at all —
+    // "the engine reported no cost" and "this producer forgot to say" are different statements, and
+    // §5.1 lets a surface show only the first.
+    let update = wire_update(json!({
+        "sessionUpdate": "usage_update",
+        "used": 1_024,
+        "size": 200_000
+    }));
+
+    let (_, payload) =
+        normalize_update(&update).expect("usage with no cost is still a usage report");
+
+    assert_eq!(
+        payload,
+        json!({ "usedTokens": 1_024, "contextTokens": 200_000, "cost": null })
+    );
+}
+
 #[test]
 fn every_kind_is_spelled_the_way_the_contract_spells_it() {
     // The envelope's `kind` is a *string* on the wire: serde renders it from the variant name
@@ -165,6 +222,7 @@ fn every_kind_is_spelled_the_way_the_contract_spells_it() {
         (AgentEventKind::PermissionRequest, "permission-request"),
         (AgentEventKind::CommandsChanged, "commands-changed"),
         (AgentEventKind::ConfigChanged, "config-changed"),
+        (AgentEventKind::UsageChanged, "usage-changed"),
         (AgentEventKind::FilesChanged, "files-changed"),
         (AgentEventKind::RunFinished, "run-finished"),
         (AgentEventKind::RunFailed, "run-failed"),

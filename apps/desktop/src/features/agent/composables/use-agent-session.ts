@@ -20,6 +20,7 @@
 import { computed, onBeforeUnmount, onMounted, type ComputedRef, type WritableComputedRef } from 'vue'
 import type { AgentGateway, AgentSession, AgentSessionState } from '../../../platform/gateways/agent-contracts'
 import { isRunLive, sessionKey, type AgentSessionView } from '../services/agent-session-view'
+import type { AgentDropReason } from '../services/agent-event-reducer'
 import type { AgentLiveNote } from '../services/agent-context-snapshot'
 import {
   useAgentSessionStore,
@@ -67,6 +68,10 @@ export interface AgentSessionBinding {
   /** The events that were refused for this session, and the last reason: a window that is
    *  dropping frames should be able to say so rather than look merely quiet. */
   dropped: ComputedRef<number>
+  /** Why the last one was refused, exactly as the reducer named it. `null` only until the first
+   *  refusal, which is also the only moment `dropped` is `0` — the two are written together, and
+   *  the panel's sentence carries the reason so the count is a lead rather than an alarm. */
+  lastDrop: ComputedRef<AgentDropReason | null>
 }
 
 export function useAgentSession(options: UseAgentSessionOptions): AgentSessionBinding {
@@ -109,5 +114,6 @@ export function useAgentSession(options: UseAgentSessionOptions): AgentSessionBi
     markRead: () => store.markRead(key),
     setScroll: (scrollTop: number) => store.setScroll(key, scrollTop),
     dropped: computed(() => record.value?.dropped ?? 0),
+    lastDrop: computed(() => record.value?.lastDrop ?? null),
   }
 }

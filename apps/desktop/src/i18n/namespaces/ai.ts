@@ -114,6 +114,36 @@ export const ai = {
       promptTitle: 'Writing prompts',
       promptHint: 'Shortcuts the chat shows under its composer. Switch off the ones you never reach for.',
       contextTruncatedNotice: 'The note was longer than the context budget: {omitted} characters were left out of what the AI read. Raise the budget in Settings → AI if it should see the rest.',
+      vault: {
+        title: 'Master password',
+        reading: 'Reading the key vault…',
+        unreadable: 'The key vault could not be read: {msg}',
+        noPassword: 'No master password is set. The key file holds a key this app generated, so anything running as you can open the vault.',
+        locked: 'A master password is set, and the vault is locked. Enter it to use the keys stored in it.',
+        unlocked: 'A master password is set, and the vault is unlocked for this session.',
+        /* The unlock field's label. It is the password the vault already has — the two-field form
+           below uses `newPassword`/`newConfirm` instead, because it is asking for a different one
+           and a shared label would read as "the password you have" on a field that is not. */
+        password: 'Master password',
+        newPassword: 'New master password',
+        newConfirm: 'New master password again',
+        mismatch: 'The two entries differ. A master password is not stored anywhere, so a typo cannot be undone later — both entries have to be the same.',
+        set: 'Set master password',
+        change: 'Change master password',
+        unlock: 'Unlock',
+        changeHint: 'Changing the password needs the current one first: unlock the vault above, then set the new one.',
+        storagePassword: 'The vault is encrypted under a key derived from this password with Argon2id; only the salt and a one-way verifier are kept. Forgetting it loses the stored keys, and nothing here can recover them. It is not a full app lock — it gates this vault, not your session.',
+        storagePlain: 'Accident protection only: with no master password the vault opens with the key file beside it, and anything running as you can read that.',
+        fail: {
+          noMasterPassword: 'No master password is set, so there is nothing to unlock. Set one below.',
+          wrongPassword: 'That password did not open the vault. It is still locked — check it and try again.',
+          vaultLocked: 'The vault is locked. Unlock it with the current password first, then set the new one.',
+          emptyPassword: 'Type a master password first.',
+          keyFilesUnreadable: 'The vault’s key files could not be read, so no password will open it:',
+          changeFailed: 'The master password was not changed, and the vault is as it was:',
+          unreachable: 'The key vault could not be reached: {msg}',
+        },
+      },
       prompt: {
         summarize: {
           label: 'Summarise',
@@ -276,6 +306,36 @@ export const ai = {
       promptTitle: '写作提示词',
       promptHint: '聊天输入框下方会显示这些快捷提示词，用不到的可以关掉。',
       contextTruncatedNotice: '笔记超出上下文预算，有 {omitted} 个字符没有发送给 AI。如果希望它读到全部内容，可在“设置 → AI”里调大上下文长度。',
+      vault: {
+        title: '主密码',
+        reading: '正在读取密钥库……',
+        unreadable: '读取密钥库失败：{msg}',
+        noPassword: '尚未设置主密码。密钥文件里是应用自己生成的密钥，以你的账户身份运行的程序都能打开这个密钥库。',
+        locked: '已设置主密码，密钥库处于锁定状态。输入主密码后才能使用其中保存的密钥。',
+        unlocked: '已设置主密码，本次运行期间密钥库处于解锁状态。',
+        /* 解锁输入框的标签：问的是密钥库已有的那个密码。下面的双输入框用的是
+           `newPassword`/`newConfirm`——它问的是将要生效的那个，共用同一个标签会让「你已有的密码」
+           出现在并不询问它的输入框上。 */
+        password: '主密码',
+        newPassword: '新主密码',
+        newConfirm: '再输入一次新主密码',
+        mismatch: '两次输入不一致。主密码不会保存在任何地方，输错之后无法找回，两次必须完全一致。',
+        set: '设置主密码',
+        change: '修改主密码',
+        unlock: '解锁',
+        changeHint: '修改主密码需要先输入当前密码：先用上面的表单解锁，再设置新的。',
+        storagePassword: '密钥库由该密码经 Argon2id 派生的密钥加密，文件中只保留盐和一次性校验值。忘记密码就会丢失其中保存的密钥，这里没有任何找回办法。它不是完整的应用锁——保护的是这个密钥库，不是你的系统会话。',
+        storagePlain: '仅防误读：未设置主密码时，密钥库用旁边的密钥文件即可打开，以你的账户身份运行的程序都能读到它。',
+        fail: {
+          noMasterPassword: '当前没有设置主密码，没有可解锁的内容。请在下面设置一个。',
+          wrongPassword: '这个密码打不开密钥库。它仍处于锁定状态——请核对后重试。',
+          vaultLocked: '密钥库处于锁定状态。请先用当前密码解锁，再设置新密码。',
+          emptyPassword: '请先输入主密码。',
+          keyFilesUnreadable: '密钥库的密钥文件无法读取，任何密码都打不开它：',
+          changeFailed: '主密码没有改动，密钥库保持原样：',
+          unreachable: '无法连接密钥库：{msg}',
+        },
+      },
       prompt: {
         summarize: {
           label: '总结笔记',

@@ -61,6 +61,10 @@ import {
   createTauriAgentSkillsCommands,
   type AgentSkillsCommands,
 } from '../platform/gateways/tauri-agent/skills'
+import {
+  createTauriAgentCredentialCommands,
+  type AgentCredentialCommands,
+} from '../platform/gateways/tauri-agent/credentials'
 import { createAgentRegistryClient } from '../features/agent-settings/services/agent-registry-ipc'
 import type { AgentRegistryClient } from '../features/agent-settings/services/agent-registry-policy'
 import { createAgentProviderClient } from '../features/agent-settings/services/agent-profile-ipc'
@@ -77,6 +81,8 @@ import { createAgentCatalogueClient } from '../features/agent-settings/services/
 import type { AgentCatalogueClient } from '../features/agent-settings/services/agent-catalogue-policy'
 import { createAgentSkillsClient } from '../features/agent-settings/services/agent-skills-ipc'
 import type { AgentSkillsClient } from '../features/agent-settings/components/AgentSkillsSettings.vue'
+import { createAgentCredentialClient } from '../features/agent-settings/services/agent-credential-ipc'
+import type { AgentCredentialClient } from '../features/agent-settings/services/agent-credential-ipc'
 
 /**
  * What the settings tree calls.
@@ -127,6 +133,19 @@ export interface AgentSettingsClients {
    * here, exactly as the other two builders' does.
    */
   readonly skills: (agentId: string, profileId: string) => AgentSkillsClient
+  /**
+   * The credential write, for one engine/profile pair.
+   *
+   * A builder for the three above it, and one more reason of its own: what it writes is a *patch*
+   * to a profile's credential set, so a client that could be asked about another pair would be a
+   * key put into a file belonging to an engine the user is not looking at — §8.1's 「不在多个引擎间
+   * 复制凭据」 arriving as a plumbing mistake rather than as a copy.
+   *
+   * It is handed {@link AgentSettingsClients.provider} as its reader: the command's answer is the
+   * profile readout, and the one narrowing of that answer is the provider client's. A second one
+   * here would be a second opinion about which document a pair has.
+   */
+  readonly credentials: (agentId: string, profileId: string) => AgentCredentialClient
 }
 
 /**
@@ -140,6 +159,7 @@ export interface AgentSettingsDeps {
   configCommands?: AgentConfigCommands
   catalogueCommands?: AgentCatalogueCommands
   skillsCommands?: AgentSkillsCommands
+  credentialCommands?: AgentCredentialCommands
 }
 
 /** Build the settings tree's clients over the window's own commands. */
@@ -173,6 +193,15 @@ export function createAgentSettingsClients(deps: AgentSettingsDeps = {}): AgentS
     skills: (agentId: string, profileId: string) =>
       createAgentSkillsClient({
         skills: deps.skillsCommands ?? createTauriAgentSkillsCommands(),
+        agentId,
+        profileId,
+      }),
+    // Bound per pair like the three above, and reading its answer through the same provider
+    // client the profile page uses — one narrowing of one readout, for every caller of it.
+    credentials: (agentId: string, profileId: string) =>
+      createAgentCredentialClient({
+        wire: deps.credentialCommands ?? createTauriAgentCredentialCommands(),
+        profile: provider,
         agentId,
         profileId,
       }),

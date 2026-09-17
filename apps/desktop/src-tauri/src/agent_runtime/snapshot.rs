@@ -45,6 +45,15 @@ struct SessionLog {
     ended: Option<Ending>,
     /// The highest sequence this session's stream reached.
     sequence: u64,
+    /// The host is reopening this session, and the frames it is publishing are that session's
+    /// **history** rather than a turn of it.
+    ///
+    /// See [`SessionSnapshots::adopting`]. It is a flag on the log rather than a fact read off the
+    /// frames because the frames cannot say it: `session/load`'s replay arrives as ordinary
+    /// `session/update` notifications, stamped with the load's own run so that a window has
+    /// something to attribute them to, and a frame that names a run is indistinguishable from a
+    /// turn's frame by its own shape.
+    adopting: bool,
 }
 
 impl Default for SessionLog {
@@ -54,6 +63,7 @@ impl Default for SessionLog {
             run_id: None,
             ended: None,
             sequence: 0,
+            adopting: false,
         }
     }
 }
@@ -183,12 +193,42 @@ impl SessionSnapshots {
     /// A session with nothing published yet is a session whose snapshot is empty, not a session
     /// the host has never heard of — so the two have to be told apart here, and the log is what
     /// tells them apart.
+    ///
+    /// **It also ends an adoption.** The host calls it once it holds the session
+    /// (`agent_open_session`, and `agent_load_session` when the load answers), and from that
+    /// moment the session's frames are its turns again and are read as such.
     pub fn opened(&self, session_id: &str) {
-        self.sessions
-            .lock()
-            .unwrap()
-            .entry(session_id.to_string())
-            .or_default();
+        let mut sessions = self.sessions.lock().unwrap();
+        sessions.entry(session_id.to_string()).or_default().adopting = false;
+    }
+
+    /// The host is reopening `session_id`: what arrives now is that session's history.
+    ///
+    /// `session/load` hands the conversation back as ordinary `session/update` notifications, and
+    /// this host publishes them as ordinary events — stamped with the load's own run, because a
+    /// window can only place turn content that names a turn. Which leaves one thing the frames
+    /// cannot say for themselves: **a load is not a turn.** Recorded as one, a restored
+    /// conversation arrives at a mounting window as a run that is still going — `state: running`,
+    /// `runId: load-N` — for a generation that ended before the window existed. The window then
+    /// draws a spinner over a finished conversation and refuses to send, and neither is a reading
+    /// the host can defend: nothing has been asked of that session yet.
+    ///
+    /// So the load path says so, before it asks: while this is set, the frames are recorded, kept
+    /// and delivered exactly as before, and only the two questions this log answers about a
+    /// *turn* — which run the session is on, and how the last one ended — are left alone. The
+    /// session reports [`SessionState::Ready`] with no run bound, which is what
+    /// [`Self::opened`]'s own words mean: the engine admitted it and nothing has been asked of it.
+    ///
+    /// The window still gets its attribution: a replayed frame carries the load's run id, and a
+    /// window rebuilding from the snapshot binds it in `replay` mode, where binding is the record
+    /// speaking rather than new traffic asking for permission.
+    ///
+    /// A turn cannot begin in this window: a prompt needs a session handle, the handle is minted
+    /// from the load's own answer, and this is cleared by the [`Self::opened`] call beside that
+    /// answer. The flag is not a lock; it is the load saying which of its two readers a frame has.
+    pub fn adopting(&self, session_id: &str) {
+        let mut sessions = self.sessions.lock().unwrap();
+        sessions.entry(session_id.to_string()).or_default().adopting = true;
     }
 
     /// A generation was started on `session_id`.
@@ -216,20 +256,25 @@ impl SessionSnapshots {
         let mut sessions = self.sessions.lock().unwrap();
         let log = sessions.entry(envelope.session_id.clone()).or_default();
         log.sequence = log.sequence.max(envelope.sequence);
-        if let Some(run_id) = &envelope.run_id {
-            log.run_id = Some(run_id.clone());
-        }
-        match envelope.kind {
-            // The run's ending is the one frame that changes what the view draws, and it is the
-            // engine's own stop reason that says which ending it was: `cancelled` is the user's
-            // stop (or the engine refusing mid-turn), the four other reasons the contract names
-            // are ordinary ends, and anything else is an ending this build cannot name.
-            AgentEventKind::RunFinished => {
-                let stop_reason = envelope.payload.get("stopReason").and_then(Value::as_str);
-                log.ended = Some(ending_of(stop_reason));
+        // The frame itself is kept whole either way — its run and its sequence are what a window
+        // rebuilds the transcript from. What an adoption withholds is the *turn* bookkeeping, and
+        // all of it: see [`SessionSnapshots::adopting`].
+        if !log.adopting {
+            if let Some(run_id) = &envelope.run_id {
+                log.run_id = Some(run_id.clone());
             }
-            AgentEventKind::RunFailed => log.ended = Some(Ending::Failed),
-            _ => {}
+            match envelope.kind {
+                // The run's ending is the one frame that changes what the view draws, and it is the
+                // engine's own stop reason that says which ending it was: `cancelled` is the user's
+                // stop (or the engine refusing mid-turn), the four other reasons the contract names
+                // are ordinary ends, and anything else is an ending this build cannot name.
+                AgentEventKind::RunFinished => {
+                    let stop_reason = envelope.payload.get("stopReason").and_then(Value::as_str);
+                    log.ended = Some(ending_of(stop_reason));
+                }
+                AgentEventKind::RunFailed => log.ended = Some(Ending::Failed),
+                _ => {}
+            }
         }
         if log.events.len() == self.window {
             log.events.pop_front();

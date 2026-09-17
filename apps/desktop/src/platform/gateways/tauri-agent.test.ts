@@ -535,6 +535,15 @@ interface FakeIpc extends AgentIpc {
   calls: string[]
 }
 
+/**
+ * The name the fake host's `session/list` gives its one session.
+ *
+ * Named rather than inlined because two tests are about the same string travelling: the list
+ * answers it, and a reopen of that session has to reach the panel carrying it (the load response
+ * itself has no title field — see `AgentSession.title`).
+ */
+const LISTED_TITLE = 'New session - 2026-01-01T00:00:01Z'
+
 function fakeIpc(overrides: Partial<AgentIpc> = {}): FakeIpc {
   const registered = new Set<(frame: unknown) => void>()
   const removed: Array<(frame: unknown) => void> = []
@@ -588,8 +597,12 @@ function fakeIpc(overrides: Partial<AgentIpc> = {}): FakeIpc {
           {
             sessionId: 'ses_fake_1',
             cwd: '/vault',
-            title: 'New session - 2026-01-01T00:00:01Z',
+            title: LISTED_TITLE,
             updatedAt: '2026-01-01T00:00:01Z',
+            // The host's half of the row, and the one field the engine cannot answer: this host
+            // holds the session, so a free action on this row is one it will carry out. Required
+            // by the reader — a row without it is a host this window does not understand.
+            held: true,
           },
         ],
         nextCursor: null,
@@ -672,6 +685,88 @@ describe('the real gateway', () => {
       { id: 'fake/model-b', name: 'Model B' },
     ])
     expect(session.initialModelId).toBe('fake/model-a')
+  })
+
+  it('answers a config set with the engine’s refreshed list, read out of the schema shape', async () => {
+    // `agent_set_config_option` returns `serde_json::Value` holding the full option set with its
+    // current values, in the same schema shape `agent_open_session` answers — and it used to be
+    // dropped on the floor (`Promise<void>` on the port), so a caller that shows the option had
+    // nothing to show unless the engine *also* announced the change as `config-changed`. The
+    // pinned engine does; an engine that answered without notifying would have left the row
+    // showing the value the reader had just left.
+    const ipc = fakeIpc({
+      selectModel: async () => [
+        {
+          id: 'model',
+          name: 'Model',
+          type: 'select',
+          currentValue: 'fake/model-b',
+          options: [
+            { value: 'fake/model-a', name: 'Model A' },
+            { value: 'fake/model-b', name: 'Model B' },
+          ],
+        },
+      ],
+    })
+    const gateway = createTauriAgentGateway({ vaultId: 'vault-1', ipc })
+    const session = await openSessionOn(gateway)
+
+    expect(await gateway.setConfigOption(session, 'model', 'fake/model-b')).toEqual([
+      {
+        id: 'model',
+        name: 'Model',
+        value: {
+          kind: 'select',
+          current: 'fake/model-b',
+          choices: [
+            { value: 'fake/model-a', name: 'Model A' },
+            { value: 'fake/model-b', name: 'Model B' },
+          ],
+        },
+      },
+    ])
+  })
+
+  it('answers null rather than an empty list when the set’s answer cannot be read', async () => {
+    // The two arms are two different statements. An answer this window cannot read must leave the
+    // caller's list alone: `[]` would be read as the engine withdrawing every option, which is a
+    // change it never stated — and it would clear the row on a bad answer rather than on a fact.
+    const ipc = fakeIpc({ selectModel: async () => ({ not: 'a list' }) })
+    const gateway = createTauriAgentGateway({ vaultId: 'vault-1', ipc })
+    const session = await openSessionOn(gateway)
+
+    expect(await gateway.setConfigOption(session, 'model', 'fake/model-b')).toBeNull()
+  })
+
+  it('carries the name the engine gave a session onto the handle a reopen answers with', async () => {
+    // A reopened session is one the engine has already named, and the only answer this window is
+    // ever given that name in is `session/list` — the load response carries no title, and the
+    // frame that would state one (`SessionInfoUpdate`) is not mapped on the host side. So the row
+    // the reader picked from is the one place the string exists, and it is this adapter that read
+    // it: the pick arrives here as a `loadSession` for the same id.
+    const gateway = createTauriAgentGateway({ vaultId: 'vault-1', ipc: fakeIpc() })
+    // The list needs a live runtime: `agent_list_sessions` reaches the engine through the session
+    // slot, so a gateway that was never started refuses the call itself and no list is read.
+    await gateway.start()
+
+    const listed = await gateway.listSessions()
+    expect(listed.sessions[0]?.title).toBe(LISTED_TITLE)
+    expect(listed.sessions[0]?.held).toBe(true)
+
+    const reopened = await gateway.loadSession('ses_fake_1', { vaultId: 'vault-1', cwd: '/vault' })
+    expect(reopened.title).toBe(LISTED_TITLE)
+  })
+
+  it('leaves a session it was never told a name for without one, rather than inventing a name', async () => {
+    // A new session has no name in any answer yet, and a reopen the window never listed has none
+    // either. Both are `null`, which is the bar's own sentence ('New {engine} session') — a name
+    // this app wrote would be a fact the engine never stated.
+    const gateway = createTauriAgentGateway({ vaultId: 'vault-1', ipc: fakeIpc() })
+
+    const opened = await openSessionOn(gateway)
+    expect(opened.title).toBeNull()
+    const reopened = await gateway.loadSession('ses_fake_1', { vaultId: 'vault-1', cwd: '/vault' })
+    expect(reopened.title).toBeNull()
   })
 
   it('refuses to send a model the session never offered, before the engine sees it', async () => {

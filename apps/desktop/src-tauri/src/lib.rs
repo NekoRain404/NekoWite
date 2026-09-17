@@ -261,6 +261,10 @@ pub fn run() {
             commands::ai::ai_list_models,
             commands::keys::store_ai_key,
             commands::keys::load_ai_key,
+            // The key vault's state, read before either of the two below is offered. Registered
+            // here for the reason above: a read no window may make would leave the master-password
+            // controls drawing a state nobody could ask about.
+            commands::key_vault::key_vault_status,
             commands::keys::set_master_password,
             commands::keys::unlock_vault,
             commands::system::system_accent_color,

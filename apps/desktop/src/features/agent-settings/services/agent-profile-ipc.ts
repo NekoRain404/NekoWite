@@ -34,6 +34,15 @@
  */
 
 import {
+  asBoolean,
+  asList,
+  asNullableString,
+  asRecord,
+  asString,
+  malformed,
+  oneOf,
+} from './agent-wire-narrowing'
+import {
   CONFIG_MODES,
   DISCOVERY_SURFACES,
   PERMISSION_STATES,
@@ -244,50 +253,4 @@ function storage(value: unknown): CredentialStorageView {
     encrypted: false,
     keychain: false,
   }
-}
-
-// ---------------------------------------------------------------------------
-// Narrowing
-// ---------------------------------------------------------------------------
-
-/**
- * A failed call, not a refused one: the page's unreadable state is the answer to this.
- *
- * The message names the *field* and never the value it held — what a malformed answer contains is
- * unknown by construction, and a credential is the field this file exists to keep out of
- * sentences.
- */
-function malformed(what: string): never {
-  throw new Error(`the profile answered something this window does not understand: ${what}`)
-}
-
-function asRecord(value: unknown, what: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return malformed(what)
-  return value as Record<string, unknown>
-}
-
-function asList(value: unknown, what: string): unknown[] {
-  if (!Array.isArray(value)) return malformed(what)
-  return value
-}
-
-function asString(value: unknown, what: string): string {
-  if (typeof value !== 'string') return malformed(what)
-  return value
-}
-
-function asNullableString(value: unknown, what: string): string | null {
-  if (value === null) return null
-  return asString(value, what)
-}
-
-function asBoolean(value: unknown, what: string): boolean {
-  if (typeof value !== 'boolean') return malformed(what)
-  return value
-}
-
-function oneOf<T extends string>(value: unknown, allowed: readonly T[], what: string): T {
-  const text = asString(value, what)
-  if (!(allowed as readonly string[]).includes(text)) return malformed(what)
-  return text as T
 }

@@ -41,6 +41,7 @@
     "allow-ai-list-models",
     "allow-store-ai-key",
     "allow-load-ai-key",
+    "allow-key-vault-status",
     "allow-set-master-password",
     "allow-unlock-vault",
     "allow-system-accent-color",

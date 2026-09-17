@@ -334,6 +334,14 @@ pub struct AgentRuntime {
     reported: Arc<Mutex<HashMap<String, SessionCapabilities>>>,
     /// The handshake's answer, once per incarnation — the first of the two negotiations §3.4 names.
     handshake: Mutex<Option<Handshake>>,
+    /// The update dispatcher's drain channel: the one place a caller can ask it to finish what the
+    /// engine has already sent.
+    ///
+    /// It exists for `session/load` and nothing else. A load's response is what ends the run the
+    /// replay belongs to, and the frames are handed over on a task of their own — so a response
+    /// that closed the run without waiting for them would discard the conversation it just
+    /// restored. See [`AgentRuntime::drain_updates`].
+    flush: mpsc::UnboundedSender<tokio::sync::oneshot::Sender<()>>,
     /// The sessions a `session/load` is in flight for, right now.
     ///
     /// The pre-registration [`Self::load_session`] does before it sends is what lets replayed
@@ -380,8 +388,12 @@ impl AgentRuntime {
         let reported: Arc<Mutex<HashMap<String, SessionCapabilities>>> =
             Arc::new(Mutex::new(HashMap::new()));
 
+        // Made before the dispatcher is spawned, because the dispatcher takes the reading half and
+        // this is the only way back to it. See [`Self::drain_updates`].
+        let (flush, drains) = mpsc::unbounded_channel();
         tokio::spawn(super::runs::dispatch_updates(
             events.updates,
+            drains,
             Arc::clone(&sessions),
             Arc::clone(&reported),
             emitter.clone(),
@@ -402,6 +414,7 @@ impl AgentRuntime {
                 run_counter: AtomicU64::new(0),
                 reported,
                 handshake: Mutex::new(None),
+                flush,
                 loading: Mutex::new(std::collections::HashSet::new()),
                 negotiating: tokio::sync::Mutex::new(()),
             },
@@ -510,10 +523,46 @@ impl AgentRuntime {
             .list_sessions(None, None, CONTROL_BOUND)
             .await
             .map_err(SessionError::Transport)?;
+        // The one fact on a row that is this host's rather than the engine's, read from the table
+        // this runtime keeps: the guard `close_session` checks before it asks the engine is
+        // `known_session`, so a window that drew the free action from the engine's list alone
+        // would draw it on rows this host is going to refuse. Read here, under one lock, rather
+        // than answered per row by a second call.
+        let held = self.sessions.lock().unwrap();
         Ok(SessionPage {
-            sessions: response.sessions.iter().map(SessionListing::of).collect(),
+            sessions: response
+                .sessions
+                .iter()
+                .map(|info| {
+                    SessionListing::of(info, held.contains_key(&info.session_id.to_string()))
+                })
+                .collect(),
             next_cursor: response.next_cursor.clone(),
         })
+    }
+
+    /// Waits until every notification the engine has already sent has been turned into an event.
+    ///
+    /// The update dispatcher reads one channel and this is the only way to ask it where it is: a
+    /// drain request is answered after the queue it shares with the engine's frames has been
+    /// emptied. It is not a sleep and it is not a guess — the transport pushes a notification and
+    /// resolves the response for the call it arrived during on one task, **in that order**, so
+    /// everything queued when this is called is everything the engine had said beforehand. What it
+    /// does not cover, and cannot, is a frame the engine sends *after* answering; that frame
+    /// arrives after the request it belongs to and is a straggler by definition.
+    ///
+    /// Called by [`Self::load_session`] and nowhere else, because a load is the one request whose
+    /// answer is not the last word about the work it did.
+    async fn drain_updates(&self) {
+        let (answered, drained) = tokio::sync::oneshot::channel();
+        // A closed channel means the dispatcher is gone, which is the shutdown path: there is
+        // nothing left to drain and nothing to report to a caller that is already leaving.
+        if self.flush.send(answered).is_err() {
+            return;
+        }
+        // A caller that stops waiting loses nothing: the frame is forwarded either way, and the
+        // answer is a receipt rather than the work.
+        let _ = drained.await;
     }
 
     /// Reopens a session the engine holds, adopting it as one of this host's own.
@@ -534,11 +583,14 @@ impl AgentRuntime {
     /// **A load is stamped with a run, and that run ends without a frame.** `forward_update`
     /// attaches turn content to the run a session has in flight, so a slot with `run: None` drops
     /// replayed text exactly as it drops text for a session that is not there. The run id is
-    /// minted here and marked finished once the response arrives, which is the barrier: an update
-    /// that arrives after it belongs to no turn this host is showing and is dropped, which is the
-    /// same rule a late frame for a cancelled run gets. **No ending is emitted** — a load is not a
-    /// turn and the contract has no stop reason for one, so the caller learns it finished from
-    /// this call's own answer, exactly as `prompt` learns its run id from its return value.
+    /// minted here and marked finished once the response arrives *and its replay has been drained*
+    /// ([`Self::drain_updates`]): an update that arrives after that belongs to no turn this host is
+    /// showing and is dropped, which is the same rule a late frame for a cancelled run gets.
+    /// **The drain is what makes "after that" a fact rather than a race** — the response and the
+    /// notifications that preceded it are handed over on different tasks, and a run closed on the
+    /// response alone closes on frames that are still queued. **No ending is emitted** — a load is
+    /// not a turn and the contract has no stop reason for one, so the caller learns it finished
+    /// from this call's own answer, exactly as `prompt` learns its run id from its return value.
     ///
     /// The registration is rolled back when the engine refuses, so a failed load does not leave
     /// the host holding a session nothing opened.
@@ -609,6 +661,26 @@ impl AgentRuntime {
                 return Err(SessionError::Transport(error));
             }
         };
+
+        // **The response is not the end of the replay.** The engine replays the conversation as
+        // ordinary `session/update` notifications while this request is outstanding, and they are
+        // handed to the host's own dispatcher to be turned into events — on a task of its own,
+        // which this response does not wait for. So at this instant part of the conversation may
+        // still be in that queue, and everything below this line is decided as though the load
+        // were over: the run is marked finished, and a finished run's frames are dropped by
+        // `runs::forward_update` — correctly, because that is what stops a stopped answer from
+        // looking alive again.
+        //
+        // Measured against the fixture with a 200-frame replay written in one piece: 128 frames
+        // reached the snapshot a mounting window is given, the other 72 were discarded after this
+        // line, and the window's own channel never carried them either
+        // (`agent_session_ipc_test.rs`, the burst test). So the load waits for the dispatcher
+        // here. The wait is bounded by the frames the engine had already sent, not by the engine:
+        // the transport pushes a notification and resolves this response on one task, in that
+        // order, so what is queued when this line runs is exactly what the engine said before it
+        // answered. A cancelled load takes the same path — `cancel` is a fence for the *run*, and
+        // the frames of a load that is still being adopted are not the frames of a turn.
+        self.drain_updates().await;
 
         let config_options = response
             .config_options
@@ -777,15 +849,32 @@ pub struct SessionListing {
     pub title: Option<String>,
     /// ISO 8601, the engine's own last-activity stamp, when it has one.
     pub updated_at: Option<String>,
+    /// Whether **this host** holds the session right now — the one field on this row that is not
+    /// the engine's.
+    ///
+    /// `session/list` answers the engine's own table, which outlives the process that wrote it:
+    /// sessions an earlier run of this app opened are still listed, and they are the whole reason
+    /// a history exists. This host's table is narrower and deliberately so — §6.1 has the host
+    /// refuse an id it never received a `session/new` or `session/load` answer for
+    /// (`AgentRuntime::known_session`) — so a row
+    /// this flag is false for is one `agent_close_session` will refuse *before* the engine is
+    /// asked. A surface offering the free action is offering a call, and this is the half of the
+    /// answer the engine cannot give.
+    ///
+    /// Carried on the row rather than asked for per call, because it is a property of the answer
+    /// and not of the caller: the engine's list and this host's table are both read at one
+    /// instant, and a second round trip would be a second instant.
+    pub held: bool,
 }
 
 impl SessionListing {
-    fn of(info: &agent_client_protocol::schema::v1::SessionInfo) -> Self {
+    fn of(info: &agent_client_protocol::schema::v1::SessionInfo, held: bool) -> Self {
         Self {
             session_id: info.session_id.to_string(),
             cwd: info.cwd.to_string_lossy().into_owned(),
             title: info.title.clone(),
             updated_at: info.updated_at.clone(),
+            held,
         }
     }
 }

@@ -5,8 +5,9 @@
  * is there: teleported to the body and `position: fixed` (a popup drawn inside a scrolled pane
  * would be clipped by it), placed against the trigger and flipped above when the room below runs
  * out, dismissed on a pointer press outside, repositioned rather than dismissed when the viewport
- * moves, and Escape claimed through the modal stack so the list closes rather than the dialog
- * behind it. `ui/ContextMenu.vue` is the same recipe for a menu anchored to a point.
+ * moves **or when either box changes size**, and Escape claimed through the modal stack so the list
+ * closes rather than the dialog behind it. `ui/ContextMenu.vue` is the same recipe for a menu
+ * anchored to a point.
  *
  * It is here rather than copied into the picker because it is about *geometry and dismissal*
  * rather than about config options: the picker's own file was over the size this project allows
@@ -100,6 +101,57 @@ export function useDetachedPopup(options: DetachedPopupOptions): DetachedPopup {
     if (open.value) void place()
   }
 
+  /**
+   * The boxes whose change moves the popup, watched while it is up: the popup itself, and the
+   * control it hangs from.
+   *
+   * **The popup's own box is the one that cannot be seen from outside.** `show` measures once, at
+   * the instant the caller opens — and a popup is not a fixed size: this app's controls open
+   * theirs before their content exists, because the content is a call's answer (the session list
+   * is `session/list`, and it is asked for *as* the box appears). Measured on a 1400px window: the
+   * history list was placed for the 219px box it had while the answer was in flight, then grew to
+   * 290px when the rows arrived, which put its right edge 63px past the window and its ✕ — the
+   * rightmost thing in a row — entirely outside it. Resizing the window re-placed it and every ✕
+   * came back, which is what made timing the whole cause.
+   *
+   * The trigger is watched with it because the placement is measured against it: a control that
+   * moves or changes width (a bar that wraps, a title that grew) moves the list, and `window`'s
+   * own resize event does not fire for that.
+   */
+  let sized: ResizeObserver | null = null
+  /** One re-place per frame: a list arriving is many boxes moving in one tick. */
+  let frame = 0
+
+  function schedule(): void {
+    if (frame !== 0) return
+    frame = requestAnimationFrame(() => {
+      frame = 0
+      // The popup may have closed inside the frame, and a placement published for a box that is
+      // gone would move the *next* one before it is measured.
+      if (open.value) void place()
+    })
+  }
+
+  function watchSize(watching: boolean): void {
+    if (frame !== 0) {
+      cancelAnimationFrame(frame)
+      frame = 0
+    }
+    sized?.disconnect()
+    sized = null
+    if (!watching) return
+    // Absent on old engines and in jsdom; the viewport listeners below still re-place this popup,
+    // and a popup that is never re-placed is the behaviour this app had before.
+    if (typeof ResizeObserver === 'undefined') return
+    const popup = options.popup()
+    const trigger = options.trigger.value
+    if (popup === null && trigger === null) return
+    sized = new ResizeObserver(() => schedule())
+    for (const element of [popup, trigger]) {
+      if (element !== null) sized.observe(element)
+    }
+  }
+
   function watchViewport(watching: boolean): void {
     // Written out rather than dispatched through `document[watching ? 'add' : 'remove'](...)`:
     // the computed method defeats overload resolution, and `onPointerDown` takes a `PointerEvent`,
@@ -120,7 +172,12 @@ export function useDetachedPopup(options: DetachedPopupOptions): DetachedPopup {
     open.value = true
     escapeToken = modalStack.claimModal(options.claim)
     watchViewport(true)
-    return place()
+    const placed = await place()
+    // Watched after the first measurement, because both boxes have to be in the document before
+    // there is anything to watch — the popup is rendered by the caller's own `v-if` and exists
+    // only after the `nextTick` `place` waits on.
+    watchSize(true)
+    return placed
   }
 
   function hide(): void {
@@ -129,6 +186,7 @@ export function useDetachedPopup(options: DetachedPopupOptions): DetachedPopup {
     modalStack.releaseModal(escapeToken)
     escapeToken = null
     watchViewport(false)
+    watchSize(false)
   }
 
   onBeforeUnmount(hide)

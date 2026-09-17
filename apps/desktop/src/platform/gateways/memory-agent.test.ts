@@ -393,7 +393,17 @@ describe('memory agent gateway', () => {
     expect(session.sessionId).toBeTruthy()
     expect(session.initialModelId).toBe(session.models[0].id)
 
-    await expect(agent.selectModel(session, 'memory-quiet')).resolves.toBeUndefined()
+    // The answer is the engine's refreshed option list — the same list `config-changed` carries,
+    // because the real command returns it and the port used to throw it away. Asserted here
+    // rather than left as "it resolved": the value inside is the half a caller renders.
+    await expect(agent.selectModel(session, 'memory-quiet')).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'model',
+          value: expect.objectContaining({ current: 'memory-quiet' }),
+        }),
+      ]),
+    )
     await expect(failureOf(agent.selectModel(session, 'no-such-model'))).resolves.toMatchObject({
       code: 'invalid-response',
     })

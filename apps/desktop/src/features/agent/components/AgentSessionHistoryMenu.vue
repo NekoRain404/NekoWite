@@ -71,8 +71,10 @@ const props = defineProps<{
    * engine's own report, exactly as the history control's was.
    *
    * False draws no free button on any row. The action is not offered on a capability this window
-   * has not been told about, and the row the reader is on is never offered it either (`row.current`):
-   * freeing the session on screen, from a list that is about the others, is a trap.
+   * has not been told about; the row the reader is on is never offered it either (`row.current`),
+   * because freeing the session on screen from a list that is about the others is a trap; and a
+   * row `row.held` is false for is not offered it, because the host refuses that call before the
+   * engine hears about it (the button's own comment has the three together).
    */
   closeable: boolean
   /** What the strip under the rows says, if anything. The panel owns it. */
@@ -276,10 +278,19 @@ defineExpose({ element, focus })
           </span>
         </div>
         <!-- The row's own action, beside the option rather than inside it: the engine's records
-             are not this app's to keep or drop, and freeing one is offered only where the engine
-             said it answers the call — and never on the session the reader is in. -->
+             are not this app's to keep or drop, and freeing one is offered only where the call can
+             be carried out — and never on the session the reader is in.
+
+             Three facts, and all three are needed. `closeable` is the engine saying it answers
+             `session/close`; `row.held` is *this host* saying it holds the session, which is the
+             predicate `agent_close_session` checks before it asks the engine at all; `!row.current`
+             is the trap the row above this one keeps. The engine's table outlives this app's run,
+             so most rows of a fresh window are listed and not held — before `held` was read, every
+             one of them wore a button whose only possible outcome was the host's refusal, which
+             the panel then reported as the engine's. §5.2: an option that cannot act is not drawn,
+             so nothing here has to be explained away. -->
         <button
-          v-if="closeable && !row.current"
+          v-if="closeable && row.held && !row.current"
           class="agent-history-free"
           type="button"
           :title="t('agent.panel.history.free.label')"

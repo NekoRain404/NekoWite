@@ -144,16 +144,22 @@ describe('what the row draws', () => {
 })
 
 describe('where a choice goes', () => {
-  it('moves an option through the general call, by the engine’s own id', async () => {
+  it('moves an option through the general call, by the engine’s own id, and hands back its answer', async () => {
     const calls: Array<[string, string]> = []
     const spy = {
       ...gateway,
+      // The engine's answer, in the shape the port now carries it: the refreshed list, which the
+      // caller (the panel's row) writes into the view rather than waiting for the notification.
       setConfigOption: async (_session: AgentSession, configId: string, value: string) => {
         calls.push([configId, value])
+        return engineReportedOptions()
       },
     } as AgentGateway
     const controls = configControls(session, engineReportedOptions())
-    expect(await setConfigOption(spy, session, controls[1], 'plan')).toEqual({ accepted: true })
+    expect(await setConfigOption(spy, session, controls[1], 'plan')).toEqual({
+      accepted: true,
+      options: engineReportedOptions(),
+    })
     expect(calls).toEqual([['mode', 'plan']])
   })
 
@@ -163,11 +169,13 @@ describe('where a choice goes', () => {
       ...gateway,
       setConfigOption: async (_session: AgentSession, configId: string, value: string) => {
         calls.push([configId, value])
+        return null
       },
     } as AgentGateway
     const [model] = configControls(session, engineReportedOptions())
     expect(await setConfigOption(spy, session, model, 'iapp/deepseek-v4-flash')).toEqual({
       accepted: true,
+      options: null,
     })
     expect(calls).toEqual([['model', 'iapp/deepseek-v4-flash']])
   })
@@ -213,7 +221,11 @@ describe('the frame an engine sends back', () => {
     // the call moves the option, the frame carries the new list, and the view reduces it into
     // `config`, which the row draws in preference to the session's opening answer.
     const controls = configControls(session, engineReportedOptions())
-    expect(await setConfigOption(gateway, session, controls[1], 'plan')).toEqual({ accepted: true })
+    const outcome = await setConfigOption(gateway, session, controls[1], 'plan')
+    expect(outcome).toMatchObject({ accepted: true })
+    // The double answers with the list *and* announces it, which is what the pinned engine does:
+    // the two halves of one change travel by different routes and have to agree.
+    expect(outcome.accepted && outcome.options?.map((option) => option.id)).toEqual(['model', 'mode'])
     const snapshot = await gateway.snapshot(session)
     const frame = snapshot.events.filter((event) => event.kind === 'config-changed').at(-1)
     const options = frame?.kind === 'config-changed' ? frame.payload.options : []

@@ -83,6 +83,17 @@ export interface AgentSessionHistoryRow {
   readonly cwd: string
   /** The engine's last-activity stamp, or null when it sent none. */
   readonly updatedAt: string | null
+  /**
+   * Whether the host holds the session, from the row's own `held` — the fact the free action is
+   * offered against.
+   *
+   * Read, not derived: the host is the only layer that knows, and the engine cannot be asked.
+   * `session/list` answers the engine's table, which outlives the process that wrote it, while the
+   * host forwards closes only for ids it received an answer about (§6.1) — so a row the host does
+   * not hold has a free action that can only fail, and §5.2's rule is that such a control is not
+   * drawn rather than drawn and refused.
+   */
+  readonly held: boolean
   /** The session the panel is showing: picking it would be a load the engine refuses. */
   readonly current: boolean
   /** Recorded in a folder other than the one this runtime works in. */
@@ -117,6 +128,7 @@ export function agentSessionHistoryRows(
     title: session.title,
     cwd: session.cwd,
     updatedAt: session.updatedAt,
+    held: session.held,
     current: session.sessionId === input.currentSessionId,
     elsewhere: session.cwd !== input.cwd,
   }))

@@ -44,6 +44,7 @@
 import type {
   AgentConfigChoice,
   AgentConfigOption,
+  AgentConfigOptionList,
   AgentFailureCode,
   AgentGateway,
   AgentSession,
@@ -158,7 +159,15 @@ export function configControls(
 
 /** What became of a value the reader chose. */
 export type AgentConfigSetOutcome =
-  | { accepted: true }
+  /**
+   * The engine took the value.
+   *
+   * `options` is the engine's own refreshed list, read off the call's answer — the same list the
+   * pinned engine also announces as `config-changed`. It is `null` when the answer was not a list
+   * this window could read, and the caller must keep what it is showing in that case: the row
+   * moves on the engine's word or not at all.
+   */
+  | { accepted: true; options: AgentConfigOptionList }
   /** The value has no shape this build can send — an engine's boolean option; see the header.
    *  The row draws such a control as unavailable, so this is the second line of defence rather
    *  than the first. */
@@ -187,8 +196,7 @@ export async function setConfigOption(
     return { accepted: false, reason: 'not-movable' }
   }
   try {
-    await gateway.setConfigOption(session, control.key, value)
-    return { accepted: true }
+    return { accepted: true, options: await gateway.setConfigOption(session, control.key, value) }
   } catch (error) {
     return { accepted: false, reason: 'refused', ...describeFailure(error) }
   }

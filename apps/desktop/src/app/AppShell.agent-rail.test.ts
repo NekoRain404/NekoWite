@@ -407,6 +407,43 @@ describe('the sessions the engine holds, from the panel’s own control', () => 
     expect(panel()).toBe(before)
     expect(railState('refused')).toBeNull()
   })
+
+  /**
+   * The name the reader just read, on the bar the reopen lands on.
+   *
+   * `session/list` is the only answer this app is ever given a session's name in — the load
+   * response carries no title, and `SessionInfoUpdate` is not mapped on the host side. So a pick
+   * out of the list is the one moment a name is in hand, and it has to survive the remount that
+   * follows it: before this, the bar fell straight through to `labels.untitled` and told a reader
+   * "New opencode session" about the very session whose row they had picked by name.
+   */
+  it('draws the name the engine gave the session it reopened, not the untitled fallback', async () => {
+    const { earlier } = await shellWithHistory()
+    const before = panel()
+
+    await openHistory()
+    // Read the row's own title first: the assertion below is that the *bar* carries what the row
+    // carried, not that this file knows what the double names its sessions.
+    const rowTitle = document
+      .querySelector<HTMLElement>(
+        `[data-session="${earlier.sessionId}"] .agent-history-option-title`,
+      )
+      ?.textContent?.trim()
+    expect(rowTitle).toBeTruthy()
+
+    document.querySelector<HTMLElement>(`[data-session="${earlier.sessionId}"]`)!.click()
+    await untilDom(() => panel() !== null && panel() !== before, 'a new panel element')
+    await untilDom(
+      () => document.querySelector('.agent-bar-title')?.textContent?.trim() === rowTitle,
+      'the reopened session’s name on the bar',
+    )
+    const bar = document.querySelector<HTMLElement>('.agent-bar-title')
+    expect(bar?.textContent?.trim()).toBe(rowTitle)
+    // The fallback is a sentence this app wrote, and it is what the bar said before the name was
+    // carried. Asserting its absence is what makes this a test of the carried string rather than
+    // of "something is drawn".
+    expect(bar?.textContent).not.toContain('New opencode session')
+  })
 })
 
 describe('a refusal, and the way back from it', () => {

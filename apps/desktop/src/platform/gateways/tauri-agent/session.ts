@@ -47,8 +47,16 @@ export interface SessionRecord {
 }
 
 export interface SessionBook {
-  /** Take the engine's answer and the runtime's epoch, and mint the handle. */
-  open(identity: AgentIdentity, answer: AgentHostSession): AgentSession
+  /**
+   * Take the engine's answer and the runtime's epoch, and mint the handle.
+   *
+   * `title` is the engine's own name for this session, when the caller has been told one — the
+   * row the reader picked a reopen from carries it, and the load response does not. `null` for a
+   * session the engine has not named (a new one) and for a reopen nothing was listed first: the
+   * bar's fallback sentence is the honest answer there, and a name this file invented would not
+   * be.
+   */
+  open(identity: AgentIdentity, answer: AgentHostSession, title: string | null): AgentSession
   /** The record behind a handle, or the refusal — every identity field is compared. */
   recordFor(session: AgentSession): SessionRecord
   /** The same check for a plain identity: a snapshot carries the five fields without the
@@ -96,7 +104,7 @@ export function createSessionBook(started: () => boolean): SessionBook {
   }
 
   return {
-    open(identity, answer) {
+    open(identity, answer, title) {
       // One answer, read twice: the model catalog the contract has always carried, and the whole
       // list of options the engine reported. Both are the same read of `configOptions`, so they
       // cannot come from two moments (T1's rule for the two views of this wire value).
@@ -104,7 +112,7 @@ export function createSessionBook(started: () => boolean): SessionBook {
       const options = readConfigOptions(answer.configOptions)
       const record: SessionRecord = { identity, ...projected, options }
       sessions.set(identity.sessionId, record)
-      return mintSession(identity, { ...projected, options })
+      return mintSession(identity, { ...projected, options }, title)
     },
     recordFor(session) {
       return recordOf(session)
@@ -137,12 +145,17 @@ function mintSession(
     initialModelId: string
     options: readonly AgentConfigOption[]
   },
+  title: string | null,
 ): AgentSession {
   return {
     ...identity,
     models: projected.models,
     initialModelId: projected.initialModelId,
     options: projected.options,
+    // An empty string is a name the engine did not give, so it is `null` here for the reason the
+    // contract's `title` gives: a blank is not a name, and the bar's own sentence is better than
+    // one drawn from whitespace.
+    title: title === '' ? null : title,
   } as unknown as AgentSession
 }
 
@@ -170,6 +183,24 @@ function readConfigOptions(raw: unknown): AgentConfigOption[] {
     if (option !== null) options.push(option)
   }
   return options
+}
+
+/**
+ * The engine's refreshed option list, as `session/set_config_option` answers it, or `null` when
+ * the answer is not a list this window can read.
+ *
+ * The same reader as the session's opening list, because the Rust command answers in the same
+ * shape on purpose (`commands/agent.rs`: "the shape `agent_open_session` answers the original one
+ * in") — so this is one mapping of one wire, reached from two calls.
+ *
+ * **`null` rather than an empty list.** `setConfigOption`'s caller has a list of its own, and an
+ * answer this window cannot read must leave that list alone: `[]` would be read as the engine
+ * having withdrawn every option, which is a change the engine never stated. Zed's selector takes
+ * its response as the new state (`crates/acp_thread/src/connection.rs:311`) and refuses a
+ * response it cannot read, which is the same decision with a different failure arm.
+ */
+export function readRefreshedOptions(raw: unknown): AgentConfigOption[] | null {
+  return Array.isArray(raw) ? readConfigOptions(raw) : null
 }
 
 function readConfigOption(entry: unknown): AgentConfigOption | null {

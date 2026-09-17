@@ -145,6 +145,21 @@ function kindIcon(kind: AgentPermissionKind) {
  */
 const offersLastingGrant = computed(() => props.request.options.some((o) => o.kind === 'allow_always'))
 
+/**
+ * Where a lasting grant can be read back and taken back, as that place names itself.
+ *
+ * The settings rail's row, the permission page's heading and the list's own heading, each read
+ * from the key the surface draws it from — so the sentence under the button and the page it
+ * points at cannot drift apart, and a translator gets one string per place rather than a second
+ * copy of each inside this sentence. This is the whole of the correction N5 names: the sentence
+ * used to say this app had no such surface, and it is drawn at the moment the reader decides.
+ */
+const lastingGrantPlaces = computed(() => ({
+  section: t('settings.section.agents'),
+  page: t('agent.settings.permission.section.title'),
+  surface: t('agent.settings.permission.grants.title'),
+}))
+
 function choose(option: AgentPermissionOption): void {
   // Guarded on the state machine rather than on the DOM. The buttons are gone one tick
   // later, so the second half of a double click still reaches this handler — and §6.3
@@ -327,13 +342,17 @@ nextTick(() => rootEl.value?.focus())
          The engine's own label for it is "Always allow", which does not say *how long* — and the
          answer outlives this prompt: the engine stops raising the question for that tool, so
          nothing later reaches this app, and nothing later tells the user either. One sentence
-         under the row is cheaper than a user discovering it from a write they never approved. -->
+         under the row is cheaper than a user discovering it from a write they never approved.
+         The three names in it are read from the catalogue rather than written into the sentence:
+         what the reader is sent to look for has to wear the same name on the page they arrive
+         at, and these keys are the page's own (`settings.section.agents`,
+         `agent.settings.permission.section.title`, `agent.settings.permission.grants.title`). -->
     <p
       v-if="phase === 'open' && offersLastingGrant"
       class="agent-perm-lasting"
       data-test="permission-lasting-note"
     >
-      {{ t('agent.permission.lastingGrant') }}
+      {{ t('agent.permission.lastingGrant', lastingGrantPlaces) }}
     </p>
 
     <div

@@ -142,6 +142,11 @@ fn the_manifest_and_the_handler_list_name_the_same_commands() {
 /// other side — the pet's permissions are exactly the eight, and the main window's are every
 /// declared command except the two that belong to a pet window alone — so a permission added to
 /// the wrong file fails here even if no test happens to invoke that command.
+///
+/// The eight are the *app commands*; the pet's windows also hold two `core:event` permissions and
+/// one `core:window` one, and those three are the only thing in these files that is not this app's
+/// own surface. The window one is asserted below by name, because it is the permission the pet's
+/// drag is made of and it is the one a second `core:window:` line would quietly enlarge.
 #[test]
 fn the_capability_files_are_the_policy_and_nothing_else() {
     // Every name `build.rs` declares, read from the manifest that declares them. A permission
@@ -152,8 +157,8 @@ fn the_capability_files_are_the_policy_and_nothing_else() {
         .collect();
     assert_eq!(
         declared.len(),
-        77,
-        "the declared surface is seventy-seven commands"
+        78,
+        "the declared surface is seventy-eight commands"
     );
 
     let pet: Vec<String> = allows(&capability("desktop-pet.json"));
@@ -179,15 +184,38 @@ fn the_capability_files_are_the_policy_and_nothing_else() {
         "the pet window holds eight of this app's commands and no others"
     );
 
-    // The ball's own file, which is the one capability that is not a *surface* but a widening of
-    // one: `pet-*` still governs the ball's IPC (the sibling target asserts it), and this adds one
-    // window permission to one window. Asserted here so the boundary cannot grow quietly — the
+    // The pet's own file, read for the one permission in it that is not an app command. It is the
+    // whole of what either of the pet's windows may do to a *window*, and both of them hold it:
+    // the orb since the drag landed, and the character window since its sprite became a drag
+    // handle (`DesktopPetRoot.vue`). A second `core:window:` permission here fails this case and
+    // has to be argued in the same change — which is what keeps "the drag costs one permission and
+    // no position, geometry or monitor read" a fact about the file rather than a paragraph about
+    // the design.
+    let window_permissions: Vec<String> = capability("desktop-pet.json")["permissions"]
+        .as_array()
+        .expect("a capability's permissions")
+        .iter()
+        .filter_map(|permission| permission.as_str())
+        .filter(|permission| permission.starts_with("core:window:"))
+        .map(str::to_string)
+        .collect();
+    assert_eq!(
+        window_permissions,
+        vec!["core:window:allow-start-dragging"],
+        "the pet's windows may start a drag of themselves, and move a window no other way"
+    );
+
+    // The ball's own file, named by the label `ball.rs` mints. It was a *widening* of the pet's
+    // boundary when it was written — the character window could move nothing, so granting
+    // `start-dragging` to the ball alone kept `pet-*` as tight as it was — and it is a **subset**
+    // of the pet's now: the same permission is in `desktop-pet.json` for both surfaces, and this
+    // file grants it to one named window. Asserted here so neither array can grow quietly — the
     // next permission added to this file fails this case and has to be argued in the same commit.
     let ball = capability("desktop-pet-ball.json");
     assert_eq!(
         ball["windows"],
         serde_json::json!(["pet-ball"]),
-        "the drag is the ball's, and only the ball's: the character window may still move nothing"
+        "one window, named: the ball's own file still states the ball's boundary"
     );
     assert_eq!(
         ball["permissions"],

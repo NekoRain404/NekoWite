@@ -507,6 +507,12 @@
           "markdownDescription": "Enables the import_attachment command without any pre-configured scope."
         },
         {
+          "description": "Enables the key_vault_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-key-vault-status",
+          "markdownDescription": "Enables the key_vault_status command without any pre-configured scope."
+        },
+        {
           "description": "Enables the list_dir command without any pre-configured scope.",
           "type": "string",
           "const": "allow-list-dir",
@@ -973,6 +979,12 @@
           "type": "string",
           "const": "deny-import-attachment",
           "markdownDescription": "Denies the import_attachment command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the key_vault_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-key-vault-status",
+          "markdownDescription": "Denies the key_vault_status command without any pre-configured scope."
         },
         {
           "description": "Denies the list_dir command without any pre-configured scope.",

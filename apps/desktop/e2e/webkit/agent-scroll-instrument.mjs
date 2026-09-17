@@ -40,10 +40,11 @@ export const BODY = '.pane.rendered .ProseMirror'
  * The rail the panel is hosted in.
  *
  * Read as the tab order's root rather than the panel itself because the panel opens with the
- * container: `.agent-timeline` is the FIRST tab stop inside `.agent-panel` (the session bar has
- * no controls), so a walk that starts inside the panel has nothing before the container to walk
- * in from. The rail's own header is where the reader's Tab actually comes from, and rooting the
- * reading there makes the walk the one a reader performs.
+ * container: `.agent-timeline` is the FIRST tab stop inside `.agent-panel` below the session bar
+ * (whose one control is the history button, drawn when the engine offers history), so a walk that
+ * starts inside the panel begins at the bar rather than where the reader's Tab comes from. The
+ * rail's own header is where that actually is, and rooting the reading there makes the walk the
+ * one a reader performs.
  */
 export const RAIL = '.info-rail'
 

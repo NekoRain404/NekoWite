@@ -147,7 +147,17 @@ export interface AgentIpc {
   /** Frees a session on the engine and drops it from the host's table. Not a deletion — see
    *  `AgentGateway.closeSession`. */
   closeSession(sessionId: string): Promise<void>
-  selectModel(sessionId: string, configId: string, value: string): Promise<void>
+  /**
+   * Moves one of the session's own options — in practice the model.
+   *
+   * The command answers `serde_json::Value` (`commands/agent.rs`, `agent_set_config_option`),
+   * and what it holds is the engine's **refreshed option list in the schema's own shape** — the
+   * shape `AgentHostSession.configOptions` carries, not the contract's. `unknown` here for the
+   * reason {@link capabilities} is: it is a foreign process's answer, and `tauri-agent/session.ts`
+   * is what reads it (`readRefreshedOptions`). A window that declared the shape here would be
+   * this side promising something about a process it does not own.
+   */
+  selectModel(sessionId: string, configId: string, value: string): Promise<unknown>
   /** Starts a turn and answers the host's own run id for it. The turn's ending arrives as an
    *  event, not as this call's result: the engine answers when the generation is over, and the
    *  Rust runtime is explicit that a caller cannot be left holding that (`runs.rs`). */
@@ -174,7 +184,7 @@ export function createTauriAgentIpc(): AgentIpc {
       invoke<AgentHostSession>('agent_load_session', { vaultId, cwd, sessionId }),
     closeSession: (sessionId) => invoke<void>('agent_close_session', { sessionId }),
     selectModel: (sessionId, configId, value) =>
-      invoke<void>('agent_set_config_option', { sessionId, configId, value }),
+      invoke<unknown>('agent_set_config_option', { sessionId, configId, value }),
     prompt: (sessionId, text) => invoke<string>('agent_prompt', { sessionId, text }),
     cancel: (sessionId) => invoke<void>('agent_cancel_run', { sessionId }),
     answerPermission: (answer) => invoke<void>('agent_permission_answer', { answer }),

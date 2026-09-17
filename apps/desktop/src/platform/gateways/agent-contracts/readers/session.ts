@@ -280,6 +280,12 @@ export function readCapabilityReports(raw: unknown): AgentCapabilityReport[] | n
  * *null* from *a string*: ACP makes both fields optional, so absent is a legitimate
  * answer, and a row that presented one as `''` would be a title the engine never gave.
  * The contract's own type keeps them `string | null` for the same reason.
+ *
+ * `held` is not one of those: it is the host's own answer and it is always there, so a
+ * row without it is a row from a host this window does not understand. Guessing it —
+ * `false` hides a control that works, `true` draws one that cannot — would be this
+ * window answering for the host, which is the one thing every field on this row is
+ * read strictly to avoid.
  */
 export function readSessionHistory(raw: unknown): AgentSessionHistory | null {
   const record = asRecord(raw)
@@ -295,9 +301,11 @@ export function readSessionHistory(raw: unknown): AgentSessionHistory | null {
     const title = maybeStr(row, 'title')
     const updatedAt = maybeStr(row, 'updatedAt')
     if (!title || !updatedAt) return null
+    if (typeof row.held !== 'boolean') return null
     sessions.push({
       sessionId,
       cwd,
+      held: row.held,
       title: title.value,
       updatedAt: updatedAt.value,
     })

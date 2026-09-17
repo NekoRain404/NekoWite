@@ -20,6 +20,17 @@
  * own guard exists to make loud.
  */
 
+import {
+  asBoolean,
+  asList,
+  asNullableString,
+  asNumber,
+  asRecord,
+  asString,
+  asStringList,
+  malformed,
+  oneOf,
+} from './agent-wire-narrowing'
 import type {
   AgentCatalogueClient,
   CatalogueFreshness,
@@ -148,53 +159,4 @@ function gate(value: unknown, index: number): InstallGate {
     check: asString(record['check'], `installGates[${index}].check`),
     transfers: asBoolean(record['transfers'], `installGates[${index}].transfers`),
   }
-}
-
-// ---------------------------------------------------------------------------
-// Narrowing
-// ---------------------------------------------------------------------------
-
-/** A failed call. The page's unreadable state is the answer to this, and it is not "empty". */
-function malformed(what: string): never {
-  throw new Error(`the catalogue answered something this window does not understand: ${what}`)
-}
-
-function asRecord(value: unknown, what: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return malformed(what)
-  return value as Record<string, unknown>
-}
-
-function asList(value: unknown, what: string): unknown[] {
-  if (!Array.isArray(value)) return malformed(what)
-  return value
-}
-
-function asString(value: unknown, what: string): string {
-  if (typeof value !== 'string') return malformed(what)
-  return value
-}
-
-function asNullableString(value: unknown, what: string): string | null {
-  if (value === null) return null
-  return asString(value, what)
-}
-
-function asBoolean(value: unknown, what: string): boolean {
-  if (typeof value !== 'boolean') return malformed(what)
-  return value
-}
-
-function asNumber(value: unknown, what: string): number {
-  if (typeof value !== 'number' || !Number.isInteger(value)) return malformed(what)
-  return value
-}
-
-function asStringList(value: unknown, what: string): string[] {
-  return asList(value, what).map((item, index) => asString(item, `${what}[${index}]`))
-}
-
-function oneOf<T extends string>(value: unknown, allowed: readonly T[], what: string): T {
-  const text = asString(value, what)
-  if (!(allowed as readonly string[]).includes(text)) return malformed(what)
-  return text as T
 }

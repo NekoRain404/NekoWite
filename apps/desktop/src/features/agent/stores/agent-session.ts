@@ -40,6 +40,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type {
+  AgentConfigOption,
   AgentEvent,
   AgentGateway,
   AgentIdentity,
@@ -181,7 +182,17 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
       edits: Object.freeze([]),
     }
     records.value[key] = record
-    return record
+    // **The record as the rest of the store reaches it, not the object that was just built.**
+    // `records` is a `ref`, so what a reader can see is the proxy `records.value[key]` hands out,
+    // and a write to the raw object behind it changes the data without telling anything that is
+    // watching. That is not a subtlety — it is the difference between a panel that redraws and one
+    // that does not, and the panel it broke is the one that mounts on a **reopened** session: its
+    // whole transcript arrives in the snapshot the handshake commits, and a commit through the raw
+    // record left the render holding the empty view it was born with, so a restored conversation
+    // was on screen nowhere until some later frame happened to touch the same record. A new
+    // session hid it, because its snapshot is empty and the frames that fill it arrive after the
+    // mount through `onEvent`, which reads the proxy.
+    return records.value[key]
   }
 
   /**
@@ -413,6 +424,26 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     if (key !== null) markRead(key)
   }
 
+  /**
+   * Adopt the option list an engine answered a `set_config_option` with.
+   *
+   * The same field a `config-changed` frame replaces, written by the other path to the same fact:
+   * the pinned engine both returns the refreshed list and announces it, and until now this window
+   * only ever read the announcement — so an engine that answered without notifying left the row
+   * showing the value the reader had just left. `Gateway.setConfigOption` carries the reason; this
+   * is the write.
+   *
+   * Not a synthetic event, and deliberately: an event carries a sequence, and a frame this window
+   * made up would move the session's position in a stream it is only reading. It is also not
+   * optimistic — the value comes from the engine's own answer, which is why nothing here is called
+   * when that answer could not be read (`null` at the call site).
+   */
+  function adoptOptions(key: string, options: readonly AgentConfigOption[]): void {
+    const record = recordFor(key)
+    if (record === null) return
+    record.view = { ...record.view, config: [...options] }
+  }
+
   function setDraft(key: string, text: string): void {
     const record = recordFor(key)
     if (record !== null) record.draft = text
@@ -450,5 +481,6 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     setDraft,
     setScroll,
     markRead,
+    adoptOptions,
   }
 })

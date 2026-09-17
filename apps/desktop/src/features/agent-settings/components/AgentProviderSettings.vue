@@ -46,6 +46,13 @@ export interface AgentProviderLabels {
     hostFile: string
     notEncrypted: string
     placeholder: string
+    /** The write form's own sentences — `AgentCredentialSettings.vue`'s `labels` prop. */
+    form: {
+      editHint: string
+      save: string
+      saved: string
+      failed: string
+    }
   }
 }
 
@@ -111,6 +118,12 @@ export function providerLabels(): AgentProviderLabels {
       hostFile: t('agent.settings.provider.credentials.hostFile'),
       notEncrypted: t('agent.settings.provider.credentials.notEncrypted'),
       placeholder: t('agent.settings.provider.credentials.placeholder'),
+      form: {
+        editHint: t('agent.settings.provider.credentials.form.editHint'),
+        save: t('agent.settings.provider.credentials.form.save'),
+        saved: t('agent.settings.provider.credentials.form.saved'),
+        failed: t('agent.settings.provider.credentials.form.failed'),
+      },
     },
   }
 }
@@ -156,8 +169,9 @@ export function providerLabels(): AgentProviderLabels {
  * a form that can only fail is a form whose failure the user has to discover by trying.
  */
 import { computed, onMounted, reactive, ref } from 'vue'
+import AgentCredentialSettings from './AgentCredentialSettings.vue'
+import type { AgentCredentialClient } from '../services/agent-credential-ipc'
 import {
-  credentialRows,
   decideProfileWrite,
   planModeSwitch,
   profileProblem,
@@ -177,6 +191,16 @@ export interface AgentProviderClient {
 
 const props = defineProps<{
   client: AgentProviderClient
+  /**
+   * The credential write, for the same pair this page is showing.
+   *
+   * A second client rather than two more methods on {@link AgentProviderClient}, because a
+   * credential write is a different resource with a different answer: the record's write answers a
+   * revision to compare, this one answers the whole readout. It is built by the caller for the
+   * pair the registry named, exactly as the configuration page's client is, so this page never
+   * decides which profile it is writing into.
+   */
+  credentialClient: AgentCredentialClient
   /** The engine this page is showing a profile for. */
   agentId: string
   /** The profile, chosen by the caller (T12's decision, not this page's). */
@@ -202,7 +226,7 @@ const mismatch = computed(() =>
   readout.value === null ? null : profileProblem(readout.value, props.agentId, props.profileId),
 )
 
-const rows = computed(() => (readout.value === null ? [] : credentialRows(readout.value)))
+/** The credentials section's own rows moved with it — see `AgentCredentialSettings.vue`. */
 
 /** What the user picked, as the record the policy takes — with blanks read as "nothing chosen". */
 function fields(): { mode: ConfigMode; provider: string | null; modelId: string | null } {
@@ -256,6 +280,17 @@ async function refresh(): Promise<void> {
   } catch {
     state.value = 'unreadable'
   }
+}
+
+/**
+ * A credential write landed: the readout the form answered with replaces this page's copy.
+ *
+ * Through {@link rebuild} rather than assigned directly, because the names on the form are the
+ * readout's — a credential set that arrived with a different set of names has to repaint the rows
+ * above the form as well, and the record fields it carries are still the record's.
+ */
+function receiveCredentials(value: AgentProfileReadout): void {
+  rebuild(value)
 }
 
 async function save(): Promise<void> {
@@ -425,36 +460,15 @@ onMounted(load)
         </ul>
       </div>
 
-      <div class="provider-credentials">
-        <span class="settings-label">{{ labels.credentials.title }}</span>
-        <span class="settings-note">{{ labels.credentials.hint }}</span>
-        <span v-if="rows.length === 0" class="settings-note" data-test="provider-no-credentials">
-          {{ labels.credentials.none }}
-        </span>
-        <ul v-else class="provider-rows">
-          <li v-for="row in rows" :key="row.name" class="provider-row" :data-test="`provider-credential-${row.name}`">
-            <span class="provider-path">{{ row.name }}</span>
-            <span class="settings-note">
-              {{ row.value === '' ? labels.credentials.none : labels.credentials.placeholder }}
-            </span>
-          </li>
-        </ul>
-        <span
-          v-if="readout.credentialStorage.kind === 'host-file'"
-          class="settings-note provider-path"
-          data-test="provider-credential-storage"
-        >
-          {{ labels.credentials.hostFile }} {{ readout.credentialStorage.path }}
-          ({{ readout.credentialStorage.mode }})
-        </span>
-        <span
-          v-if="readout.credentialStorage.kind === 'host-file'"
-          class="settings-note is-warn"
-          data-test="provider-credential-warning"
-        >
-          {{ labels.credentials.notEncrypted }}
-        </span>
-      </div>
+      <!-- What this profile's credentials are, and the one control that changes one. One
+           component for both halves: the names the form's fields are built from are the names the
+           rows state, and splitting them would be two copies of one readout. -->
+      <AgentCredentialSettings
+        :client="props.credentialClient"
+        :readout="readout"
+        :labels="labels.credentials"
+        @updated="receiveCredentials"
+      />
     </template>
   </section>
 </template>

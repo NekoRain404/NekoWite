@@ -27,6 +27,13 @@
  * they are protected by a rule the engine was never given.
  */
 
+import {
+  asList,
+  asNullableString,
+  asRecord,
+  asString,
+  malformed,
+} from './agent-wire-narrowing'
 import type { PermissionState, PermissionView } from './agent-settings-policy'
 import type { AgentProfileWire } from './agent-profile-ipc'
 
@@ -216,7 +223,7 @@ function permissionsOf(value: unknown): PermissionView {
   }
   return {
     state,
-    document: nullableString(permissions['document'], 'permissions.document'),
+    document: asNullableString(permissions['document'], 'permissions.document'),
     rules: asList(permissions['rules'], 'permissions.rules').map((rule, index) => {
       const entry = asRecord(rule, `permissions.rules[${index}]`)
       return {
@@ -227,31 +234,3 @@ function permissionsOf(value: unknown): PermissionView {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Narrowing
-// ---------------------------------------------------------------------------
-
-/** The message names the *field* and never the value: what a malformed answer held is unknown. */
-function malformed(what: string): never {
-  throw new Error(`the profile answered something this window does not understand: ${what}`)
-}
-
-function asRecord(value: unknown, what: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return malformed(what)
-  return value as Record<string, unknown>
-}
-
-function asList(value: unknown, what: string): unknown[] {
-  if (!Array.isArray(value)) return malformed(what)
-  return value
-}
-
-function asString(value: unknown, what: string): string {
-  if (typeof value !== 'string') return malformed(what)
-  return value
-}
-
-function nullableString(value: unknown, what: string): string | null {
-  if (value === null || value === undefined) return null
-  return asString(value, what)
-}

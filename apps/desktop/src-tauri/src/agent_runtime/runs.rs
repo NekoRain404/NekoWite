@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{SessionId, SessionNotification, SessionUpdate};
 use serde_json::{json, Value};
+use tokio::sync::oneshot;
 
 use super::capabilities::SessionCapabilities;
 use super::events::{normalize_update, AgentEventKind};
@@ -220,14 +221,52 @@ fn finish_run(
 /// [`AgentRuntime`] because this task is spawned *by* that runtime's constructor — the map is the
 /// one thing that exists before the runtime does. It is the same map [`AgentRuntime::capabilities`]
 /// answers from, so what is recorded here is what a report reads.
+///
+/// `drains` is the load path's half of §6.2's "the engine replays the session while the call is
+/// outstanding": it is the one way a caller can ask this task to finish what the engine has
+/// already sent before it draws a line under its own request. See the barrier in the loop below.
 pub(super) async fn dispatch_updates(
     mut updates: tokio::sync::mpsc::UnboundedReceiver<SessionNotification>,
+    mut drains: tokio::sync::mpsc::UnboundedReceiver<oneshot::Sender<()>>,
     sessions: std::sync::Arc<Mutex<HashMap<String, SessionSlot>>>,
     reported: std::sync::Arc<Mutex<HashMap<String, SessionCapabilities>>>,
     emitter: Emitter,
 ) {
-    while let Some(notification) = updates.recv().await {
-        forward_update(&sessions, &reported, &emitter, &notification);
+    // Once the runtime is gone, no drain can be asked for; the arm is dropped rather than left
+    // to answer `None` on every turn, which would be a busy loop between the runtime's death and
+    // the transport's.
+    let mut drains_open = true;
+    loop {
+        tokio::select! {
+            update = updates.recv() => match update {
+                Some(notification) => forward_update(&sessions, &reported, &emitter, &notification),
+                // The connection is over. There is nothing left to forward and nothing that
+                // could ask for a drain.
+                None => break,
+            },
+            drain = drains.recv(), if drains_open => match drain {
+                Some(answered) => {
+                    // **The barrier a `session/load` ends on.** Every notification the transport
+                    // had already handed over is in the queue below — its handler pushes and the
+                    // response resolves on one task, in that order — so draining what is queued
+                    // here is what makes "the load is over" a statement about frames that have
+                    // been published rather than a race with a task that has not run yet.
+                    //
+                    // Without it the load's response closes its run while its own replay is still
+                    // queued, and `forward_update`'s guard — correctly, for a turn — discards
+                    // every frame behind it. Measured: 128 of a 200-frame replay reached the
+                    // snapshot a mounting window is given, and the rest were dropped 72 at a time
+                    // (see `agent_session_ipc_test.rs`'s burst test).
+                    while let Ok(notification) = updates.try_recv() {
+                        forward_update(&sessions, &reported, &emitter, &notification);
+                    }
+                    // A caller that gave up waiting is not an error: the frames are forwarded
+                    // either way, and this is the answer, not the work.
+                    let _ = answered.send(());
+                }
+                None => drains_open = false,
+            },
+        }
     }
 }
 
@@ -329,6 +368,11 @@ fn is_session_scoped(kind: AgentEventKind) -> bool {
     match kind {
         AgentEventKind::CommandsChanged
         | AgentEventKind::ConfigChanged
+        // The session's context occupancy and its cumulative cost are facts about the session, not
+        // about the turn that happened to produce them — the same reason the window's reducer does
+        // not name `usage-changed` in its `RUN_CONTENT`. So a frame that arrives after a cancel is
+        // still a true statement about the session, and it is kept.
+        | AgentEventKind::UsageChanged
         | AgentEventKind::FilesChanged => true,
         AgentEventKind::TextDelta
         // The user's half of a restored turn is turn content like the answer's: the reducer's

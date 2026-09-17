@@ -3,12 +3,19 @@
 //!
 //! These drive the key store and the crash-safe recovery module. Command names,
 //! DTOs and error strings are unchanged from the pre-split layout.
+//!
+//! The two master-password commands answer [`VaultCommandError`] rather than a string. That type
+//! lives in [`crate::commands::key_vault`] beside the read of the same state, because the arms it
+//! names are the states that read reports: a window that is told *which* one it hit can point at
+//! the control that fixes it, and a single "could not unlock" sends every one of them at the
+//! password field — including the two whose problem is not the password at all.
 
 use std::path::Path;
 
 use tauri::Manager;
 use tauri_plugin_stronghold::stronghold::Stronghold;
 
+use crate::commands::key_vault::{key_file_error, unlock_error, VaultCommandError};
 use crate::domain::path_policy::ipc_path;
 use crate::domain::recovery::{backup_key_paths, open_snapshot, reencrypt_vault};
 use crate::state::KeyVault;
@@ -18,6 +25,17 @@ use crate::storage::key_store::{
     read_existing_vault_key_state, validate_password, validate_stored_api_key, verifier_of,
     VaultKeyState,
 };
+
+/// The sentence [`password_candidates`] answers a vault that has no master password with.
+///
+/// A constant because the unlock path has to *classify* this answer into its own arm, and a
+/// classifier comparing against its own copy of the sentence would keep compiling while the arm
+/// it produces became unreachable. `tests/keys_test.rs` pins the spelling the window sees.
+pub const NO_MASTER_PASSWORD: &str = "no master password is set";
+
+/// The sentence [`unlock_snapshot`] answers a password that matched no key file with, constant
+/// for the same reason.
+pub const WRONG_MASTER_PASSWORD: &str = "incorrect master password";
 
 /// Store an API key for a provider in the stronghold vault. If the provider
 /// already has a key, it is overwritten. The snapshot is committed after each
@@ -74,56 +92,77 @@ pub async fn load_ai_key(
 /// first (call `unlock_vault` with the current password), then this command
 /// with the new one.
 #[tauri::command]
-pub async fn set_master_password(app: tauri::AppHandle, password: String) -> Result<(), String> {
-    validate_password(&password)?;
-    let snapshot_path = key_store::stronghold_path(&app)?;
-    let key_path = key_store::master_key_path(&app)?;
+pub async fn set_master_password(
+    app: tauri::AppHandle,
+    password: String,
+) -> Result<(), VaultCommandError> {
+    validate_password(&password).map_err(|message| VaultCommandError::EmptyPassword { message })?;
+    let snapshot_path = key_store::stronghold_path(&app).map_err(key_file_error)?;
+    let key_path = key_store::master_key_path(&app).map_err(key_file_error)?;
 
     // Fresh per-vault salt: even two users picking the same password end up with
     // different derived keys, and the salt is stored (not secret) in the file.
     let mut salt = [0u8; 32];
-    getrandom::getrandom(&mut salt).map_err(|e| e.to_string())?;
-    let new_key = derive_master_key(&password, &salt)?;
+    getrandom::getrandom(&mut salt).map_err(|e| VaultCommandError::ChangeFailed {
+        message: e.to_string(),
+    })?;
+    let new_key = derive_master_key(&password, &salt)
+        .map_err(|message| VaultCommandError::ChangeFailed { message })?;
     let verifier = verifier_of(&new_key);
     let keyfile = encode_keyfile_password(&salt, &verifier);
 
     let state = app.state::<KeyVault>();
-    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    let mut guard = state
+        .0
+        .lock()
+        .map_err(|e| VaultCommandError::ChangeFailed {
+            message: e.to_string(),
+        })?;
 
     // Open the vault under the held lock if it is not open yet (same lazy
     // init as `open_vault`). A password-protected vault must be unlocked first.
     if guard.is_none() {
-        let (snapshot, key_file, key_state) = key_store::default_init(&app)?;
+        let (snapshot, key_file, key_state) =
+            key_store::default_init(&app).map_err(key_file_error)?;
         let master_key = match key_state {
             VaultKeyState::Auto(key) => key,
             VaultKeyState::Locked { .. } => {
-                return Err(
-                    "vault is locked: call unlock_vault with the CURRENT password \
-                     before changing it"
+                return Err(VaultCommandError::VaultLocked {
+                    message: "vault is locked: call unlock_vault with the CURRENT password \
+                              before changing it"
                         .into(),
-                )
+                })
             }
         };
-        *guard = Some(open_snapshot(
-            &DiskKeyFiles,
-            &snapshot,
-            &key_file,
-            master_key.to_vec(),
-        )?);
+        *guard = Some(
+            open_snapshot(&DiskKeyFiles, &snapshot, &key_file, master_key.to_vec())
+                .map_err(key_file_error)?,
+        );
     }
 
     // Collect existing records from the currently open (old-key) vault.
     // Errors reading the old vault are PROPAGATED (never swallowed into an
     // empty record set), so a failed read cannot silently wipe stored keys.
     let old = guard.as_ref().expect("vault was opened above");
-    let client = key_store::get_or_create_client(old)?;
+    let client = key_store::get_or_create_client(old)
+        .map_err(|message| VaultCommandError::ChangeFailed { message })?;
     let mut records: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-    for k in client.store().keys().map_err(|e| e.to_string())? {
+    for k in client
+        .store()
+        .keys()
+        .map_err(|e| VaultCommandError::ChangeFailed {
+            message: e.to_string(),
+        })?
+    {
         let value = client
             .store()
             .get(&k)
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| "stored key record has no value".to_string())?;
+            .map_err(|e| VaultCommandError::ChangeFailed {
+                message: e.to_string(),
+            })?
+            .ok_or_else(|| VaultCommandError::ChangeFailed {
+                message: "stored key record has no value".to_string(),
+            })?;
         records.push((k, value));
     }
 
@@ -142,7 +181,7 @@ pub async fn set_master_password(app: tauri::AppHandle, password: String) -> Res
         // from disk (recovering via `master.key.old` if needed) instead of
         // saving stale old-key ciphertext over whatever is there now.
         *guard = None;
-        return Err(e);
+        return Err(VaultCommandError::ChangeFailed { message: e });
     }
 
     // Reload the managed vault from the swapped snapshot so the rest of this
@@ -153,7 +192,9 @@ pub async fn set_master_password(app: tauri::AppHandle, password: String) -> Res
         Ok(stronghold) => *guard = Some(stronghold),
         Err(e) => {
             *guard = None;
-            return Err(format!("vault re-encrypted but reload failed: {e}"));
+            return Err(VaultCommandError::ChangeFailed {
+                message: format!("vault re-encrypted but reload failed: {e}"),
+            });
         }
     }
     Ok(())
@@ -168,16 +209,25 @@ pub async fn set_master_password(app: tauri::AppHandle, password: String) -> Res
 /// just `master.key` (see [`unlock_snapshot`]), so an interrupted password
 /// change is still recoverable with the password that actually decrypts it.
 #[tauri::command]
-pub async fn unlock_vault(app: tauri::AppHandle, password: String) -> Result<(), String> {
-    validate_password(&password)?;
+pub async fn unlock_vault(
+    app: tauri::AppHandle,
+    password: String,
+) -> Result<(), VaultCommandError> {
+    validate_password(&password).map_err(|message| VaultCommandError::EmptyPassword { message })?;
     let state = app.state::<KeyVault>();
-    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    let mut guard = state
+        .0
+        .lock()
+        .map_err(|e| VaultCommandError::ChangeFailed {
+            message: e.to_string(),
+        })?;
     if guard.is_some() {
         return Ok(());
     }
-    let snapshot_path = key_store::stronghold_path(&app)?;
-    let key_path = key_store::master_key_path(&app)?;
-    *guard = Some(unlock_snapshot(&snapshot_path, &key_path, &password)?);
+    let snapshot_path = key_store::stronghold_path(&app).map_err(key_file_error)?;
+    let key_path = key_store::master_key_path(&app).map_err(key_file_error)?;
+    let opened = unlock_snapshot(&snapshot_path, &key_path, &password).map_err(unlock_error)?;
+    *guard = Some(opened);
     Ok(())
 }
 
@@ -228,7 +278,7 @@ pub fn password_candidates(key_path: &Path) -> Result<Vec<PasswordCandidate>, St
         // the backups hold: its key is right there in `master.key` and opens it
         // without a password, so honouring a passwordless backup here would only
         // let any string typed into the unlock dialog through.
-        return Err("no master password is set".into());
+        return Err(NO_MASTER_PASSWORD.into());
     }
 
     let mut candidates = Vec::new();
@@ -284,7 +334,7 @@ pub fn unlock_snapshot(
     key_path: &Path,
     password: &str,
 ) -> Result<Stronghold, String> {
-    let mut last_err = "incorrect master password".to_string();
+    let mut last_err = WRONG_MASTER_PASSWORD.to_string();
     for (salt, verifier) in password_candidates(key_path)? {
         let derived = match derive_master_key(password, &salt) {
             Ok(k) => k,

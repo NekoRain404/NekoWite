@@ -315,6 +315,19 @@ export interface AgentConfigOption {
 }
 
 /**
+ * The whole set of a session's options, as an engine reports it — the answer to `session/new`
+ * and the answer to `session/set_config_option`, which the Rust command passes through in one
+ * shape on purpose.
+ *
+ * Two arms, and they are two different statements: a list is what the engine said its options
+ * are (and an empty list is a valid one — an engine may withdraw every option it offered), while
+ * `null` is this window failing to read the answer at all. A caller that collapsed them would
+ * clear a row on an answer nobody could read, which is the engine being credited with a change it
+ * never made.
+ */
+export type AgentConfigOptionList = readonly AgentConfigOption[] | null
+
+/**
  * One payload type per kind, and the single source of truth for the kinds
  * themselves: {@link AgentEventKind} is `keyof` this map, so a kind cannot exist
  * without a payload type and a payload type cannot exist without a kind.

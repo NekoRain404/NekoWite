@@ -553,6 +553,10 @@ fn a_pet_window_cannot_reach_the_providers_or_the_keys() {
         "ai_list_models",
         "store_ai_key",
         "load_ai_key",
+        // The key vault's state, and the two commands that change it. A decoration that could
+        // read the first would learn whether the user has a master password at all, which is the
+        // one fact the window state exists to keep on the window side of this boundary.
+        "key_vault_status",
         "set_master_password",
         "unlock_vault",
         "system_accent_color",

@@ -187,9 +187,58 @@ export interface AiPort {
   listModels(config: unknown): Promise<string[]>
 }
 
+/**
+ * The states a key vault can be in, as `key_vault_status` reports them.
+ *
+ * `passwordSet` is about the *key file*: it holds a salt and a one-way verifier rather than a key,
+ * so nothing can open the vault until the password has been given. `unlocked` is about this
+ * process: the vault is open, or it has no password to ask for. The two are independent facts and
+ * the four combinations are not all reachable — `passwordSet: false, unlocked: false` would be a
+ * vault that has a password to ask for and does not, which is what `passwordSet` is for.
+ */
+export interface VaultKeyStatus {
+  passwordSet: boolean
+  unlocked: boolean
+}
+
+/**
+ * Which refusal a master-password command answered with.
+ *
+ * The arms are the backend's (`VaultCommandError` in `commands/key_vault.rs`), and they are kept
+ * apart this far out because each one is a different next move: `wrongPassword` means retype it,
+ * `noMasterPassword` means there is nothing to unlock and a password has to be *set*,
+ * `vaultLocked` means unlock first, and `keyFilesUnreadable` means no amount of typing helps.
+ * Collapsing them into one sentence sends every one of them at the password field, which is the
+ * one control that cannot fix two of them.
+ */
+export type VaultFailureCode =
+  | 'noMasterPassword'
+  | 'wrongPassword'
+  | 'vaultLocked'
+  | 'emptyPassword'
+  | 'keyFilesUnreadable'
+  | 'changeFailed'
+
+/** A refusal, as it arrives on the wire: the arm to branch on, and the backend's own sentence. */
+export interface VaultCommandFailure {
+  code: VaultFailureCode
+  message: string
+}
+
+/**
+ * The provider-key store and the master password that protects it.
+ *
+ * Four calls and no read of a secret: `vaultStatus` answers two booleans, `setMasterPassword` and
+ * `unlockVault` *take* a password and return nothing, and `loadAiKey` answers the masked
+ * "a key is configured" marker rather than a key. Nothing on this port can hand a password or an
+ * API key back to the window, which is the property the whole vault exists for.
+ */
 export interface KeyPort {
   storeAiKey(provider: string, key: string): Promise<void>
   loadAiKey(provider: string): Promise<string | null>
+  vaultStatus(): Promise<VaultKeyStatus>
+  setMasterPassword(password: string): Promise<void>
+  unlockVault(password: string): Promise<void>
 }
 
 /**

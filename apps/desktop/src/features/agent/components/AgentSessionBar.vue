@@ -61,10 +61,18 @@ import {
   ShieldQuestion,
 } from 'lucide-vue-next'
 import { t } from '../../../i18n'
-import type { AgentRunResult } from '../../../platform/gateways/agent-contracts'
+import type { AgentRunResult, AgentUsage } from '../../../platform/gateways/agent-contracts'
 
 const props = defineProps<{
-  /** The engine's title, or null until it sends one. */
+  /**
+   * The engine's title, or null until one has been stated.
+   *
+   * The panel is what decides which of the two statements this is — the newest one the session's
+   * stream carried (`AgentSessionView.title`, which a `session-changed` frame writes) or the one
+   * the reopened session was handed at the load (`AgentSession.title`, read off the engine's own
+   * `session/list` row). Both are the engine's words; the fallback underneath is this app's, and
+   * it says only that no name has arrived.
+   */
   title: string | null
   /** Where the session's state machine is. Null before a session view exists. */
   state: AgentSessionState | null
@@ -143,6 +151,107 @@ const detail = computed(() => {
   }
   return props.labels.result[reason]
 })
+
+/**
+ * What the last finished turn spent, as the engine reported it.
+ *
+ * This has been riding on `lastResult` since `run-finished` was first reduced — `runs.rs` puts the
+ * engine's own `usage` object into the payload verbatim and the reducer stores it whole — and the
+ * strip simply never read it. It is read, not recomputed: **no number here is derived from
+ * another**, because the engine's `totalTokens` is not the sum of its parts (P0 §6.3 measured
+ * 1721 + 6 against a reported total of 8895 in one turn).
+ */
+const usage = computed<AgentUsage | null>(() => props.result?.usage ?? null)
+
+/** The counters in the order the hover text lists them. */
+const USAGE_COUNTERS: readonly (keyof AgentUsage)[] = [
+  'inputTokens',
+  'outputTokens',
+  'totalTokens',
+  'thoughtTokens',
+  'cachedReadTokens',
+  'cachedWriteTokens',
+]
+
+/**
+ * A token count as this strip can show it: `9.2k`, not `9189`.
+ *
+ * The rule is Zed's (`agent_ui.rs:550`, `humanize_token_count`), for the range a turn's counts fall
+ * in: exact below a thousand, one decimal in the thousands, whole thousands above ten thousand,
+ * and one decimal in the millions. Nothing is lost by rounding — the exact numbers are the hover
+ * text below.
+ */
+function humanized(count: number): string {
+  if (count < 1_000) return String(count)
+  const thousands = count / 1_000
+  if (thousands < 10) return `${oneDecimal(thousands)}k`
+  if (thousands < 1_000) return `${Math.round(thousands)}k`
+  return `${oneDecimal(count / 1_000_000)}M`
+}
+
+/** One decimal, and no trailing `.0`: `9.2k`, and `9k` rather than `9.0k`. */
+function oneDecimal(value: number): string {
+  return (Math.round(value * 10) / 10).toString().replace(/\.0$/, '')
+}
+
+/**
+ * One counter's line in the hover text — written out per field rather than composed from the
+ * name, because the i18n guard resolves keys from the source text and a key built from a variable
+ * is invisible to it. A `switch` over the contract's own field names is also what makes a seventh
+ * counter a typecheck failure here rather than a number that quietly stops being listed.
+ */
+function counterLine(counter: keyof AgentUsage, count: number): string {
+  switch (counter) {
+    case 'inputTokens':
+      return t('agent.panel.bar.usage.detail.input', { n: count })
+    case 'outputTokens':
+      return t('agent.panel.bar.usage.detail.output', { n: count })
+    case 'totalTokens':
+      return t('agent.panel.bar.usage.detail.total', { n: count })
+    case 'thoughtTokens':
+      return t('agent.panel.bar.usage.detail.thought', { n: count })
+    case 'cachedReadTokens':
+      return t('agent.panel.bar.usage.detail.cachedRead', { n: count })
+    case 'cachedWriteTokens':
+      return t('agent.panel.bar.usage.detail.cachedWrite', { n: count })
+  }
+}
+
+/**
+ * What the strip's own line says: the engine's total when it sent one, and otherwise the two
+ * counters it sent instead. **Never their sum** — see {@link usage}. An engine that reported
+ * neither total nor input/output gets no line rather than an empty one (§5.1: an unknown cost
+ * stays unknown, and a `0` would read as a free turn).
+ */
+const usageParts = computed<readonly string[]>(() => {
+  const held = usage.value
+  if (held === null) return []
+  if (held.totalTokens !== undefined) {
+    return [t('agent.panel.bar.usage.total', { n: humanized(held.totalTokens) })]
+  }
+  const parts: string[] = []
+  if (held.inputTokens !== undefined) {
+    parts.push(t('agent.panel.bar.usage.input', { n: humanized(held.inputTokens) }))
+  }
+  if (held.outputTokens !== undefined) {
+    parts.push(t('agent.panel.bar.usage.output', { n: humanized(held.outputTokens) }))
+  }
+  return parts
+})
+
+/** Every counter the engine reported, named and exact. `\n` is what a `title` renders as lines.
+ *  Null when the engine reported nothing to itemise, which also keeps an empty `title` off the
+ *  element. */
+const usageDetail = computed<string | null>(() => {
+  const held = usage.value
+  if (held === null) return null
+  const lines: string[] = []
+  for (const counter of USAGE_COUNTERS) {
+    const count = held[counter]
+    if (count !== undefined) lines.push(counterLine(counter, count))
+  }
+  return lines.length === 0 ? null : lines.join('\n')
+})
 </script>
 
 <template>
@@ -174,6 +283,20 @@ const detail = computed(() => {
         aria-hidden="true"
       />
     </button>
+    <!-- What the last finished turn cost, in the engine's own numbers (rows 5b and 37's token
+         half). It sits *before* the state line rather than inside it: the state word is the one
+         thing in this strip that must draw the eye, so it keeps the end of the row, and the live
+         region keeps the cadence it was written for rather than announcing a count as well. Drawn
+         only for the counters the engine sent — `usage: null` is an engine that reported nothing,
+         and §5.1's rule is that an unknown cost stays unknown rather than becoming a zero. -->
+    <p
+      v-if="usageParts.length > 0"
+      class="agent-bar-usage"
+      data-agent-usage
+      :title="usageDetail ?? undefined"
+    >
+      {{ usageParts.join(' · ') }}
+    </p>
     <p
       class="agent-bar-state"
       role="status"
@@ -265,6 +388,17 @@ const detail = computed(() => {
   margin: 0;
   color: var(--app-muted);
   font-size: 11px;
+  white-space: nowrap;
+}
+/* The last turn's numbers: quieter than the state word beside them and never elided — the title
+   gives way first, because a number cut in half is worse than no number. Tabular figures so the
+   strip does not jitter as the counters change width between turns. */
+.agent-bar-usage {
+  flex: none;
+  margin: 0;
+  color: var(--app-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .agent-bar-state-icon {

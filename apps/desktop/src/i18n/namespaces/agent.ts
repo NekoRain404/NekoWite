@@ -18,6 +18,14 @@ export const agent = {
         notice: {
           gap: 'Part of this session’s record did not arrive, so what is below may be missing events.',
           resync: 'Reload the session',
+          /* Frames that arrived and were refused by the reducer, which is a different thing from
+             the hole above: a refusal is usually the *transport* re-sending what the view already
+             has (`duplicate-sequence`, which is what a reload produces), so this sentence says
+             what happened and names the reason rather than claiming content is missing. `{reason}`
+             is the reducer's own word for the refusal and is not translated — a sentence per
+             refusal would be this app explaining seven states only the reducer can tell apart.
+             Phrased with the count after a noun so that one frame reads as well as twelve. */
+          dropped: 'Frames this window refused for this session: {n} (last: {reason}).',
         },
         bar: {
           /* The title until the engine names the session. `{engine}` is the registration's own
@@ -46,6 +54,26 @@ export const agent = {
              engine's own report says it answers `session/list` — see `AgentPanel` — so the words
              answer "what does pressing this show", not "what could it show in principle". */
           history: 'Sessions this engine holds',
+          /* What the engine reported spending on the turn it last finished. Every counter is
+             optional on the wire (P0 §6.3 measured the field set changing between two identical
+             turns), so each sentence is drawn only for a number the engine actually sent: `total`
+             when it sent one, `input`/`output` when it sent those instead, and nothing at all
+             when it sent no usage. None of them is ever computed from the others — the engine's
+             own total is not the sum of its parts. `detail` is the hover text, where the counters
+             are named and exact rather than the rounded headline the strip has room for. */
+          usage: {
+            total: '{n} tokens',
+            input: '{n} in',
+            output: '{n} out',
+            detail: {
+              input: 'input {n}',
+              output: 'output {n}',
+              total: 'total {n}',
+              thought: 'reasoning {n}',
+              cachedRead: 'cache read {n}',
+              cachedWrite: 'cache write {n}',
+            },
+          },
         },
         /* The session history menu (T17): the rows an engine's `session/list` answer draws.
            Every row is the engine's own facts — its title, its folder, its last-activity stamp —
@@ -85,7 +113,15 @@ export const agent = {
             confirmAction: 'Free it',
             cancel: 'Keep it',
             done: 'The engine let it go. The row is still in this list — that is the engine’s answer, not a failure.',
-            failed: 'The engine would not free it: {reason}',
+            /* {reason} names its own refuser, and this lead-in must not name one for it. Two
+               things can refuse here and they are different facts: the engine (its own sentence
+               arrives, classified by the transport) and this app, which refuses a session it
+               never opened before the engine is asked at all — that sentence names this app.
+               It said 「The engine would not free it:」 and so blamed the engine for §6.1's
+               boundary; the action is also no longer offered on rows this app cannot act on
+               (see `AgentSessionHistoryMenu`), which leaves this arm for the engine and for the
+               race where the host's table moved under the list. */
+            failed: 'It was not freed: {reason}',
           },
         },
         /* The transcript's first line, drawn only while the transcript is empty. It names the
@@ -200,8 +236,15 @@ export const agent = {
         /* Shown under the options, and only when the engine offered a lasting grant. The engine's
            own label for that option is "Always allow", which does not say how long: it is the one
            answer whose consequence is invisible afterwards, because the question stops arriving
-           and this app is never told again. Measured — see the report. */
-        lastingGrant: '“Always allow” is not just this once. The engine stops asking about this tool and writes the grant down, so it outlives this session; this app is never told again and has no surface that lists or takes it back.',
+           and this app is never told again. Measured — see the report.
+           The three slots name where what the engine wrote is read back and taken back, and the
+           names are the ones those places wear there: `settings.section.agents` on the settings
+           rail, `agent.settings.permission.section.title` on the page, and
+           `agent.settings.permission.grants.title` on the list itself. A sentence that denied that
+           list existed shipped until the page landed — «this app … has no surface that lists or
+           takes it back» — and a reader decides on this sentence, so it is drawn from the same
+           catalogue the page is. */
+        lastingGrant: '“Always allow” is not just this once. The engine stops asking about this tool and writes the grant down, so it outlives this session — and this app is never told again. What it wrote is listed in Settings, under {section} → {page}, in “{surface}”, and can be taken back there.',
       },
       registry: {
         section: {
@@ -450,6 +493,12 @@ export const agent = {
             hostFile: 'Stored in a file this app owns:',
             notEncrypted: 'That file is a file with owner-only permissions. It is not encrypted, and it is not a system keychain.',
             placeholder: 'value is stored',
+            form: {
+              editHint: 'Type a new value to replace one, or empty a field to remove that credential. Fields you leave alone are kept as they are. Only what you type here is sent; the stored values are never read back.',
+              save: 'Save credentials',
+              saved: 'Saved.',
+              failed: 'The credentials were not saved.',
+            },
           },
         },
         /* The engine's own configuration document (`agent_config_document` /
@@ -761,6 +810,11 @@ export const agent = {
         notice: {
           gap: '本会话的记录缺了一段，下面的内容可能缺少事件。',
           resync: '重新载入会话',
+          /* 到达但被 reducer 拒收的帧，和上面那个洞不是一回事：拒收通常是因为传输层把本视图已有的
+             帧又送了一遍（`duplicate-sequence`，也就是点一次重新载入会产生的那些），所以这句话只
+             说发生了什么并给出原因，而不会宣称内容有缺失。`{reason}` 是 reducer 自己的词，不翻译
+             ——为七种只有 reducer 分得清的状态各写一句话，等于本应用替它解释。 */
+          dropped: '本窗口拒收的帧数：{n}（最近一次：{reason}）。',
         },
         bar: {
           untitled: '新建 {engine} 会话',
@@ -783,6 +837,24 @@ export const agent = {
             unrecognised: '以本版本未知的原因结束',
           },
           history: '该引擎保存的会话',
+          /* 引擎就上一轮说了它花了多少。线上的每个计数器都是可选的（P0 §6.3 实测：同样的两次
+             运行，字段集合并不相同），所以每条句子只在引擎真的送来了那个数字时才画出来：送了合计
+             就用 `total`，只送了输入输出就用那两个，什么都没送就什么都不画。任何一个数都不会由
+             其他数算出来——引擎自己的合计并不等于各部分之和。`detail` 是悬停文字，那里的计数器
+             有名字、是精确值，而横条上只有放得下的约数。 */
+          usage: {
+            total: '{n} tokens',
+            input: '输入 {n}',
+            output: '输出 {n}',
+            detail: {
+              input: '输入 {n}',
+              output: '输出 {n}',
+              total: '合计 {n}',
+              thought: '推理 {n}',
+              cachedRead: '缓存读取 {n}',
+              cachedWrite: '缓存写入 {n}',
+            },
+          },
         },
         /* 会话历史菜单（T17）：引擎对 `session/list` 的回答所画出的行。每一行都是引擎自己的
            事实——它的标题、它所在的文件夹、它的最后活动时间——这里的话只是本应用对这些事实能
@@ -816,7 +888,7 @@ export const agent = {
             confirmAction: '释放',
             cancel: '保留',
             done: '引擎已经释放了它。这一行仍然在这个列表里——这是引擎自己的回答，不是失败。',
-            failed: '引擎没有释放它：{reason}',
+            failed: '未能释放该会话：{reason}',
           },
         },
         empty: {
@@ -889,7 +961,7 @@ export const agent = {
         argumentsPending: '引擎还没有发送参数',
         argumentsUnreadable: '引擎发送了本应用无法读取的参数',
         expired: '已不再等待——该请求已被处理',
-        lastingGrant: '「始终允许」不只是这一次。引擎不会再就这个工具发问，并会把这次授权记录下来，因此它在本次会话结束后依然有效；本应用不会再收到通知，也没有任何地方能列出或收回它。',
+        lastingGrant: '「始终允许」不只是这一次。引擎不会再就这个工具发问，并会把这次授权记录下来，因此它在本次会话结束后依然有效——本应用不会再收到通知。它记下的授权列在「设置 → {section} → {page}」的「{surface}」中，也可以在那里收回。',
       },
       registry: {
         section: {
@@ -1130,6 +1202,12 @@ export const agent = {
             hostFile: '保存在本应用拥有的文件中：',
             notEncrypted: '那是一个仅有属主权限的普通文件。它没有加密，也不是系统钥匙串。',
             placeholder: '已保存值',
+            form: {
+              editHint: '填入新值即可替换，清空某一项即可删除该凭据。没有改动的项会原样保留。只有你在这里输入的内容会被发送，已保存的值不会被读回。',
+              save: '保存凭据',
+              saved: '已保存。',
+              failed: '凭据没有保存成功。',
+            },
           },
         },
         /* 引擎自己的配置文件。四种状态、四句话，因为用户的下一步在每种状态里都不一样：

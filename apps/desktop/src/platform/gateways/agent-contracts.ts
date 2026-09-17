@@ -31,6 +31,7 @@ export type {
   AgentCommand,
   AgentConfigChoice,
   AgentConfigOption,
+  AgentConfigOptionList,
   AgentConfigValue,
   AgentContextUsage,
   AgentCost,

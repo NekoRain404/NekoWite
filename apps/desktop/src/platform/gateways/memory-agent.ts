@@ -25,6 +25,7 @@ import {
   AgentFailure,
   type AgentCapabilityReport,
   type AgentConfigOption,
+  type AgentConfigOptionList,
   type AgentEvent,
   type AgentGateway,
   type AgentIdentity,
@@ -205,17 +206,23 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
   }
 
   /** Move one of the session's own options, whatever it is — the double's one path, as the
-   *  contract has one. See {@link AgentGateway.setConfigOption}. */
+   *  contract has one. See {@link AgentGateway.setConfigOption}.
+   *
+   *  The refreshed list is the *answer* as well as the frame: a real engine returns the new full
+   *  set from `session/set_config_option` and the pinned one also announces it, and a double that
+   *  only announced it would let a caller which reads the answer (the panel's row does) go
+   *  untested on this side. */
   async function setConfigOption(
     session: AgentSession,
     configId: string,
     value: string,
-  ): Promise<void> {
+  ): Promise<AgentConfigOptionList> {
     const record = engineCall(session)
     const moved = moveOption(record, configId, value)
     // The engine tells the session about its own change, and this is the frame that carries it:
     // session-scoped, so `runId` is null rather than the last turn's id.
     pushEvent(record, 'config-changed', { options: moved }, null)
+    return moved
   }
 
   return {
@@ -267,7 +274,11 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
         createSession(identity, replayLimit, request.cwd, sessionCount),
       )
       publishedOptions.set(identity.sessionId, [...MEMORY_OPTIONS])
-      return mintSession(identity, MEMORY_MODELS, MEMORY_INITIAL_MODEL_ID, MEMORY_OPTIONS)
+      // No title on the handle: the record above has one (`createSession` writes the shape the
+      // pinned engine was measured using), but nothing has *stated* it to a window yet — a new
+      // session's name is read from `session/list` or not at all, which is the same reason
+      // `agent_open_session` answers no title in the real host.
+      return mintSession(identity, MEMORY_MODELS, MEMORY_INITIAL_MODEL_ID, MEMORY_OPTIONS, null)
     },
 
     /**
@@ -290,6 +301,13 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
           cwd: record.cwd,
           title: record.title,
           updatedAt: record.updatedAt,
+          // The two halves of the table are two halves here too, which is what makes this row the
+          // one the production boundary is about: the engine's table is every record, and this
+          // runtime instance holds only the ones its own epoch minted (and that a close has not
+          // let go). `recordFor` refuses exactly those, so a row this is false for is a row
+          // `closeSession` will not act on — the same predicate, read here instead of answered
+          // per call.
+          held: !record.closed && record.identity.runtimeEpoch === currentEpoch(),
         })),
         // One page, which is what the pinned engine was measured answering — and an honest
         // `null` rather than a fabricated cursor, because a cursor the engine never issued is a
@@ -395,7 +413,17 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
       }
       sessions.set(sessionId, revived)
       publishedOptions.set(sessionId, [...MEMORY_OPTIONS])
-      return mintSession(identity, MEMORY_MODELS, MEMORY_INITIAL_MODEL_ID, MEMORY_OPTIONS)
+      // The name the engine's table already held for it, carried onto the handle: a reopen is the
+      // one path where a window has been told what the session is called (the row it picked), and
+      // the load answer itself carries none — the real adapter reads the same string off the same
+      // `session/list` page.
+      return mintSession(
+        identity,
+        MEMORY_MODELS,
+        MEMORY_INITIAL_MODEL_ID,
+        MEMORY_OPTIONS,
+        existing.title,
+      )
     },
 
     /**
@@ -409,11 +437,15 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
      * draw, and the reason `closeSession` is not called "delete".
      */
     async closeSession(sessionId: string): Promise<void> {
-      // By id, like the contract's: the row a history surface frees may be one this runtime
-      // serves without the window holding a handle for it. A runtime that is down still refuses,
-      // and so does an id this double never opened — the same two facts the host's command
-      // answers with.
-      const record = anyRecord(sessionId)
+      // By id, like the contract's — a handle is not needed, because the row a history surface
+      // frees may be one this runtime serves *without* the window holding a handle for it (that
+      // is the case the by-id shape exists for). But an id must still be one **this runtime
+      // instance** holds: the host refuses before the engine is asked (`known_session`, §6.1), so
+      // a session left over from an earlier epoch is a refusal here too. `recordFor` is that
+      // predicate, and it is the same one the list's `held` flag is computed from — which is what
+      // keeps a green test from modelling a call production answers with its own refusal.
+      const record = recordFor(sessionId)
+      if (dead) throw new AgentFailure('process-exited', 'the agent runtime exited')
       if (dead) throw new AgentFailure('process-exited', 'the agent runtime exited')
       const run = record.run
       if (run) {
@@ -435,7 +467,7 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
 
     setConfigOption,
 
-    async selectModel(session: AgentSession, modelId: string): Promise<void> {
+    async selectModel(session: AgentSession, modelId: string): Promise<AgentConfigOptionList> {
       engineCall(session)
       // The host refuses to forward a model it never offered, the way it refuses a
       // permission option the engine never offered (§6.3). Whether the engine itself
@@ -449,7 +481,7 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
       // Through the general call, as the contract's two methods relate to each other: the model
       // option is one of the session's options, and a double that moved it by a second route
       // would be the parallel mechanism the contract exists to avoid.
-      await setConfigOption(session, MEMORY_MODEL_ID, modelId)
+      return setConfigOption(session, MEMORY_MODEL_ID, modelId)
     },
 
     async prompt(session: AgentSession, text: string): Promise<AgentRunResult> {

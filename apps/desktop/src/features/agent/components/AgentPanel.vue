@@ -99,6 +99,7 @@ import type {
   AgentSession,
   AgentToolStatus,
 } from '../../../platform/gateways/agent-contracts'
+import { t } from '../../../i18n'
 import { useAgentCommands } from '../composables/use-agent-commands'
 import { useDetachedPopup } from '../composables/use-detached-popup'
 import { useAgentSession } from '../composables/use-agent-session'
@@ -170,7 +171,56 @@ const {
   answer,
   resync,
   setScroll,
+  dropped,
+  lastDrop,
 } = useAgentSession({ gateway: props.gateway, session: props.session })
+
+/**
+ * What this session is called, taken from whichever of the engine's two statements arrived.
+ *
+ * The stream's is the newer one and wins: `view.title` is written by `session-changed`, which is
+ * the engine saying "this session is called X" *now*. The session's own is the statement that
+ * comes with a reopen — `session/list` is the only answer this app has ever been given a session's
+ * name in, the load response carries none, and `AgentSession.title` is where the adapter puts the
+ * row's own string so the bar a remount draws can show it. Before that fix the bar fell straight
+ * through to `labels.untitled` after a resume, so a reader who picked a named row out of the list
+ * arrived at a bar saying "New {engine} session" — about the very session whose name they had just
+ * read. `null` here is the honest third answer, and the bar has a sentence for it.
+ *
+ * Read as a prop rather than written into the record's view: the view is rebuilt from the host's
+ * snapshot on every mount (`agent-session-snapshot.ts`), and the snapshot has no title field — a
+ * seed written there would be wiped by the handshake that follows it.
+ *
+ * The one thing this cannot express is a frame that *clears* a title: the view's `null` means both
+ * "nothing has been said" and "the name was taken away" (`AgentSessionView.title` records that
+ * ambiguity itself), so a cleared title would fall back to the name the reopen carried. Nothing
+ * can send one today — the frame that would is `SessionInfoUpdate`, which the host does not map —
+ * and the alternative, reading only the view, is the defect this replaces: a resumed session
+ * drawn as "New {engine} session" while the reader had just read its name in the list.
+ */
+const title = computed<string | null>(() => view.value?.title ?? props.session.title)
+
+/**
+ * `unread` is deliberately not taken from the binding above, and the reason is worth writing down
+ * because the state and this component's shape make it look like an oversight.
+ *
+ * The store sets the flag when an event is applied for a session that is *not* the one on screen
+ * (`stores/agent-session.ts`, `key !== activeKey`), and this binding clears it — `focus(key)` on
+ * mount calls `markRead`. So the flag can never be true in the panel that would draw it: mounting
+ * is what clears it. Its surface is therefore the list of sessions a reader switches between — a
+ * marker on the row that is not the open one, which is Zed's activity-bar dot
+ * (`agent_panel.rs`, `has_notification` on an inactive entry, cleared by
+ * `active_terminal_visible`) — and this panel has no such list. `AgentSessionHistoryMenu` is not
+ * one: its rows are the *engine's* sessions, keyed by the engine's own ids, and a session this
+ * window never subscribed to has no record and no flag.
+ *
+ * Nothing draws it today, and that is a fact about the flag rather than about the render: a
+ * subscription is only ever made by `useAgentSession`, which focuses in the same breath, so no
+ * session can be subscribed while another one is active. Making the marker reachable means
+ * keeping a session attached across a switch — a lifecycle change (the rail replaces the panel
+ * rather than re-pointing it, and `useAgentSession`'s `subscribe: false` exists for the reader
+ * that would need) — not a line in this template.
+ */
 
 /**
  * Where this session's transcript was left, for the timeline to take at mount (§5.1
@@ -186,9 +236,27 @@ const {
  */
 const initialPosition = store.recordFor(key)?.scrollTop
 
-/** The composer's own question: is a run in flight, so that its button is a stop. Read from
- *  the view through the store's own definition of "live" rather than a second list of states
- *  that could drift from it. */
+/**
+ * The refused-frame sentence, or `null` while there is nothing to say.
+ *
+ * Read from the catalogue here rather than through `labels.notice`, because it has two slots
+ * (`{n}` and the reducer's own word) and a slot is filled where the sentence is read — the
+ * history menu's ages are read the same way. `dropped` and `lastDrop` are written together by the
+ * store, so a count above zero always has a reason to name.
+ *
+ * The reason travels as the machine's own word, not as a sentence of ours: seven refusals are
+ * spelled in `AgentDropReason`, a page that translated them would be inventing seven explanations
+ * for states only the reducer can tell apart, and the word is what a bug report needs.
+ */
+const droppedSentence = computed<string | null>(() => {
+  if (dropped.value === 0) return null
+  return t('agent.panel.notice.dropped', { n: dropped.value, reason: lastDrop.value ?? '' })
+})
+
+/**
+ * The composer's own question: is a run in flight, so that its button is a stop. Read
+ * from the view through the store's own definition of "live" rather than a second list of states
+ * that could drift from it. */
 const running = computed(() => view.value !== null && isRunLive(view.value))
 
 /**
@@ -259,15 +327,33 @@ const configFailure = ref<{ key: string; message: string } | null>(null)
  * call belongs to the gateway, and both are here. A refusal is already reported to the reader by
  * the row that made the choice, so nothing is thrown at a click handler that could not catch it.
  */
-async function onConfigSet(key: string, value: string | boolean): Promise<void> {
-  const control = config.value.find((entry) => entry.key === key)
+/**
+ * One choice in the control row.
+ *
+ * Not the store's business and not the composer's: the option belongs to the session and the
+ * call belongs to the gateway, and both are here. A refusal is already reported to the reader by
+ * the row that made the choice, so nothing is thrown at a click handler that could not catch it.
+ *
+ * **The engine's answer is written into the view, and that is the half that was missing.** The
+ * command returns the refreshed option list (`commands/agent.rs`), the port used to drop it, and
+ * the row therefore moved only when the engine *also* announced the change as `config-changed` —
+ * true of the pinned engine, and not something a caller may rely on. Both paths end in the same
+ * field, so the notification now finds the list already there rather than being the only way it
+ * ever arrives. A `null` answer means the list could not be read, and the row keeps the engine's
+ * last known value rather than being cleared by a response nobody understood.
+ */
+async function onConfigSet(configKey: string, value: string | boolean): Promise<void> {
+  const control = config.value.find((entry) => entry.key === configKey)
   if (control === undefined) return
-  configBusy.value = key
+  configBusy.value = configKey
   configFailure.value = null
   const outcome = await setConfigOption(props.gateway, props.session, control, value)
   configBusy.value = null
   if (!outcome.accepted && outcome.reason === 'refused') {
-    configFailure.value = { key, message: outcome.message }
+    configFailure.value = { key: configKey, message: outcome.message }
+  }
+  if (outcome.accepted && outcome.options !== null) {
+    store.adoptOptions(key, outcome.options)
   }
 }
 
@@ -509,7 +595,7 @@ function onHistoryPick(sessionId: string): void {
   >
     <AgentSessionBar
       ref="barEl"
-      :title="view?.title ?? null"
+      :title="title"
       :state="state"
       :failure="view?.failure ?? null"
       :result="view?.lastResult ?? null"
@@ -531,6 +617,27 @@ function onHistoryPick(sessionId: string): void {
       >
         {{ labels.notice.resync }}
       </button>
+    </p>
+    <!-- The other way the record on screen can stop being the session's record: frames that
+         arrived and were refused. Drawn only above zero (`dropped` is cumulative for the
+         session, so a naught is the ordinary state and a badge reading "0" would say nothing),
+         and it carries no button: the counter is not cleared by a reload, so a resync here would
+         be a control that leaves its own sentence standing.
+         The sentence says what happened and names the reducer's last reason — it does not say
+         the transcript is incomplete, because it is not always: a re-subscription replays frames
+         the view already has, and their refusal is `duplicate-sequence`
+         (`agent-event-reducer.ts`, `judgeSequence`). A sentence that read "content is missing"
+         would be false for the commonest case, which is the second kind of dishonesty §5.2
+         forbids. It sits in the flow above the transcript like the gap notice, and moving the
+         reader is not a risk it adds: the timeline watches its own box and re-anchors the visible
+         row on a container resize (`AgentTimeline.vue`, `ResizeObserver` → `contentChanged`). -->
+    <p
+      v-if="droppedSentence !== null"
+      class="agent-panel-notice is-quiet"
+      data-agent-dropped
+      role="status"
+    >
+      <span class="agent-panel-notice-text">{{ droppedSentence }}</span>
     </p>
     <!-- The transcript's first line, and only while there is no transcript: directly under the
          title rule, in the panel's own monospace, so an empty session reads as the beginning of a
@@ -664,6 +771,13 @@ function onHistoryPick(sessionId: string): void {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* The refused-frame line. Same row, no warning tint and no button: a frame the transport
+   re-sent is not a fault the reader has to act on, and a notice painted in the danger family
+   would train them to fear the reload button that produces most of them. */
+.agent-panel-notice.is-quiet {
+  background: var(--app-elevated);
+  color: var(--app-muted);
 }
 .agent-panel-resync {
   flex: none;
