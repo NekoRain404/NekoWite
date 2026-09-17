@@ -554,6 +554,12 @@ describe('the dialog carries the pet’s pages, and what comes with them', () =>
     //     until it was past the file budget, and the block became this composable whole. The set of
     //     modules reached is otherwise unchanged — the file is a move, not a new dependency — and
     //     the cost is one more line of the same barrel kind.
+    //
+    //   - `composables/use-pet-page-theme.ts` and `services/pet-bubble-theme.ts` are the pair the
+    //     bubble's theme arrives with, and the same barrel cost one more time: the root applies the
+    //     page's palette from `message.theme`, and the service is the reader `pet-appearance.ts`
+    //     resolves the field through. This window mounts neither — the settings *dialog* is drawn by
+    //     the app, which is the page whose palette this pair is deliberately not allowed to touch.
     expect(surface).toEqual([
       'features/desktop-pet/components/DesktopPetRoot.vue',
       'features/desktop-pet/components/PetBubble.vue',
@@ -566,6 +572,7 @@ describe('the dialog carries the pet’s pages, and what comes with them', () =>
       'features/desktop-pet/composables/use-pet-drag.ts',
       'features/desktop-pet/composables/use-pet-drawing-failure.ts',
       'features/desktop-pet/composables/use-pet-lifecycle.ts',
+      'features/desktop-pet/composables/use-pet-page-theme.ts',
       'features/desktop-pet/composables/use-pet-window.ts',
       'features/desktop-pet/index.ts',
       'features/desktop-pet/rendering/animation-bindings.ts',
@@ -577,6 +584,7 @@ describe('the dialog carries the pet’s pages, and what comes with them', () =>
       'features/desktop-pet/services/pet-ball-input.ts',
       'features/desktop-pet/services/pet-ball-platform.ts',
       'features/desktop-pet/services/pet-bubble-layout.ts',
+      'features/desktop-pet/services/pet-bubble-theme.ts',
       'features/desktop-pet/services/pet-care-rules.ts',
       'features/desktop-pet/services/pet-catalogue.ts',
       'features/desktop-pet/services/pet-context-menu.ts',

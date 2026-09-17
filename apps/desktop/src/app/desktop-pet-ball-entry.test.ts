@@ -127,6 +127,12 @@ describe('the ball entry is one orb and not the character window', () => {
       // *character* window carries a drag adapter it does not use will find it here: the resolver
       // hands it to this page alone, and the import is what the two windows share.
       'features/desktop-pet/services/pet-ball-platform.ts',
+      // A carry and **not** a call, which is the one thing worth saying about it here: the theme
+      // reader arrived with the character window's own page (`pet-appearance.ts` resolves
+      // `message.theme` through it), and this page reads that same appearance for its orb. The orb
+      // draws no `--app-*` token at all — measured: `PetBallWindow.vue` names none — so nothing on
+      // this page acts on the theme; the module is here because one read answers both windows.
+      'features/desktop-pet/services/pet-bubble-theme.ts',
       'features/desktop-pet/services/pet-menu-actions.ts',
       'platform/gateways/pet-contracts.ts',
       'platform/gateways/pet-contracts/appearance.ts',

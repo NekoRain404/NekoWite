@@ -23,6 +23,8 @@ import {
 } from '../../../platform/gateways/pet-contracts'
 import type { PetAppearance, PetMotion } from '../../../platform/gateways/pet-contracts'
 import type { AnimationConfig } from '../rendering/animation-bindings'
+import type { PetBubbleTheme } from './pet-bubble-theme'
+import { petBubbleThemeOf } from './pet-bubble-theme'
 import type { PetBubbleLayoutInput } from './pet-bubble-layout'
 
 /**
@@ -108,6 +110,15 @@ export interface PetBubbleView {
   lines: readonly string[]
   /** Whether the pet says anything at all when there is no task to speak of (`message.idle`). */
   idle: boolean
+  /**
+   * Which palette the bubble is drawn from (`message.theme`).
+   *
+   * On this model rather than on the window's own state because it is one of the domain's fields
+   * and travels with the rest of them; the *page* is what acts on it (`usePetPageTheme`), because
+   * a theme is a page-level choice — see `pet-bubble-theme.ts` for why there is no other way to
+   * spell it.
+   */
+  theme: PetBubbleTheme
 }
 
 /**
@@ -233,6 +244,7 @@ export function petBubbleViewOf(read: { bubble?: unknown }): PetBubbleView {
     // A switch, so anything that is not `false` is on — the same reading the schema's default
     // takes, where `idle` is `true` and only an explicit `false` turns it off.
     idle: fields.idle !== false,
+    theme: petBubbleThemeOf(fields),
   }
 }
 
@@ -264,6 +276,7 @@ export const PET_BUBBLE_VIEW_DEFAULTS: PetBubbleView = {
   layout: {},
   lines: [],
   idle: true,
+  theme: 'system',
 }
 
 /**

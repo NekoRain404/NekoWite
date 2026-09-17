@@ -40,6 +40,7 @@ import { usePetClickThrough } from '../composables/use-pet-click-through'
 import { usePetDrag } from '../composables/use-pet-drag'
 import { usePetDrawingFailure } from '../composables/use-pet-drawing-failure'
 import { usePetLifecycle } from '../composables/use-pet-lifecycle'
+import { usePetPageTheme } from '../composables/use-pet-page-theme'
 import { usePetWindow } from '../composables/use-pet-window'
 import {
   PET_BUBBLE_VIEW_DEFAULTS,
@@ -202,6 +203,23 @@ const bubbleModel = computed<PetBubbleView>(
   () => window_?.bubble.value ?? PET_BUBBLE_VIEW_DEFAULTS,
 )
 const line = computed(() => window_?.line.value ?? null)
+
+/**
+ * The page's palette, from `message.theme` — the one setting on 气泡与消息 that is not drawn on a
+ * surface inside this window but **on the window itself**.
+ *
+ * The bubble's theme is a choice between the app's two palettes, and the app's palettes are selected
+ * on a page's root: `:root` is the light one and `[data-theme="dark"]` re-points it
+ * (`styles/palettes.css:16-92`). This window is its own page, so its root is the html element, and
+ * the attribute goes there. `pet-bubble-theme.ts` carries the whole argument, including why the
+ * light arm needs no second table and what the third member of the setting can observe.
+ *
+ * Declared here rather than in `desktop-pet-entry.ts` because the value is not the entry's: it
+ * arrives on the appearance read, which `usePetWindow` owns, and the entry mounts before any read
+ * has happened. A window with no host draws `PET_BUBBLE_VIEW_DEFAULTS` — `system`, which is what
+ * the bubble was drawn with before the setting reached this window.
+ */
+usePetPageTheme({ theme: () => bubbleModel.value.theme })
 
 /**
  * The two states `PetSprite` reports when it cannot draw, and when they stop being true. Declared

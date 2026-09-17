@@ -108,6 +108,24 @@ interface BubbleMeasurement {
   pages: number
 }
 
+/**
+ * What the page resolves for the bubble's theme.
+ *
+ * `attribute` is read off the element rather than through `color-scheme`, because the attribute is
+ * what `palettes.css`'s selectors match; `elevated` is the palette's own surface colour at that
+ * theme, read from the same element, so a case can say the bubble is drawn from *this page's*
+ * palette rather than from a colour the component carries — a `data-theme` value no block in
+ * `palettes.css` matches falls back to `:root` and draws the light palette while the setting claims
+ * otherwise.
+ */
+interface ThemeMeasurement {
+  attribute: string | null
+  colorScheme: string
+  elevated: string
+  /** The bubble's computed background, which the stylesheet mixes from `elevated`. */
+  background: string
+}
+
 declare global {
   interface Window {
     /** What the page-side mount exposes. One mount at a time, like the pet window itself. */
@@ -118,6 +136,8 @@ declare global {
        * window is already up: one `updateSettings` call, then whatever the window does about it.
        */
       setMessage(values: Record<string, unknown>): Promise<void>
+      /** What the page resolved for the theme, after whatever write the case made. */
+      theme(): ThemeMeasurement
       unmount(): void
     }
   }
@@ -235,6 +255,18 @@ async function mountAt(page: Page, options: MountOptions): Promise<void> {
 
       window.__petBubble = {
         unmount: () => app.unmount(),
+        theme: () => {
+          const page_ = document.documentElement
+          const resolved = getComputedStyle(page_)
+          const surface = host.querySelector<HTMLElement>('.pet-bubble')
+          if (!surface) throw new Error('the pet window drew no bubble to measure the theme on')
+          return {
+            attribute: page_.getAttribute('data-theme'),
+            colorScheme: resolved.colorScheme,
+            elevated: resolved.getPropertyValue('--app-elevated').trim(),
+            background: getComputedStyle(surface).backgroundColor,
+          }
+        },
         setMessage: async (values) => {
           const loaded = await double.readSettings('message')
           if (loaded.status !== 'current' || loaded.record.domain !== 'message') {
@@ -524,3 +556,91 @@ test('a phrase written while the window is up reaches the bubble, which is the s
   expect(after.mode).toBe('line')
   expect(after.text).toBe(USER_PHRASE)
 })
+
+/**
+ * The bubble's theme, as the *window* resolves it — the defect this case exists for.
+ *
+ * `message.theme` was stored, had a three-way control on 气泡与消息, and was read by that page's own
+ * preview and by nothing on the desktop: a user picked Light, watched the preview change, and the
+ * bubble beside their character did not. The fix is not a class on the surface — it is the page's
+ * own `data-theme`, because a theme is a page-level choice (see
+ * `features/desktop-pet/services/pet-bubble-theme.ts`), and this case reads it there.
+ *
+ * **The measurement is against the page's own palette, not against a colour written here.** The
+ * claim is that the bubble on the desktop is drawn in the app's palette for the theme the user
+ * chose — so each reading compares the bubble's computed background to `--app-elevated` as the same
+ * page declares it at the same moment. A bubble that painted its own colours (which is what the
+ * settings page's preview does, with its own hard-coded pair) would pass a "light and dark differ"
+ * check and fail this one.
+ */
+test('the theme the user picks is the palette the bubble on the desktop is drawn in', async ({ page }) => {
+  await page.goto('/desktop-pet.html')
+  // Written before the mount, so the first frame is the one under test; the write while the window
+  // is up is the next half of the same case, and is the settings page's own path.
+  await mountAt(page, { size: DEFAULT_SIZE, runs: ['theme-run'], message: { theme: 'light' } })
+
+  const light = await page.evaluate(() => window.__petBubble?.theme())
+  if (!light) throw new Error('the pet window is not mounted')
+  console.log(`[pet-bubble] theme light: ${JSON.stringify(light)}`)
+  // The light arm is the *absence* of the attribute: `:root` is where `palettes.css` declares the
+  // light palette, and `data-theme="light"` matches no block in the table.
+  expect(light.attribute).toBeNull()
+  expect(light.colorScheme).toBe('light')
+  // The bubble's background is that colour at the setting's alpha, so the channels are compared and
+  // the alpha is not.
+  expect(channelsOf(light.background)).toEqual(hexChannels(light.elevated))
+
+  await page.evaluate(() => window.__petBubble?.setMessage({ theme: 'dark' }))
+  const dark = await page.evaluate(() => window.__petBubble?.theme())
+  if (!dark) throw new Error('the pet window is not mounted')
+  console.log(`[pet-bubble] theme dark: ${JSON.stringify(dark)}`)
+  expect(dark.attribute).toBe('dark')
+  expect(dark.colorScheme).toBe('dark')
+  expect(channelsOf(dark.background)).toEqual(hexChannels(dark.elevated))
+
+  // The two palettes are the app's own two baselines, so they cannot be the same drawing; and the
+  // dark one is the darker of the two. A `data-theme` value no block matches would leave both
+  // readings on `:root`, which is what this pair refuses.
+  expect(dark.elevated).not.toBe(light.elevated)
+  expect(luminance(dark.elevated)).toBeLessThan(luminance(light.elevated))
+
+  // And back to light: a window that only ever wrote the attribute would stay dark for a user who
+  // returned to Light.
+  await page.evaluate(() => window.__petBubble?.setMessage({ theme: 'light' }))
+  const back = await page.evaluate(() => window.__petBubble?.theme())
+  expect(back?.attribute).toBeNull()
+  expect(channelsOf(back?.background ?? '')).toEqual(hexChannels(light.elevated))
+})
+
+/**
+ * The channels of a computed `background-color`, as 0..255.
+ *
+ * Both engines this project reads report a `color-mix` in **CSS Color 4 syntax** — measured:
+ * `color(srgb 1 0.996078 0.984314 / 0.92)` in Chromium here and in WebKitGTK through
+ * `e2e/webkit/pet-probe.mjs` — so the older `rgb()`/`rgba()` form is here for a computed value that
+ * came out of a plain declaration. A syntax neither of these matches throws rather than comparing
+ * `undefined`, because a colour this spec cannot read is a measurement it must not report as a pass.
+ */
+function channelsOf(value: string): number[] {
+  const modern = /color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/.exec(value)
+  if (modern) return modern.slice(1).map((part) => Math.round(Number(part) * 255))
+  const legacy = /rgba?\(([^)]+)\)/.exec(value)
+  if (legacy) return legacy[1].split(',').slice(0, 3).map((part) => Math.round(parseFloat(part)))
+  throw new Error(`the engine reported no colour this spec can read: ${JSON.stringify(value)}`)
+}
+
+/** A `#rrggbb` palette value, as the same three channels. */
+function hexChannels(hex: string): number[] {
+  const match = /^#([0-9a-f]{6})$/i.exec(hex)
+  if (!match) throw new Error(`the page declared no plain hex colour: ${JSON.stringify(hex)}`)
+  const value = parseInt(match[1], 16)
+  return [(value >> 16) & 255, (value >> 8) & 255, value & 255]
+}
+
+/** How light a `#rrggbb` colour is, for the one comparison that is about the two of them together. */
+function luminance(hex: string): number {
+  const match = /^#([0-9a-f]{6})$/i.exec(hex)
+  if (!match) throw new Error(`the page declared no plain hex colour: ${JSON.stringify(hex)}`)
+  const value = parseInt(match[1], 16)
+  return 0.2126 * ((value >> 16) & 255) + 0.7152 * ((value >> 8) & 255) + 0.0722 * (value & 255)
+}

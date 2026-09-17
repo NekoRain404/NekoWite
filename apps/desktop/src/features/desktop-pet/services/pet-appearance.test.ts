@@ -237,4 +237,19 @@ describe('the bubble’s content model and layout, which the host reads for this
     // layout object holds the fields it knows and nothing else.
     expect(Object.keys(petBubbleViewOf({ bubble: { nonsense: 1 } }).layout)).toEqual([])
   })
+
+  it('carries the bubble’s theme, and reads a missing or unknown one as the schema’s default', () => {
+    // The member crosses unread in the sense that matters: `petBubbleThemeOf` is the one place it
+    // is judged, and it is judged against the schema's own three members — see
+    // `pet-bubble-theme.test.ts` for the reading itself. What is pinned here is that the field
+    // reaches the window's model at all, which is the hop that was missing: the setting was stored,
+    // had a control, and was read by the settings page's preview and by nothing on the desktop.
+    expect(petBubbleViewOf({ bubble: { theme: 'light' } }).theme).toBe('light')
+    expect(petBubbleViewOf({ bubble: { theme: 'dark' } }).theme).toBe('dark')
+    // Absent, and a word that is not a member: both are the schema's default, so a bubble drawn
+    // from an answer that does not carry the field is drawn the way this build has always drawn it.
+    expect(petBubbleViewOf({}).theme).toBe('system')
+    expect(petBubbleViewOf({ bubble: {} }).theme).toBe('system')
+    expect(petBubbleViewOf({ bubble: { theme: 'solarized' } }).theme).toBe('system')
+  })
 })

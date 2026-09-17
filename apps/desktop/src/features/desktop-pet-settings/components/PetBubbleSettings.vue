@@ -9,10 +9,14 @@
  *  - `ap_theme` → the theme control. Upstream's control is a three-way segment
  *    (`settings.html:161-165`, default `dark`); this page renders the same three-way choice the
  *    way the app's own theme control does (`AppearanceSettings.vue:75-95`), and the default is
- *    `system` — 「默认跟随宿主主题」 — because the pet follows the app unless overridden here.
- *    The third option is «follow the app» rather than the system: NekoWite already made that
- *    choice for itself, and a bubble that made it a second time could disagree with the window
- *    it is drawn in.
+ *    `system` — 「默认跟随宿主主题」 — because the pet follows the theme it is drawn in unless
+ *    overridden here. **`system` is the machine's preference on the desktop and the app's in the
+ *    preview above**, and that is one rule rather than two: the bubble takes the palette of the
+ *    page it is drawn in, the desktop is a page of its own whose engine answers for the system,
+ *    and the preview is drawn inside the app's page. The note under the control says exactly that,
+ *    because a user who has pinned the app to light on a dark desktop would otherwise be told
+ *    something this build cannot do — the app's theme lives in the app window's store, and §7.1
+ *    keeps the pet's page from reading it. See `pet-bubble-theme.ts` for the whole argument.
  *  - `ap_opacity` → the opacity control: the bubble's *background alpha*
  *    (`windows/src/main.ts:88-100`, control at `settings.html:172-173`). It used to be drawn on
  *    常规与交互 as a window opacity, which is a setting upstream never had and this build could not

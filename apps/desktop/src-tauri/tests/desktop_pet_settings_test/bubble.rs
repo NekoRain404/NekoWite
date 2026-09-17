@@ -375,6 +375,46 @@ fn the_bubble_rides_every_appearance_arm_because_the_bubble_is_drawn_in_all_of_t
     assert_eq!(bubble_of(&missing).phrases, vec!["在的"]);
 }
 
+/// The theme a window is handed, on each of the three members the schema declares.
+///
+/// **The defect this closes, as an assertion.** `message.theme` was stored, had a three-way control
+/// on 气泡与消息, and crossed nothing: the settings page's own preview acted on it and the bubble on
+/// the desktop did not, so a user picked Light, watched the preview change, and their desktop bubble
+/// stayed as it was. What the window now receives is the *member*, so which palette it selects is
+/// the page's question (`features/desktop-pet/services/pet-bubble-theme.ts`) and never this side's.
+#[test]
+fn the_bubble_theme_a_window_is_handed_is_the_member_the_store_holds() {
+    let (store, _data) = support::store("bubble-theme-follows");
+
+    // Nothing written: the schema's own default, read off the schema's own table rather than
+    // restated as a literal, so a default that moved fails here instead of leaving every window on
+    // the old one.
+    let declared = defaults(PetSettingsDomain::Message);
+    assert_eq!(
+        bubble_of(&window_read(&store)).theme,
+        declared["theme"].as_str().unwrap()
+    );
+
+    for member in ["light", "dark", "system"] {
+        let store_read = store.read(PetSettingsDomain::Message);
+        let revision = store_read.record().expect("a message record").revision;
+        let outcome = store.apply(&message_write(
+            &store,
+            revision as f64,
+            &[("theme", json!(member))],
+        ));
+        assert!(
+            matches!(outcome, PetSettingsUpdate::Applied { .. }),
+            "the write the settings page makes: {outcome:?}"
+        );
+        assert_eq!(
+            bubble_of(&window_read(&store)).theme,
+            member,
+            "the member crosses unchanged, so the page is the one place it is resolved"
+        );
+    }
+}
+
 #[test]
 fn a_message_record_from_a_newer_build_leaves_the_bubble_where_this_build_built_it() {
     let (store, _data) = support::store("bubble-domain-newer");

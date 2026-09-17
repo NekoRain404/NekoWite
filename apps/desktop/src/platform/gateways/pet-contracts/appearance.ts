@@ -103,10 +103,9 @@ export function petMotionOf(read: { motion?: PetMotion }): PetMotion {
  * prop, so `resolvePetBubbleLayout` stays the single place a value is judged (§5.3's 「界面和后端
  * 使用同一规则」) and this side never re-reads a stored record.
  *
- * **Only the fields a surface acts on are here.** `message` holds `fontSize`, `theme`, `dot`,
- * `sortByKind`, `hiddenAgents`, `phraseTheme`, `leftClick` and `bubbleSeconds` as well, and none of
- * them crosses: no surface in the pet window draws with one yet, and a wire field with no reader is
- * the defect this payload exists to close.
+ * **Only the fields a surface acts on are here.** `message` holds `fontSize`, `dot` and
+ * `bubbleSeconds` as well, and none of them crosses yet: no surface in the pet window draws with
+ * one, and a wire field with no reader is the defect this payload exists to close.
  */
 export interface PetBubbleRead {
   /** `message.layoutMode`, under the renderer's name. */
@@ -125,6 +124,20 @@ export interface PetBubbleRead {
   phrases?: readonly string[]
   /** `message.idle` — whether the pet says anything when there is no task to speak of. */
   idle?: boolean
+  /**
+   * `message.theme` — which palette the bubble is drawn from (`system`, `light` or `dark`).
+   *
+   * A member name rather than a colour, and the whole reason the setting can be honoured at all:
+   * the colours are the app's own tokens, and what the user chooses here is *which of them*. See
+   * `features/desktop-pet/services/pet-bubble-theme.ts` — that is where this becomes the one value
+   * `palettes.css` selects on, and where the one thing that is not a member (`system`) is read.
+   *
+   * It rides this payload for the reason {@link PetAppearance.bubbleOpacity} does and one more:
+   * the control on §5.2's 气泡与消息 page stored a value that the settings page's own preview acted
+   * on and the bubble on the desktop did not, so a user who picked Light saw the preview change and
+   * nothing else.
+   */
+  theme?: string
 }
 
 export type PetAppearance = {

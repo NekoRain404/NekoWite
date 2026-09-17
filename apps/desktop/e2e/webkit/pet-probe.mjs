@@ -246,6 +246,23 @@ const sprite = arguments[0], sheetSpec = arguments[1], win = arguments[2], done 
   });
   bubbleApp.mount(bubbleHost);
 
+  // The message domain's theme, driven the way 气泡与消息 drives it: a write to the message domain
+  // through the host, which publishes pet-settings-changed — and the window re-reads because of
+  // that frame. Written rather than mounted, because the claim is not "a bubble mounted with a
+  // theme looks right" but "choosing a theme changes the bubble that is already on the desktop".
+  window.__petBubble = {
+    setTheme: async (value) => {
+      const read = await bubbleGateway.readSettings('message');
+      if (read.status !== 'current') return 'the double would not read message';
+      const update = await bubbleGateway.updateSettings({
+        domain: 'message',
+        revision: read.record.revision,
+        values: Object.assign({}, read.record.values, { theme: value }),
+      });
+      return update.status;
+    },
+  };
+
   await vue.nextTick();
   // The sheet is a data URL: its decode is asynchronous even so, and a read taken before it commits
   // measures an empty canvas and calls it a failure.
@@ -662,6 +679,97 @@ function verify(results) {
       bubble.bubble.y + bubble.bubble.height <= bubble.frame.y + bubble.frame.height + 1,
   )
 
+  /*
+   * The bubble's theme, which is the one 气泡与消息 setting whose effect is the whole desktop rather
+   * than the surface: a user picks Light or Dark and the bubble beside their character changes.
+   *
+   * The check is not "light and dark differ". It is that each theme's bubble is drawn from **this
+   * page's own palette for that theme** — the `--app-elevated` and `--app-text` `palettes.css`
+   * declares on `:root` and on `[data-theme="dark"]` — so an invented colour (which is what the
+   * settings page's own preview uses, and what a careless fix would copy) fails it. The bubble's
+   * background is the palette colour at the setting's alpha, so the two RGB channels are read and
+   * the alpha is left out of the comparison.
+   */
+  const theme = results.theme
+  /**
+   * The channels of a computed colour, as 0..255.
+   *
+   * **Measured, and it is why this is not a one-line regex**: both engines report a `color-mix`'s
+   * computed value in CSS Color 4 syntax — `color(srgb 1 0.996078 0.984314 / 0.92)` in WebKitGTK
+   * here, and the same shape in Chromium through `desktop-pet-bubble.spec.ts` — so a parser that
+   * only knew `rgb()` would read the bubble's background as `null` and report a working theme as a
+   * failure. The legacy form is kept for a computed value that came out of a plain declaration.
+   */
+  const channels = (value) => {
+    const modern = /color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/.exec(value ?? '')
+    if (modern) return modern.slice(1).map((part) => Math.round(Number(part) * 255))
+    const legacy = /rgba?\(([^)]+)\)/.exec(value ?? '')
+    return legacy ? legacy[1].split(',').slice(0, 3).map((part) => Math.round(parseFloat(part))) : null
+  }
+  const hexChannels = (value) => {
+    const match = /^#([0-9a-f]{6})$/i.exec(value ?? '')
+    if (!match) return null
+    const n = parseInt(match[1], 16)
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+  }
+  const closeTo = (a, b) => Boolean(a && b) && a.slice(0, 3).every((n, i) => Math.abs(n - b[i]) <= 1)
+  const luminance = (rgb) => (rgb ? 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2] : null)
+
+  run(
+    'choosing a theme is a write the host applies',
+    `light ${theme?.light?.write}, dark ${theme?.dark?.write}, system ${theme?.system?.write}`,
+    theme?.light?.write === 'applied' && theme?.dark?.write === 'applied' && theme?.system?.write === 'applied',
+  )
+  // FAILS IF: the window never reads `message.theme` — which is where this defect started. The
+  // control was stored, had a three-way button row and was read by the settings page's preview
+  // alone, so the bubble on the desktop did not move whatever the user picked.
+  //
+  // Light is the *absence* of the attribute and not `data-theme="light"`, which is the one spelling
+  // this check has to know about: `:root` is where `palettes.css` declares the light palette, so no
+  // block in that table matches a `light` value, and the page's own rule is "say `dark`, or say
+  // nothing" (`pet-bubble-theme.ts`'s `applyPetPageTheme`). A reader expecting the literal string
+  // would be reading the instrument's idea of the light theme rather than the stylesheet's.
+  run(
+    'and the pet window’s page carries it',
+    `light ${JSON.stringify(theme?.light?.theme)} (${theme?.light?.colorScheme}), dark ${JSON.stringify(theme?.dark?.theme)} (${theme?.dark?.colorScheme})`,
+    (theme?.light?.theme === null || theme?.light?.theme === 'light') &&
+      theme?.dark?.theme === 'dark' &&
+      theme?.light?.colorScheme === 'light' &&
+      theme?.dark?.colorScheme === 'dark',
+  )
+  // FAILS IF: the bubble is drawn from a colour of its own rather than from the page's palette —
+  // the settings page's preview hard-codes `#f7f7f5` / `#23211f` for exactly this override, and a
+  // second copy of that table in the pet window is how the two would come apart.
+  const lightDrawnFromPalette = closeTo(channels(theme?.light?.background), hexChannels(theme?.light?.elevated))
+  const darkDrawnFromPalette = closeTo(channels(theme?.dark?.background), hexChannels(theme?.dark?.elevated))
+  run(
+    'and it is drawn from the palette this page resolved for that theme',
+    `light ${theme?.light?.background} over ${theme?.light?.elevated}; dark ${theme?.dark?.background} over ${theme?.dark?.elevated}`,
+    lightDrawnFromPalette && darkDrawnFromPalette,
+  )
+  // FAILS IF: the palette is selected but the surface that shows it does not follow — the two
+  // halves of the same claim, measured on the bubble's own element rather than on the root.
+  const lightLuminance = luminance(channels(theme?.light?.background))
+  const darkLuminance = luminance(channels(theme?.dark?.background))
+  run(
+    'so the bubble on the desktop changes when the user picks one',
+    `luminance light ${lightLuminance === null ? 'n/a' : Math.round(lightLuminance)} vs dark ${
+      darkLuminance === null ? 'n/a' : Math.round(darkLuminance)
+    }`,
+    lightLuminance !== null && darkLuminance !== null && lightLuminance > 128 && darkLuminance < 128,
+  )
+  // FAILS IF: `system` stops resolving to the engine's own preference. That is the one theme signal
+  // a page of its own can observe: this window may not read the application's store (§7.1, and
+  // `app/desktop-pet-entry.test.ts` refuses `^stores/` from its graph), and the app resolves its
+  // own `system` setting the same way (`stores/appearance.ts:109-116`), from the same engine
+  // preference — which is also why the two agree on a default install, where the app's theme
+  // setting is `system` (`stores/appearance-schema.ts:66`).
+  run(
+    'and “follow the system” is the engine’s own preference',
+    `systemDark ${theme?.system?.systemDark} → ${JSON.stringify(theme?.system?.theme)}`,
+    theme?.system?.theme === (theme?.system?.systemDark ? 'dark' : 'light'),
+  )
+
   return {
     passed: checks.filter((c) => c.holds).length,
     failed: checks.filter((c) => !c.holds).length,
@@ -734,6 +842,54 @@ done({
 });
 `
 
+/**
+ * What the pet window's page resolves for one `message.theme`, after writing that theme through
+ * the host.
+ *
+ * Read off the **element**, not off the component: the claim is about what is on the desktop, and
+ * the desktop gets the page root's resolved palette. `--app-elevated` and `--app-text` come off the
+ * document element because that is where `palettes.css` declares them (`:root` for light,
+ * `[data-theme="dark"]` for dark) — and the bubble's own computed background is compared against
+ * them, so "the bubble is drawn from this page's palette" is measured rather than asserted. A
+ * colour invented in the component (which is what the settings page's preview does) would pass a
+ * "light and dark differ" check and fail this one.
+ *
+ * `data-theme` is read as an attribute rather than through `color-scheme`, because the attribute is
+ * what the stylesheet's selectors match; `color-scheme` is read beside it as the second half of the
+ * same state — it is what the engine paints scrollbars and form controls from, and the rows box in
+ * this very surface scrolls.
+ */
+const BUBBLE_THEME = `
+const value = arguments[0], done = arguments[arguments.length - 1];
+(async () => {
+  const status = await window.__petBubble.setTheme(value);
+  // The window re-reads on the published change, and that read is a promise this script cannot
+  // await: the frame arrives through the store's own listener, the read follows it, and the render
+  // follows the read. One turn of the event loop plus a frame is what the three need.
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const frame = document.getElementById('probe-bubble');
+  const bubble = frame && frame.querySelector('.pet-bubble');
+  if (!bubble) { done({ ok: false, why: 'the bubble is not in the page' }); return; }
+  const root = getComputedStyle(document.documentElement);
+  const dot = frame.querySelector('.pet-task__dot');
+  done({
+    ok: true,
+    write: status,
+    theme: document.documentElement.getAttribute('data-theme'),
+    colorScheme: root.colorScheme,
+    systemDark: matchMedia('(prefers-color-scheme: dark)').matches,
+    elevated: root.getPropertyValue('--app-elevated').trim(),
+    pageText: root.getPropertyValue('--app-text').trim(),
+    background: getComputedStyle(bubble).backgroundColor,
+    color: getComputedStyle(bubble).color,
+    fontSize: getComputedStyle(bubble).fontSize,
+    // The dot's two styles differ in shape and in nothing else: a disc is round, upstream's
+    // claude style is a glyph on a square box (references/desktop-pet/windows/src/styles.css:149).
+    dot: dot ? getComputedStyle(dot).borderRadius : null,
+  });
+})().catch((error) => done({ ok: false, why: String((error && error.message) || error) }));
+`
+
 async function main() {
   const keep = Boolean(arg('keep', false))
   const vitePort = await freePort()
@@ -747,7 +903,7 @@ async function main() {
   })
 
   const wd = new WebDriver(driverPort)
-  const results = { engine: null, page: null, states: {}, hit: {}, advanced: null, root: {}, ball: {}, bubble: null }
+  const results = { engine: null, page: null, states: {}, hit: {}, advanced: null, root: {}, ball: {}, bubble: null, theme: null }
   const watchdog = setTimeout(() => {
     process.stderr.write('\n[webkit-pet] watchdog: nothing finished in 300s\n')
     process.kill(process.pid, 'SIGKILL')
@@ -909,6 +1065,18 @@ async function main() {
     stage('bubble geometry')
     results.bubble = await wd.executeAsync(BUBBLE_GEOMETRY)
     if (!results.bubble?.ok) throw new Error(`the bubble is not measurable: ${results.bubble?.why}`)
+
+    // The theme, last and one theme at a time: each read is taken after a write the host published,
+    // and the surface has to have finished re-rendering before the colour means anything. Written
+    // in the order light → dark → system so the last one leaves the page on the *rule* rather than
+    // on a forced value.
+    stage('bubble theme')
+    results.theme = {}
+    for (const value of ['light', 'dark', 'system']) {
+      const read = await wd.executeAsync(BUBBLE_THEME, [value])
+      if (!read?.ok) throw new Error(`the ${value} theme is not measurable: ${read?.why}`)
+      results.theme[value] = read
+    }
 
     const logs = await wd.logs()
     if (logs) results.console = logs.map((l) => `${l.level}: ${l.message}`).slice(0, 20)

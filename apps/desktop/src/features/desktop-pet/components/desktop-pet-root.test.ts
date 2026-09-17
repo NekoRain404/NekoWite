@@ -479,6 +479,89 @@ describe('the bubble is drawn at the alpha the host read carried', () => {
   })
 })
 
+/**
+ * The bubble's theme, at the end of the chain the settings page's control starts.
+ *
+ * The defect this closes is the one the whole 气泡与消息 page was built around: `message.theme` was
+ * stored, had a three-way control, and was read by the settings page's own preview and by nothing on
+ * the desktop — so a user picked Light, watched the preview change, and the bubble beside their
+ * character did not.
+ *
+ * **What is asserted is the page, not the component.** A theme is not a property of a subtree: the
+ * light palette is the baseline `palettes.css` declares on `:root` and the dark one is a re-point of
+ * it on `[data-theme="dark"]`, so the attribute goes on the element both selectors match — this
+ * window's root, since the pet window is a page of its own. A case that looked for a class on
+ * `.pet-bubble` would pass on a component that painted its own colours and never followed the
+ * app's, which is exactly what the preview does and what this window must not.
+ *
+ * The document element is watched directly here rather than through an injected root: the root
+ * component takes no such parameter because the *product* has no other page to draw on, and the
+ * teardown puts the attribute back, so this file does not colour the next case in it.
+ */
+describe('the bubble is drawn in the theme the host read carried', () => {
+  /** The `message` domain's own write, as §5.2's 气泡与消息 page makes it. */
+  async function setTheme(
+    host: MemoryPetGateway,
+    theme: (typeof PET_SETTINGS_DEFAULTS)['message']['theme'],
+    revision: number,
+  ): Promise<void> {
+    await host.updateSettings({
+      domain: 'message',
+      revision,
+      values: { ...PET_SETTINGS_DEFAULTS.message, theme },
+    })
+  }
+
+  it('puts the page in the theme the read carried, over a character that is drawing', async () => {
+    const host = createMemoryPetGateway({ visible: true, characters: [WORKING] })
+    // Stored before the window opens, so the read this case is about is the one that draws the
+    // first frame.
+    await setTheme(host, 'dark', 1)
+    mount({ gateway: host, connection: host, createImage: imagesFor(() => true), readPixels: twoCells })
+    await flush()
+
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
+  })
+
+  it('re-reads it when another window writes the message domain', async () => {
+    const host = createMemoryPetGateway({ visible: true, characters: [WORKING] })
+    mount({ gateway: host, connection: host, createImage: imagesFor(() => true), readPixels: twoCells })
+    await flush()
+    // `system`, and this runner's engine states no preference: the schema's default, which is the
+    // theme the bubble was drawn in before the field reached this window.
+    expect(document.documentElement.hasAttribute('data-theme')).toBe(false)
+
+    // A settings page saving the bubble's theme while the pet is already on the desktop — which is
+    // the case the defect was reported from.
+    await setTheme(host, 'dark', 1)
+    await flush()
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
+
+    // And back: the light arm is the absence of the attribute, so a window that only ever wrote it
+    // would stay dark for a user who returned to Light.
+    const read = await host.readSettings('message')
+    if (read.status !== 'current') throw new Error('the double would not read message')
+    await setTheme(host, 'light', read.record.revision)
+    await flush()
+    expect(document.documentElement.hasAttribute('data-theme')).toBe(false)
+  })
+
+  it('gives the page back when the window goes away', async () => {
+    const host = createMemoryPetGateway({ visible: true, characters: [WORKING] })
+    await setTheme(host, 'dark', 1)
+    mount({ gateway: host, connection: host, createImage: imagesFor(() => true), readPixels: twoCells })
+    await flush()
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
+
+    // The window's own unmount, and the only one this file performs inside a case: the attribute is
+    // put back where it was found, so a window that closes does not leave a theme on a document it
+    // is about to stop owning — and so the cases after this one start from no attribute at all.
+    mounted.at(-1)?.unmount()
+    await flush()
+    expect(document.documentElement.hasAttribute('data-theme')).toBe(false)
+  })
+})
+
 describe('the window takes the pointer only while it has something to click', () => {
   it('asks for pass-through as soon as it is showing a character and no task', async () => {
     const host = createMemoryPetGateway({ visible: true, characters: [WORKING] })

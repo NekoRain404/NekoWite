@@ -189,6 +189,12 @@ describe('the pet entry is one lightweight window and not a second application',
       'features/desktop-pet/composables/use-pet-drag.ts',
       'features/desktop-pet/composables/use-pet-drawing-failure.ts',
       'features/desktop-pet/composables/use-pet-lifecycle.ts',
+      // The page's own palette, from `message.theme`: the composable writes `data-theme` on the
+      // page's root and keeps a `system` setting reading the engine. It is here for the reason
+      // every other module on this list is — without it the control on 气泡与消息 stores a value
+      // that nothing on the desktop acts on — and it costs no dependency the window did not
+      // already carry: `document`, `window.matchMedia`, and Vue's own `watch`.
+      'features/desktop-pet/composables/use-pet-page-theme.ts',
       'features/desktop-pet/composables/use-pet-window.ts',
       'features/desktop-pet/rendering/animation-bindings.ts',
       'features/desktop-pet/rendering/sprite-hit-test.ts',
@@ -204,6 +210,11 @@ describe('the pet entry is one lightweight window and not a second application',
       'features/desktop-pet/services/pet-ball-input.ts',
       'features/desktop-pet/services/pet-ball-platform.ts',
       'features/desktop-pet/services/pet-bubble-layout.ts',
+      // The bubble's theme, and the one module here that decides *structure* rather than a value:
+      // `:root` is the light palette and `[data-theme="dark"]` re-points it, so a theme is a
+      // page-level choice — see its header. It is the reader `pet-appearance.ts` resolves
+      // `message.theme` through, which is why it is in this window at all.
+      'features/desktop-pet/services/pet-bubble-theme.ts',
       'features/desktop-pet/services/pet-context-menu.ts',
       'features/desktop-pet/services/pet-menu-actions.ts',
       'features/desktop-pet/services/pet-message-template.ts',

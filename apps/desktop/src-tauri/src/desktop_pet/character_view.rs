@@ -296,10 +296,9 @@ pub fn stored_bubble_opacity(store: &PetSettingsStore) -> BubbleOpacity {
 /// drawing rule and that table is on the other side.
 ///
 /// **Only the fields the bubble draws with cross**, which is §6.1's rule of least: `message` holds
-/// `fontSize`, `theme`, `dot`, `sortByKind`, `hiddenAgents`, `phraseTheme` and `leftClick` as well,
-/// and none of them is here because no surface in this window acts on one yet. Sending them would
-/// be a payload a window must ignore, and a wire field with no reader is the shape this whole change
-/// is about. Each one is named in the port report as still unwired.
+/// `fontSize`, `dot` and `bubbleSeconds` as well, and none of them is here because no surface in
+/// this window acts on one. Sending them would be a payload a window must ignore, and a wire field
+/// with no reader is the shape this whole change is about.
 ///
 /// A `message` record this build may not read — `store.read`'s `ReadOnly` arm, a record a newer
 /// build wrote, which §10.2 keeps this build from reading — is answered with the schema's defaults
@@ -325,6 +324,15 @@ pub struct BubbleMessage {
     pub phrases: Vec<String>,
     /// Whether it says one at all (`message.idle`, upstream's 「Show idle message」).
     pub idle: bool,
+    /// Which palette the bubble is drawn from (`message.theme`): `system`, `light` or `dark`.
+    ///
+    /// A member name crosses and never a colour: the colours are the application's own tokens, and
+    /// the page is where they are selected (`features/desktop-pet/services/pet-bubble-theme.ts`).
+    /// It rides this payload for the reason [`BubbleOpacity`] does — the window's own page may not
+    /// read a settings domain — and for one more: until it did, the control on 气泡与消息 was read by
+    /// the settings page's own preview and by nothing on the desktop, so a user who picked Light saw
+    /// the preview change and the bubble they had put on their desktop stay as it was.
+    pub theme: String,
 }
 
 impl BubbleMessage {
@@ -341,6 +349,7 @@ impl BubbleMessage {
             tokens: Vec::new(),
             phrases: Vec::new(),
             idle: true,
+            theme: "system".to_string(),
         }
     }
 
@@ -391,6 +400,12 @@ impl BubbleMessage {
                 .value("idle")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(defaults.idle),
+            // The store normalized this record on the way out of the file (`settings::values`), so
+            // what reaches the second arm is a record this build did not write — and the schema's
+            // own default is the theme the bubble was drawn with before the field was carried. The
+            // *page* is where a name becomes a palette (`pet-bubble-theme.ts`), so nothing here
+            // judges which members are drawable.
+            theme: string("theme", &defaults.theme),
         }
     }
 }
