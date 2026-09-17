@@ -113,6 +113,8 @@ pub enum ConfigError {
 pub struct ConfigEdit {
     path: Vec<String>,
     value: Value,
+    /// Whether the member may only be *added*, never replaced: see [`ConfigEdit::if_absent`].
+    only_when_absent: bool,
 }
 
 impl ConfigEdit {
@@ -124,10 +126,47 @@ impl ConfigEdit {
     /// rather than written — a blank segment is what an unfilled form field produces, and a member
     /// named `""` is not something a configuration means.
     pub fn set(path: Vec<String>, value: Value) -> Result<Self, ConfigError> {
+        Ok(Self::edit(path, value, false)?)
+    }
+
+    /// An edit that writes `value` at `path` **only where the document has not spoken**, and leaves
+    /// the document byte for byte when the member is already there.
+    ///
+    /// It exists for one shape a settings form cannot avoid. A member a form wants to write lives
+    /// *inside* a group — `provider` is where a provider block goes — and [`ConfigEdit::set`] cannot
+    /// put the group there: replacing `provider` wholesale would delete the providers a user already
+    /// has, and [`ConfigError::Missing`] refuses a path whose parents are absent, which is exactly
+    /// the state a profile whose engine has never been given a provider is in. So a form submits
+    /// two edits in one call: this one for the group it has to be sure of, and a plain
+    /// [`ConfigEdit::set`] for the member itself. A group that is already there is left exactly as
+    /// it was found — whatever else it holds, and whatever comments are written inside it.
+    ///
+    /// **This does not invent a shape**, which is the rule [`ConfigError::Missing`] holds. The
+    /// caller names the group as a path segment and hands over the value that goes in it; nothing
+    /// here derives a member name or a nesting from the ones it was given. That the value is an
+    /// object at all is the caller's statement about the engine's format, which is where §3.4.5
+    /// leaves it — the same way a provider block's own members are the form's to name.
+    ///
+    /// **The editing order is the caller's**, and this arm is why the order matters: it is a no-op
+    /// when the group is there, so a submission that puts it first cannot depend on what the later
+    /// edits did.
+    ///
+    /// **It is a write, not a read-back.** Nothing here reports whether the member was absent: the
+    /// answer a caller would use it for is "does the document have this group", which is
+    /// [`ConfigDocument::has_member`]'s question, asked of a revision the caller is not editing.
+    pub fn if_absent(path: Vec<String>, value: Value) -> Result<Self, ConfigError> {
+        Ok(Self::edit(path, value, true)?)
+    }
+
+    fn edit(path: Vec<String>, value: Value, only_when_absent: bool) -> Result<Self, ConfigError> {
         if path.is_empty() || path.iter().any(|segment| segment.trim().is_empty()) {
             return Err(ConfigError::BlankPath);
         }
-        Ok(Self { path, value })
+        Ok(Self {
+            path,
+            value,
+            only_when_absent,
+        })
     }
 
     /// The member as compact JSON. `Value`'s `Display` is that serialization and cannot fail, so
@@ -307,6 +346,12 @@ const EMPTY_DOCUMENT: &str = "{}";
 /// host's. What a create writes is the member the caller named and its value — the caller being the
 /// settings form, which is where that name came from.
 ///
+/// A caller that has to write *inside* a group therefore names the group too, as its own edit, with
+/// [`ConfigEdit::if_absent`] — one submission setting `["provider"]` and then
+/// `["provider", "<id>"]`. The group is the caller's statement about the format, made in the same
+/// place the nested member is, and it is a no-op in the document a user has already put providers
+/// in: what that arm may not do is replace a group it did not write.
+///
 /// **Why creating is this module's to do at all.** A file that is not there has no comments and no
 /// unknown members in it, so the one argument against writing a configuration document this host
 /// did not author — that a rewrite loses what somebody else put there — has nothing to apply to.
@@ -332,6 +377,9 @@ pub fn apply_claim(
     }
     let _guard = WRITE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let current = read(path)?;
+    // Whether the arm below takes the document that is already there. Read before the match moves
+    // it, and used after the edits for the rule just below the loop.
+    let existing = current.is_some();
     let mut text = match (expected, current) {
         // The document is the one the caller read: the edit lands in its text.
         (Some(expected), Some(current)) if &current.revision == expected => current.text,
@@ -342,8 +390,23 @@ pub fn apply_claim(
         // where the caller read none. Both are the same answer — here is what is there, reload.
         (_, current) => return Ok(WriteOutcome::Conflicted { current }),
     };
+    let before = text.clone();
     for edit in edits {
-        text = splice(&text, edit, path)?;
+        // `None` is an edit that had nothing to say — a member it may only add is already there —
+        // and the text is left exactly as the previous edit produced it.
+        if let Some(spliced) = splice(&text, edit, path)? {
+            text = spliced;
+        }
+    }
+    // Every edit wrote nothing and the document was already there: this is the empty-edit case one
+    // step in, and it is answered the same way rather than by writing the same bytes back. What it
+    // protects is the file — a form resubmitted unchanged must not move its mtime or restart an
+    // engine watching it — and it is reachable in the ordinary way: a provider form's group edit
+    // (`if_absent`) is a no-op on every document that already has the group.
+    if existing && text == before {
+        return Ok(WriteOutcome::Written {
+            revision: Revision::of(&text),
+        });
     }
     write_replacing(path, &text)?;
     Ok(WriteOutcome::Written {
@@ -351,8 +414,12 @@ pub fn apply_claim(
     })
 }
 
-/// The text with one edit applied.
-fn splice(text: &str, edit: &ConfigEdit, path: &Path) -> Result<String, ConfigError> {
+/// The text with one edit applied, or `None` when the edit had nothing to say.
+///
+/// `None` comes from one arm only — [`ConfigEdit::if_absent`] meeting a member that is already
+/// there — and it is `None` rather than the unchanged text so that a submission can be spliced
+/// without a copy per no-op, and so that "this edit wrote nothing" is a fact the loop can see.
+fn splice(text: &str, edit: &ConfigEdit, path: &Path) -> Result<Option<String>, ConfigError> {
     let value = edit.rendered_value();
     let root = scan(text, path)?;
     let (last, parents) = edit.path.split_last().expect("checked by ConfigEdit::set");
@@ -381,10 +448,21 @@ fn splice(text: &str, edit: &ConfigEdit, path: &Path) -> Result<String, ConfigEr
         // The span is the *value's*, so the member's name, its position, the comments around it and
         // every other byte of the document are untouched. The value itself is the caller's
         // serialization — that is what "set this member to this value" means.
-        Some(entry) => Ok(splice_at(text, entry.value.start, entry.value.end, &value)),
+        //
+        // An edit that may only add returns here instead, leaving the member the document already
+        // has — and every byte of it — alone. Not an error: the caller asked for the state that is
+        // already on disk, which for the group a form has to be sure of is the ordinary case on
+        // every run after the first one.
+        Some(_) if edit.only_when_absent => Ok(None),
+        Some(entry) => Ok(Some(splice_at(
+            text,
+            entry.value.start,
+            entry.value.end,
+            &value,
+        ))),
         None => {
             let (at, insertion) = member_insertion(text, object, last, &value);
-            Ok(splice_at(text, at, at, &insertion))
+            Ok(Some(splice_at(text, at, at, &insertion)))
         }
     }
 }

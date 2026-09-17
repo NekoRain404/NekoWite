@@ -41,6 +41,12 @@ import { invoke } from '@tauri-apps/api/core'
 export interface AgentConfigEditRequest {
   readonly path: readonly string[]
   readonly value: unknown
+  /**
+   * The backend's `ifAbsent`: add this member where the document has not spoken, and leave the
+   * document alone where it has. Omitted means the plain `set` — the arm is opt-in, and a caller
+   * that has no group to establish does not name it.
+   */
+  readonly ifAbsent?: boolean
 }
 
 /**

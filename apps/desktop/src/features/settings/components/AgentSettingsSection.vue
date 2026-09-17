@@ -163,6 +163,18 @@ const skillsClient = computed(() =>
 )
 
 /**
+ * The provider form's client — the model fetch and the credential write — behind the same gate and
+ * for the credential client's own reason one step further in: this one *writes a key* into one
+ * profile's credential file, and reads a model list for an address typed on that profile's page. A
+ * client built for a guessed pair would be a credential put where the user is not looking.
+ */
+const authoringClient = computed(() =>
+  identity.value === null
+    ? null
+    : props.clients.providerAuthoring(identity.value.agentId, identity.value.profileId),
+)
+
+/**
  * The credential write, behind the same gate and for its own reason.
  *
  * What it writes is a key *into one profile's file*, so a client built for a guessed pair would be
@@ -278,8 +290,9 @@ const gaps = [
            for the same reason; the page states its own three absences rather than this file
            deciding which of them applies. -->
       <AgentConfigurationSettings
-        v-if="configClient"
+        v-if="configClient && authoringClient"
         :client="configClient"
+        :authoring="authoringClient"
       />
       <!-- §8.2's page, in the tree's own order (after the configuration document, before the
            permission table). It had no mount point at all before this: `skills.rs` was complete and

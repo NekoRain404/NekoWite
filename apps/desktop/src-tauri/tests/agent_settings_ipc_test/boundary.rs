@@ -100,6 +100,9 @@ fn a_profile_that_reuses_the_users_own_configuration_refuses_writes() {
         &[EditSubmission {
             path: vec!["model".to_string()],
             value: json!("nope"),
+            // The plain `set` this test has always submitted: `ifAbsent` is the provider form's
+            // arm, and a submission that does not name it means the other one.
+            if_absent: false,
         }],
     )
     .unwrap_err();
@@ -115,6 +118,9 @@ fn a_profile_that_reuses_the_users_own_configuration_refuses_writes() {
         &[EditSubmission {
             path: vec!["model".to_string()],
             value: json!("nope"),
+            // The plain `set` this test has always submitted: `ifAbsent` is the provider form's
+            // arm, and a submission that does not name it means the other one.
+            if_absent: false,
         }],
     )
     .unwrap_err()

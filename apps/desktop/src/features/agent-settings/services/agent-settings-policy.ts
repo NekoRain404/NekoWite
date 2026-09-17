@@ -323,6 +323,17 @@ function isUsableName(value: string | null): boolean {
 export interface ConfigEdit {
   path: string[]
   value: unknown
+  /**
+   * Whether this member may only be *added* — the backend's `ConfigEdit::if_absent`, which leaves a
+   * member that is already there, and every byte around it, exactly as it was found.
+   *
+   * Absent means the plain `set` the editor has always sent. The arm exists for one shape: a form
+   * that has to write a member *inside* a group — a provider block lives inside `provider` — has to
+   * be able to put the group there without replacing the ones a document already holds, and a plain
+   * `set` of the group would delete every provider in it. An edit that writes nothing is not a
+   * rewrite either: the backend answers the revision that is already on disk and touches no bytes.
+   */
+  ifAbsent?: boolean
 }
 
 /** What the backend said about the document, before the user touched it. */

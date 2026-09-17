@@ -61,6 +61,8 @@ export type { AgentConfigLabels } from './agent-config-labels'
 import { computed, onMounted, ref } from 'vue'
 
 import { configLabels, type AgentConfigLabels } from './agent-config-labels'
+import AgentProviderAuthoring from './AgentProviderAuthoring.vue'
+import type { AgentProviderAuthoringClient } from '../services/agent-provider-authoring'
 import {
   configEditor,
   configRefusalMessage,
@@ -73,6 +75,20 @@ import type { AgentConfigClient, AgentConfigReadout } from '../services/agent-co
 
 const props = defineProps<{
   client: AgentConfigClient
+  /**
+   * The provider form's other two calls: the endpoint's model list, and the credential write.
+   *
+   * A second client rather than two more methods on the document's, for the reason
+   * `AgentProviderSettings.vue` gives for its own pair — a model list is a request to somebody else's
+   * server and a credential is a different resource with a different answer, and neither is a
+   * document edit. It is built for the same (engine, profile) pair at the composition site, so this
+   * page never decides which profile it is writing into.
+   *
+   * Required, so a caller that forgets it is a compile error at the composition site rather than a
+   * page that quietly draws one control fewer; the template checks it at runtime because a test may
+   * mount this page with the document's client alone.
+   */
+  authoring: AgentProviderAuthoringClient
   labels?: AgentConfigLabels
 }>()
 
@@ -128,6 +144,26 @@ async function load(): Promise<void> {
   } catch {
     // "This host owns no document for this profile" is a fact about the profile; a failed read is a
     // fact about the connection. The two lead to different next moves, so they are different states.
+    state.value = 'unreadable'
+  }
+}
+
+/**
+ * Re-read the document after a write, without the first read's loading state.
+ *
+ * The reason is the one `AgentProviderSettings.vue` gives for its own `refresh`: the pages below are
+ * on screen, and a read for a revision nobody asked about must not blank them. Here it is not only
+ * cosmetic — the loading arm replaces the document's whole block, so the provider form is unmounted
+ * and comes back with empty fields, which would lose the address and the model list the user had
+ * just saved. A read that does not complete falls back to the unreadable state, which is this page's
+ * answer to exactly that: the values on screen are then the ones from before the write, and saying
+ * so is better than leaving them looking current.
+ */
+async function refresh(): Promise<void> {
+  try {
+    readout.value = await props.client.read()
+    state.value = 'ready'
+  } catch {
     state.value = 'unreadable'
   }
 }
@@ -295,6 +331,21 @@ onMounted(load)
           </span>
         </div>
       </form>
+
+      <!-- The structured half, over the same document and behind the same arm: the one member a raw
+           editor is genuinely bad at is a provider block, which is a nest of members whose names the
+           engine owns. It writes the same thing this form's member editor would — one member at the
+           revision that was read — and the two cannot disagree, because the value it shows is the
+           value it submits (`agent-provider-block.ts` builds both). It is absent when there is no
+           client for the calls it makes, which is a page mounted without a composition site rather
+           than a state a user reaches. -->
+      <AgentProviderAuthoring
+        v-if="(editor.kind === 'editable' || editor.kind === 'creatable') && authoring && document"
+        :client="props.client"
+        :authoring="authoring"
+        :document="document"
+        @reload="refresh"
+      />
     </template>
   </section>
 </template>

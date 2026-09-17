@@ -94,6 +94,12 @@ import { createAgentSkillsClient } from '../features/agent-settings/services/age
 import type { AgentSkillsClient } from '../features/agent-settings/components/AgentSkillsSettings.vue'
 import { createAgentCredentialClient } from '../features/agent-settings/services/agent-credential-ipc'
 import type { AgentCredentialClient } from '../features/agent-settings/services/agent-credential-ipc'
+import {
+  createAgentProviderAuthoringClient,
+  type AgentProviderAuthoringClient,
+  type ProviderModelCommands,
+} from '../features/agent-settings/services/agent-provider-authoring'
+import { tauriAiPort } from '../platform/gateways/tauri'
 import { createAgentRuntimeClient } from '../features/agent-settings/services/agent-runtime-ipc'
 import type { AgentRuntimeClient } from '../features/agent-settings/components/AgentRuntimeSettings.vue'
 
@@ -160,6 +166,21 @@ export interface AgentSettingsClients {
    */
   readonly credentials: (agentId: string, profileId: string) => AgentCredentialClient
   /**
+   * The provider form's two other calls, for one engine/profile pair.
+   *
+   * A builder for the same reason the three above it are, and it is the fourth of them for one pair:
+   * what it writes is a key *into one profile's credential file* and what it reads is a model list
+   * for an address the user typed on that profile's page. A client that could be asked about another
+   * pair would be a credential put where the user is not looking, which is exactly the §8.1 failure
+   * `credentials` exists to make unrepresentable.
+   *
+   * It is handed the same {@link AgentSettingsClients.credentials} client the credentials section
+   * uses — one patch, one rule about what a submission may contain — and the window's own AI port for
+   * the model list, because 「获取模型」 is the same `GET {base}/models` this app already makes for its
+   * own AI. `agent-provider-authoring.ts` is where that reuse and its two differences are argued.
+   */
+  readonly providerAuthoring: (agentId: string, profileId: string) => AgentProviderAuthoringClient
+  /**
    * The runtime page's client: what this app's engine connection is, for a caller with no session.
    *
    * A value rather than a builder, like {@link AgentSettingsClients.catalogue}, and for a reason of
@@ -189,6 +210,11 @@ export interface AgentSettingsDeps {
   skillsCommands?: AgentSkillsCommands
   credentialCommands?: AgentCredentialCommands
   runtimeCommands?: AgentRuntimeCommands
+  /**
+   * The model-list port the provider form fetches through. Substitutable like the rest, so a test can
+   * drive the client against a list of ids rather than against a network.
+   */
+  modelCommands?: ProviderModelCommands
 }
 
 /** Build the settings tree's clients over the window's own commands. */
@@ -233,6 +259,20 @@ export function createAgentSettingsClients(deps: AgentSettingsDeps = {}): AgentS
         profile: provider,
         agentId,
         profileId,
+      }),
+    // The same credential client, one page over: the provider form stores the key it was given and
+    // nothing else, so it goes through the patch rule the credentials section already enforces rather
+    // than beside it. The model list is the window's own AI port — one command, `ai_list_models`,
+    // which is the same `GET {base}/models` the AI settings page's refresh button calls.
+    providerAuthoring: (agentId: string, profileId: string) =>
+      createAgentProviderAuthoringClient({
+        models: deps.modelCommands ?? tauriAiPort,
+        credentials: createAgentCredentialClient({
+          wire: deps.credentialCommands ?? createTauriAgentCredentialCommands(),
+          profile: provider,
+          agentId,
+          profileId,
+        }),
       }),
     // No builder and no pair, like the catalogue above: this page reads the engine this app starts
     // and the process it has running, and neither is chosen by the page that draws it.

@@ -90,6 +90,23 @@ export const agent = {
           /* An engine that names a further page has not shown the whole table, and a list that
              read as complete would be the one answer worse than a short one. */
           more: 'This is the first page. The engine named more sessions after these.',
+          /* The find box over the rows. It narrows what the engine already sent and asks the
+             engine nothing (`filterSessionRows`), which is why `noMatch` is a sentence about this
+             search rather than about the engine's table: this app has not looked for such a
+             session and must not say the engine holds none. */
+          search: {
+            label: 'Search these sessions',
+            placeholder: 'Search these sessions...',
+            clear: 'Clear the search',
+            noMatch: 'No session matches',
+          },
+          /* The one entry in this list that is not a row: a new session on the same engine. The
+             note is the consequence, and it is what a reader needs before pressing — the session
+             they are in is neither replaced nor taken away by this. */
+          newSession: {
+            label: 'New session',
+            note: 'Starts a new session on this engine. The one open now keeps running and stays in this list.',
+          },
           untitled: 'The engine sent no title for this session',
           current: 'Open now',
           elsewhere: 'Recorded in another folder: {cwd}',
@@ -138,6 +155,14 @@ export const agent = {
           thoughtOpen: 'Hide the reasoning',
           thoughtClosed: 'Show the reasoning',
           jump: 'Back to the end',
+          /* The follow switch. Both sentences name the action the press will take rather than the
+             state the control is in — `aria-pressed` says which state that is, and a tooltip that
+             repeated it would leave a reader who has never used the control with no answer to the
+             only question they have. `follow` names the switch for a screen reader while it is
+             off, and stops being reachable the moment it is on (`followStop` takes over), so the
+             accessible name is always the action. */
+          follow: 'Follow the newest output',
+          followStop: 'Stop following the newest output',
           tool: {
             status: {
               pending: 'Queued',
@@ -616,7 +641,7 @@ export const agent = {
             fetch: 'Fetch models',
             fetching: 'Asking the endpoint…',
             fetched: '{n} models listed by the endpoint.',
-            fetchNeedsKey: 'The model list is fetched with the key in the field above, so it has to be there first. With an empty field the app would send the key it has stored for its own AI instead, and the list would be about a credential the engine never uses.',
+            fetchNeedsKey: 'The list is fetched with the key in the field above, so it has to be there first. With the field empty, the request would go out with the key this app has stored for its own AI provider — or with none at all — and the answer would be about an address reached with a credential the engine never uses.',
             fetchFailed: 'The endpoint could not be reached.',
             models: 'Models',
             modelsEmpty: 'No models yet. Fetch them from the endpoint, or type an id below.',
@@ -626,6 +651,7 @@ export const agent = {
             preview: 'What this saves',
             previewHint: 'The value of provider.{id}, exactly as it is written. What this page shows is what is sent — nothing is added to it afterwards.',
             save: 'Save provider',
+            replaces: 'Saving with an id the file already has replaces that provider’s block — the other providers, and every comment around them, are still left alone.',
             problem: 'Nothing was written: {reason}',
             credentialFailed: 'The key could not be stored, so nothing was written to the document either. {reason}',
             editFailed: 'The provider could not be written to the document. {reason}',
@@ -937,6 +963,54 @@ export const agent = {
           discard: 'Keep my version',
           kept: 'Your text is handed back to the window either way: applying replaces it in the note, and nothing else holds a copy.',
         },
+        /* §7.3's insertion: the SVG the run staged for this note, verified before anything is
+           drawn. `where` says the spot out loud — an image placed at the end of a document rather
+           than at the caret is a decision, and a reader who was not told would think the app had
+           put it where they were looking. */
+        svg: {
+          row: 'The agent produced {name} for this note',
+          verified: 'Verified preview. The file is copied into this vault as it is; what is below is what the checks allowed.',
+          where: 'It will be placed at the end of this note.',
+          name: 'File name',
+          insert: 'Put it in this note',
+          discard: 'Leave it out',
+          previewAlt: 'Preview of {name}',
+          /* Why the artifact may not be previewed. Codes in, sentences out: each names the thing
+             that is wrong rather than echoing the value that was refused, which would only put the
+             hostile string in front of the reader. */
+          unreadable: 'The file the agent wrote could not be read, so nothing is offered for it.',
+          refused: {
+            notSvg: 'That file is not an SVG.',
+            tooLarge: 'That file is larger than this app will parse ({size} of {limit} bytes).',
+            incompleteRead: 'That file is still being written: it declares {size} bytes and {read} were read.',
+            declaration: 'That file carries a {kind} declaration, which this app does not hand to a parser.',
+            malformed: 'That file is not well-formed XML.',
+            tooComplex: 'That file has more elements ({elements}) than this app will walk ({limit}).',
+            tooDeep: 'That file nests deeper ({depth}) than this app will descend ({limit}).',
+            foreignNamespace: '{element} belongs to another XML vocabulary ({namespace}).',
+            unsafeElement: '{element} is not on the list of elements this app renders.',
+            unsafeAttribute: '{element} carries {attribute}, which this app does not render.',
+            externalReference: '{element} points at {attribute}, which would make the preview fetch something.',
+          },
+          /* Why nothing was placed. The first is the ordinary case and says the whole of it: the
+             note is untouched. The rest name what has to change before it can be. */
+          outcome: {
+            inserted: 'The image is in this note and the file is in the vault.',
+            moveFailed: 'The image was not copied into the vault, so the note was left alone.',
+            moveElsewhere: 'The vault named the file {saved} rather than {planned}, so the note was left alone.',
+            noteWriteFailed: 'The image is in the vault, but the note could not be saved with the link in it.',
+            noteNotOpen: 'No tab holds this note any more, so there was nowhere to put it.',
+            targetChanged: 'The editor answered about a different note than the one asked about.',
+            vaultMismatch: 'This note belongs to another vault than the session the plan was made under.',
+            anchorOutOfRange: 'The spot this was being placed at is not in the note.',
+            identityChanged: 'The session that produced this artifact is not the session this window is on any more.',
+            revisionChanged: 'The note was edited while the image was being placed. Nothing was inserted.',
+            anchorMoved: 'The text at the spot this was being placed at changed. Nothing was inserted.',
+            invalidFileName: 'That is not a usable file name.',
+            nameUnavailable: 'That name is taken in this folder, and no free variant of it was found.',
+            attachmentNotSaved: 'The file is not in the vault, so the note was left alone.',
+          },
+        },
       },
     },
   },
@@ -1010,6 +1084,16 @@ export const agent = {
           empty: '该引擎没有保存任何会话。',
           unreadable: '未能读取该引擎的会话列表：{reason}',
           more: '这只是第一页，引擎在后面还列出了更多会话。',
+          search: {
+            label: '搜索这些会话',
+            placeholder: '搜索这些会话……',
+            clear: '清除搜索',
+            noMatch: '没有匹配的会话',
+          },
+          newSession: {
+            label: '新会话',
+            note: '在该引擎上开始一个新会话。当前打开的会话会继续运行，并保留在这个列表中。',
+          },
           untitled: '引擎没有为该会话提供标题',
           current: '当前打开',
           elsewhere: '记录在另一个文件夹中：{cwd}',
@@ -1043,6 +1127,10 @@ export const agent = {
           thoughtOpen: '收起思考过程',
           thoughtClosed: '展开思考过程',
           jump: '回到末尾',
+          /* 跟随开关。两句写的都是按下之后会发生什么，而不是当前处于什么状态——状态由
+             `aria-pressed` 说明，提示语再重复一遍只会让第一次用这个控件的读者得不到答案。 */
+          follow: '跟随最新输出',
+          followStop: '停止跟随最新输出',
           tool: {
             status: {
               pending: '排队中',
@@ -1430,7 +1518,7 @@ export const agent = {
             fetch: '获取模型',
             fetching: '正在请求服务商……',
             fetched: '服务商列出了 {n} 个模型。',
-            fetchNeedsKey: '模型列表是用上面那栏里的密钥去获取的，所以要先填密钥。留空的话，本应用会拿自己 AI 设置里存的密钥去请求，取回的列表就属于一个引擎根本不会用的凭据。',
+            fetchNeedsKey: '这个列表是用上面那栏里的密钥去获取的，所以要先填密钥。留空的话，请求会带上本应用自己 AI 设置里存的密钥——或者干脆不带认证——取回的结果就属于一次用「引擎根本不会用的凭据」发出的请求。',
             fetchFailed: '没能连上服务商。',
             models: '模型',
             modelsEmpty: '还没有模型。从服务商获取，或者在下面手动填一个标识。',
@@ -1440,6 +1528,7 @@ export const agent = {
             preview: '将要保存的内容',
             previewHint: 'provider.{id} 的值，与写入时完全一致。这里显示什么就发送什么，之后不会再添加别的东西。',
             save: '保存供应商',
+            replaces: '如果文件里已经有这个标识，保存会用新内容替换那个供应商的块——其他供应商和它们周围的注释依旧一个字节都不动。',
             problem: '什么都没写入：{reason}',
             credentialFailed: '密钥没能存下去，因此文档也没有写入。{reason}',
             editFailed: '供应商没能写进文档。{reason}',
@@ -1706,6 +1795,45 @@ export const agent = {
           apply: '采用智能体的版本',
           discard: '保留我的版本',
           kept: '无论选哪个，你的文字都会交回给窗口：应用会把它从笔记里替换掉，除此之外没有别处保存它。',
+        },
+        svg: {
+          row: '智能体为这篇笔记产出了 {name}',
+          verified: '已通过校验的预览。文件会原样复制进这个库；下面显示的是各项检查放行的内容。',
+          where: '它会被放在这篇笔记的末尾。',
+          name: '文件名',
+          insert: '放进这篇笔记',
+          discard: '不放进',
+          previewAlt: '{name} 的预览',
+          unreadable: '读不到智能体写出的那个文件，因此不为它提供任何操作。',
+          refused: {
+            notSvg: '那个文件不是 SVG。',
+            tooLarge: '那个文件比本应用愿意解析的上限还大（{size}／{limit} 字节）。',
+            incompleteRead: '那个文件还在写入：它声明有 {size} 字节，实际读到 {read} 字节。',
+            declaration: '那个文件带有 {kind} 声明，本应用不会把它交给解析器。',
+            malformed: '那个文件不是良构的 XML。',
+            tooComplex: '那个文件的元素数（{elements}）超过本应用愿意遍历的上限（{limit}）。',
+            tooDeep: '那个文件的嵌套深度（{depth}）超过本应用愿意下探的上限（{limit}）。',
+            foreignNamespace: '{element} 属于另一个 XML 词汇表（{namespace}）。',
+            unsafeElement: '{element} 不在本应用绘制元素的名单上。',
+            unsafeAttribute: '{element} 带有 {attribute}，本应用不绘制它。',
+            externalReference: '{element} 指向 {attribute}，那会让预览去取外部内容。',
+          },
+          outcome: {
+            inserted: '图片已经在笔记里，文件也已经在库里。',
+            moveFailed: '图片没有复制进库里，因此笔记保持原样。',
+            moveElsewhere: '库把文件命名为 {saved}，而不是 {planned}，因此笔记保持原样。',
+            noteWriteFailed: '图片已经在库里，但这篇笔记没能带着链接保存成功。',
+            noteNotOpen: '已经没有标签页打开这篇笔记了，无处可放。',
+            targetChanged: '编辑器回答的是另一篇笔记，不是被问的那一篇。',
+            vaultMismatch: '这篇笔记属于另一个库，与该计划产生时的会话不是同一个。',
+            anchorOutOfRange: '要放置的位置不在这篇笔记里。',
+            identityChanged: '产出这个文件的会话已经不是这个窗口当前所在的会话。',
+            revisionChanged: '放置图片期间这篇笔记被编辑过，因此什么都没有插入。',
+            anchorMoved: '要放置的位置上的文字变了，因此什么都没有插入。',
+            invalidFileName: '那不是可用的文件名。',
+            nameUnavailable: '那个名字在这个文件夹里已被占用，也没有找到可用的变体。',
+            attachmentNotSaved: '文件不在库里，因此笔记保持原样。',
+          },
         },
       },
     },

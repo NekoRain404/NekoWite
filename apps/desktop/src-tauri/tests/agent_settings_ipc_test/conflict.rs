@@ -83,6 +83,7 @@ fn the_same_race_through_the_ipc_surface_reports_a_conflict_and_reloads() {
     let edits = vec![EditSubmission {
         path: vec!["model".to_string()],
         value: json!("first/model"),
+        if_absent: false,
     }];
     let written = submit_document(
         &store,
@@ -253,6 +254,7 @@ fn a_create_that_loses_its_race_is_told_rather_than_overwriting_what_appeared() 
     let edits = vec![EditSubmission {
         path: vec!["model".to_string()],
         value: json!("winner/model"),
+        if_absent: false,
     }];
     let written = submit_document(&store, "engine-alpha", "alpha", RELATIVE, None, &edits).unwrap();
     assert_eq!(written["status"], "written");
@@ -270,6 +272,7 @@ fn a_create_that_loses_its_race_is_told_rather_than_overwriting_what_appeared() 
         &[EditSubmission {
             path: vec!["model".to_string()],
             value: json!("loser/model"),
+            if_absent: false,
         }],
     )
     .unwrap();

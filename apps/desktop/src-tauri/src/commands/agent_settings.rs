@@ -70,11 +70,20 @@ pub struct ProfileSubmission {
 
 /// One member a settings form changed, as the editor submits it: a path and a value, never a
 /// document. A request that carried the whole file is not something this surface can express.
+///
+/// `ifAbsent` is the one thing a submission may say about *an existing member*, and it says nothing
+/// about the value: it is [`ConfigEdit::if_absent`]'s arm, which adds a member where the document
+/// has not spoken and leaves the document byte for byte where it has. It is what lets a form that
+/// writes inside a group — a provider block lives inside `provider` — put the group there without
+/// replacing the ones a user already has. Defaulted, because a request that omits it means the
+/// plain `set` it has always meant.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EditSubmission {
     pub path: Vec<String>,
     pub value: Value,
+    #[serde(default)]
+    pub if_absent: bool,
 }
 
 /// One change to the credential set, as the settings form sends it.
@@ -184,9 +193,20 @@ pub fn submit_document(
     let path = profile
         .document_path(relative)
         .map_err(|error| refusal_message(&error))?;
+    // Which of the two arms a submitted edit is, decided by the flag and by nothing else — the
+    // values are the caller's either way, and the difference is what may happen to a member the
+    // document already has.
     let edits = edits
         .iter()
-        .map(|edit| ConfigEdit::set(edit.path.clone(), edit.value.clone()))
+        .map(|edit| {
+            let path = edit.path.clone();
+            let value = edit.value.clone();
+            if edit.if_absent {
+                ConfigEdit::if_absent(path, value)
+            } else {
+                ConfigEdit::set(path, value)
+            }
+        })
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| refusal_message(&error.into()))?;
     let outcome = config_edit::apply_claim(&path, expected.as_ref(), &edits)

@@ -280,6 +280,16 @@ beforeEach(() => {
         return catalogueReadout()
       case 'agent_runtime_read':
         return runtimeReadout()
+      // The two calls the provider form makes, and the one it writes through. `ai_list_models` is
+      // the same command the AI settings page's refresh button calls — it is here as that command,
+      // with the shape the form builds for it, because "the same fetch serves both" is a claim
+      // about the wire rather than about a function two pages happen to share.
+      case 'ai_list_models':
+        return ['deepseek-v4-flash', 'deepseek-v4.1-flash', 'glm-5.2']
+      case 'agent_credentials_write':
+        return profileReadout(revision)
+      case 'agent_config_edit':
+        return { status: 'written', revision: 'c'.repeat(64) }
       case 'agent_profile_write': {
         // The backend's own behaviour, in three lines: the write is applied at the revision the
         // form read, and applying it moves the revision — which is what makes a stale form's next
@@ -363,6 +373,15 @@ function switchInput(): HTMLInputElement {
 
 function el(dataTest: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(`[data-test="${dataTest}"]`)
+}
+
+/** Type into a field the way a user does: the value, then the event Vue's `v-model` listens for. */
+async function type(dataTest: string, value: string): Promise<void> {
+  const field = document.querySelector<HTMLInputElement>(`[data-test="${dataTest}"]`)
+  if (!field) throw new Error(`no field ${dataTest}`)
+  field.value = value
+  field.dispatchEvent(new Event('input'))
+  await nextTick()
 }
 
 async function openAgents(): Promise<void> {
@@ -634,6 +653,74 @@ describe('the agents section in the settings dialog', () => {
       'agent_profile_write',
       expect.objectContaining({ revision: 'r2' }),
     )
+  })
+
+  it('configures a provider from the dialog, and the key reaches no document', async () => {
+    // The gesture the whole feature exists for, driven through the real dialog: the section builds
+    // the client over the window's own commands (`createAgentSettingsClients`), so what this proves
+    // is that a user with this build can type an address, fetch its models and save a provider
+    // without writing JSONC by hand — and that the mode (which document, which profile) is the one
+    // the registry answered with rather than anything the page decided.
+    await openAgents()
+    await untilDom(() => el('provider-authoring') !== null, 'the provider form')
+
+    await type('provider-form-id', 'iapp')
+    await type('provider-form-name', 'iApp Gateway')
+    await type('provider-form-base-url', 'https://ai.example.org/v1')
+    await type('provider-form-api-key', 'sk-not-a-real-key')
+
+    el('provider-form-fetch')?.click()
+    await untilDom(() => asked.includes('ai_list_models'), 'the model fetch')
+    // The fetch carries the key that was typed and the address that was typed, and nothing this app
+    // holds for its own AI: the command backfills a missing key from its own vault, so a request
+    // without one would answer about a credential the engine never uses.
+    expect(invokeMock).toHaveBeenCalledWith('ai_list_models', {
+      config: expect.objectContaining({
+        provider: 'custom',
+        base_url: 'https://ai.example.org/v1',
+        api_key: 'sk-not-a-real-key',
+      }),
+    })
+    await untilDom(() => el('provider-form-model-deepseek-v4.1-flash') !== null, 'the fetched models')
+
+    // Read the preview *before* the save: it is a statement about what is on screen when the user
+    // presses the button, and a save that lands deliberately empties the key field.
+    const shown = JSON.parse(el('provider-form-preview')?.textContent ?? '{}') as unknown
+    el('provider-form-save')?.click()
+    await untilDom(() => asked.includes('agent_config_edit'), 'the document write')
+
+    expect(invokeMock).toHaveBeenCalledWith('agent_credentials_write', {
+      agentId: 'bundled-engine',
+      profileId: 'default',
+      changes: [{ op: 'set', name: 'NWK_IAPP_API_KEY', value: 'sk-not-a-real-key' }],
+    })
+    const edit = invokeMock.mock.calls.find((call) => call[0] === 'agent_config_edit')?.[1] as {
+      agentId: string
+      relative: string
+      revision: string
+      edits: { path: string[]; value: unknown; ifAbsent?: boolean }[]
+    }
+    expect(edit.agentId).toBe('bundled-engine')
+    expect(edit.relative).toBe('XDG_CONFIG_HOME/opencode/opencode.json')
+    expect(edit.revision).toBe('r1')
+    expect(edit.edits[0]).toEqual({ path: ['provider'], value: {}, ifAbsent: true })
+    expect(edit.edits[1]?.path).toEqual(['provider', 'iapp'])
+    const value = edit.edits[1]?.value as { options: Record<string, unknown>; models: object }
+    expect(value.options).toEqual({
+      baseURL: 'https://ai.example.org/v1',
+      apiKey: '{env:NWK_IAPP_API_KEY}',
+    })
+    expect(Object.keys(value.models)).toEqual(['deepseek-v4-flash', 'deepseek-v4.1-flash', 'glm-5.2'])
+    // The value on screen was the value sent, and the key is in neither.
+    expect(JSON.stringify(edit.edits)).not.toContain('sk-not-a-real-key')
+    expect(shown).toEqual(edit.edits[1]?.value)
+    // And the save did not take the rest of the form with it: the reload behind it re-reads the
+    // document without blanking the page, so the address and the model list are still there for a
+    // second provider — while the key, which is stored now, is not.
+    expect(document.querySelector<HTMLInputElement>('[data-test="provider-form-base-url"]')?.value).toBe(
+      'https://ai.example.org/v1',
+    )
+    expect(document.querySelector<HTMLInputElement>('[data-test="provider-form-api-key"]')?.value).toBe('')
   })
 
   it('says why the profile page is missing when the registry cannot be read', async () => {
