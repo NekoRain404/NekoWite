@@ -68,7 +68,7 @@ export interface AgentComposerSelection {
  *    anywhere outside it closes the list, so the editor cannot be re-entered underneath.
  *  - **It does not read the session's own state.** Only the vault, and only to list it: the rows are
  *    the folder's, the draft is the composer's, and no frame, run or permission is touched. The vault
- *    arrives as a prop — {@link props.vault}, the session's own, handed down by the panel that holds
+ *    arrives as a prop — {@link vault}, the session's own, handed down by the panel that holds
  *    it — rather than read from the store's active record, which is a *window-wide pointer* rather
  *    than the session in front of the reader: `app/pet-task-link.ts` moves it to the session its task
  *    names while the rail keeps the session it was on, so a listing taken from it would be a folder

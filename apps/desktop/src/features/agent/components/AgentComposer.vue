@@ -189,7 +189,7 @@ let composedAt = Number.NEGATIVE_INFINITY
 /**
  * What the message is carrying, and the three intakes that put something there.
  *
- * The vault is a prop — the panel's own session's, see {@link props.vault} — and every reader below
+ * The vault is a prop — the panel's own session's, see {@link vault} — and every reader below
  * resolves against it: `attachments` reads it when a file is picked or pasted, `onDrop` reads it for
  * a dragged path, the `+`'s listing reads it, and the `@` menu reads it.
  */

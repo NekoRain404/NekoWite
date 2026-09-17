@@ -7,7 +7,7 @@
  * file is the part that talks to a gateway and the part that remembers what belongs to one
  * session rather than to a window: the draft and the scroll position
  * (§5.1 「每会话独立草稿、滚动位置」). The third member of that sentence, the unread flag, is
- * gone — {@link useAgentSessionStore}'s `focus` carries the argument.
+ * gone — `focus` below carries the argument.
  *
  * The gateway arrives as an argument rather than an import. This module is where the
  * feature meets whichever adapter is behind `AgentGateway`, and the adapter is chosen at
