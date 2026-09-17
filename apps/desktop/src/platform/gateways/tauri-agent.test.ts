@@ -33,7 +33,6 @@ import {
   type AgentSession,
 } from './agent-contracts'
 import { createTauriAgentGateway, createTauriAgentIpc, mapHostFrame, ToolProjection } from './tauri-agent'
-import { readHostState } from './tauri-agent/channel'
 import type { AgentIpc, AgentHostSnapshot } from './tauri-agent/ipc'
 
 // ---------------------------------------------------------------------------
@@ -896,21 +895,6 @@ describe('the host’s session state', () => {
     expect(snapshot.sequence).toBe(7)
     expect(snapshot.events).toHaveLength(1)
     expect((snapshot.events[0].payload as { text: string }).text).toBe('the tail')
-  })
-
-  it('accepts every state the contract’s union names, read off the contract itself', () => {
-    // The list in `channel.ts` is written out by hand because the contract exports the type and no
-    // runtime list, so the two are one fact in two places — and a name the contract declares but
-    // the boundary refuses would cost the whole snapshot for a state the contract calls legal.
-    // The union is read from its source rather than restated here, so what fails is the drift and
-    // not a second copy of the same list.
-    const contract = readFileSync(resolve(__dirname, 'agent-contracts/gateway.ts'), 'utf8')
-    const start = contract.indexOf('export type AgentSessionState =')
-    expect(start, 'AgentSessionState is not declared in agent-contracts/gateway.ts').toBeGreaterThan(-1)
-    const union = contract.slice(start, contract.indexOf('\n\n', start))
-    const states = [...union.matchAll(/'([a-z-]+)'/g)].map(([, state]) => state)
-    expect(states.length, 'the contract’s state union parsed to nothing').toBeGreaterThan(0)
-    for (const state of states) expect(readHostState(state)).toBe(state)
   })
 
   it('costs the snapshot and not the stream: a subscription continues while the state is refused', async () => {

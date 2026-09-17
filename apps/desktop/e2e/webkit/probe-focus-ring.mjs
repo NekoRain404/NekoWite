@@ -43,9 +43,19 @@
 import { until } from './webdriver.mjs'
 import { INSTRUMENTS, KEY, RAIL_TITLES, load } from './agent-scroll-instrument.mjs'
 import { clickStatusButton, pressKeys } from './agent-scroll-driver.mjs'
+import { clickByText } from './probe-support.mjs'
 
 /** `--violate ringless`: the indicator suppressed in the page, so the checks can be shown red. */
 const VIOLATION = 'ringless'
+
+/**
+ * The graph view's entry in the sidebar's navigation, as `nav.graph` spells it in the language the
+ * harness boots in (`harness.html` writes `nekowite.locale = 'en'` before the app reads it). It is
+ * a label rather than a selector because the navigation carries no id in the DOM — the entry's own
+ * `id` is a key in a Vue list, not an attribute — and a reader reaches this view by reading that
+ * label, so the probe does too.
+ */
+const GRAPH_NAV = 'Graph'
 
 function violation() {
   const i = process.argv.indexOf('--violate')
@@ -65,6 +75,13 @@ const PAGE_SURFACES = [
   { name: 'agent transcript', sel: '.agent-timeline', page: 'agent' },
   { name: 'permission arguments', sel: '.agent-perm-args', page: 'agent' },
   { name: 'chat transcript', sel: '.chat-scroll', page: 'chat' },
+  // The two the first run of this probe reported and did not own (`src/ui/TabBar.vue`'s roving
+  // tab stop, `features/graph`'s canvas). Both are on the page the harness boots — the tab bar is
+  // the shell's own, and the graph is the note list column's third body — so both are read on the
+  // product's own screens rather than mounted. `prep` is what has to happen before the reading,
+  // and it is a pointer gesture, which is why it runs with the rail's click and not in the loop.
+  { name: 'tab bar tab', sel: '.tab-bar .tab', page: 'app' },
+  { name: 'graph canvas', sel: '.graph-canvas', page: 'app', prep: 'graph' },
 ]
 
 /**
@@ -307,6 +324,42 @@ export const focusRingProbe = {
       out.railFailure = String(error.message || error)
     }
 
+    // The graph's canvas, reached the way a reader reaches it: the sidebar's own entry, which
+    // switches the note list column's body. A pointer gesture, so it belongs here with the rail's
+    // click and not in the reading loop — and it is a page reading, on the product's own panel over
+    // the product's own vault, rather than a mount of a component nothing hosts.
+    if (PAGE_SURFACES.some((s) => s.prep === 'graph')) {
+      const onGraph = await wd.execute(`return Boolean(document.querySelector('.graph-canvas'))`)
+      if (onGraph) {
+        out.graph = { ok: true, alreadyOpen: true }
+      } else {
+        try {
+          await clickByText(wd, '.nav-item', GRAPH_NAV)
+          await until(
+            () => wd.execute(`return Boolean(document.querySelector('.graph-canvas'))`),
+            { timeout: 20_000, what: 'the graph panel to mount' },
+          )
+          out.graph = { ok: true }
+        } catch (error) {
+          // Reported, not thrown: a reading that could not be set up is a surface the run says it
+          // did not measure, and the failure below names the reason rather than going quiet.
+          out.graph = { ok: false, why: String(error.message || error) }
+        }
+      }
+      // What the panel drew, so the ring is not the only thing on this page that was read: the
+      // canvas is drawn into rather than filled with child nodes, so the count is the graph's own.
+      out.graphReading = await wd.execute(
+        `const canvas = document.querySelector('.graph-canvas');
+         if (!canvas) return null;
+         const r = canvas.getBoundingClientRect();
+         const count = document.querySelector('.graph-count');
+         return { width: Math.round(r.width), height: Math.round(r.height),
+                  tabIndex: canvas.tabIndex, role: canvas.getAttribute('role'),
+                  label: canvas.getAttribute('aria-label'),
+                  toolbarCount: count ? count.textContent.trim() : null };`,
+      )
+    }
+
     // Keyboard modality, re-established after every pointer gesture and read as a measurement
     // rather than assumed. `:focus-visible` is the heuristic on the LAST INPUT's kind, so a
     // programmatic focus after a click legitimately paints nothing — and a run that read the
@@ -343,9 +396,16 @@ export const focusRingProbe = {
     }
 
     for (const surface of PAGE_SURFACES) {
-      const wanted = surface.page === 'agent' ? harness.agent === true : harness.agent !== true
-      const chatSeeded = surface.page === 'chat' && harness.chat === true
-      if (!wanted || (surface.page === 'chat' && !chatSeeded)) {
+      // `app` is the shell every run boots: the tab bar and the graph are on the page whatever the
+      // run asked for, so there is no page for them to be not-on and a missing element is a real
+      // absence rather than a run that did not prepare the right panel.
+      const wanted =
+        surface.page === 'app'
+          ? true
+          : surface.page === 'agent'
+            ? harness.agent === true
+            : harness.agent !== true && harness.chat === true
+      if (!wanted) {
         out.surfaces.push({ name: surface.name, sel: surface.sel, on: 'the product page', present: false,
                             why: surface.page === 'agent' ? 'this run is not the agent run' : 'this run did not seed a conversation' })
         continue
@@ -438,6 +498,100 @@ export const focusRingProbe = {
     // --- the sweep: every tab stop the page has ------------------------------
     out.sweep = await wd.executeAsync(
       `window.__nkwFocusSweep({ root: null, witness: '.switch-option' }, arguments[arguments.length - 1])`,
+    )
+
+    // --- the census: whose ring each of those stops paints --------------------
+    //
+    // The sweep answers "does this stop paint an indicator". It cannot answer "does it paint THIS
+    // APP's indicator", and the difference is the whole of the two surfaces fixed above: WebKit
+    // draws a ring of its own on every focusable element, so a stop with no author rule is never
+    // an offender by the sweep's test and is still a place where this product's focus language
+    // stops. The class is therefore invisible to the one reading that was supposed to be the
+    // complete list, and this is the reading that makes its size visible.
+    //
+    // Classification is by `outlineStyle`, not by colour: every author rule in this repository
+    // says `solid` and the user agent's ring is `auto`, so the two cannot be confused by a theme
+    // change or by a `color-mix`.
+    //
+    // **A stop with no outline is re-read four frames later**, and the reason is the failure this
+    // whole file keeps running into: this app fades its other indicators in (`LayoutResizeHandle`'s
+    // `::after` bar, `.chat-textarea`'s box-shadow), and a style read in the task the focus landed
+    // in samples the transition at t=0 — where a control that has a ring reads as a control that
+    // has none. Only the outline-less stops pay for it: an outline is not transitioned by any rule
+    // here, so the other 158 are classified from the reading that was already taken. Four frames
+    // is a reading *of* the transition rather than of its end; that is said rather than hidden,
+    // and nothing in the classification depends on the alpha at that moment.
+    out.census = await wd.executeAsync(
+      `const accent = arguments[0];
+       const done = arguments[arguments.length - 1];
+       const stops = window.__nkwTabStops(null);
+       const accented = [], engine = [], other = [], invisible = [];
+       // The style, read where the element is — the caller is the one that decides whether that
+       // is the task the focus landed in or four frames after it, and the difference is the whole
+       // reason a transitioned indicator needs the second one.
+       const style = function (el) {
+         const s = getComputedStyle(el);
+         const pseudo = window.__nkwPseudoIndicator(el);
+         return { tag: el.tagName.toLowerCase(), cls: el.className || null,
+                  focusVisible: el.matches(':focus-visible'),
+                  outlineStyle: s.outlineStyle, outlineWidth: s.outlineWidth, outlineColor: s.outlineColor,
+                  boxShadow: s.boxShadow, pseudo: pseudo ? pseudo.part : null };
+       };
+       const read = function (el) { el.focus({ preventScroll: true }); return style(el); };
+       const blur = function () { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); };
+       const classify = function (index, r) {
+         const entry = { i: index, tag: r.tag, cls: r.cls,
+                         outline: r.outlineStyle + ' ' + r.outlineWidth + ' ' + r.outlineColor };
+         if (r.focusVisible !== true) { invisible.push(entry); return; }
+         if (r.outlineStyle === 'auto') engine.push(entry);
+         else if (r.outlineStyle === 'solid' && r.outlineColor === accent) accented.push(entry);
+         else other.push({ i: index, tag: r.tag, cls: r.cls, outline: entry.outline,
+                           boxShadow: r.boxShadow, pseudo: r.pseudo });
+       };
+       let i = 0;
+       const step = function () {
+         if (i >= stops.length) {
+           const name = function (e) { return (e.cls || e.tag) + ' [' + e.outline + ']'; };
+           done({
+             total: stops.length,
+             accent: accented.length, engine: engine.length, other: other.length,
+             notFocusVisible: invisible.length,
+             engineList: engine.slice(0, 40).map(name),
+             otherList: other.slice(0, 40).map(function (e) {
+               return name(e) + ' boxShadow ' + e.boxShadow + ' pseudo ' + e.pseudo;
+             }),
+             accentList: accented.slice(0, 60).map(name),
+           });
+           return;
+         }
+         const el = stops[i];
+         const box = el.getBoundingClientRect();
+         const index = i;
+         i += 1;
+         if (box.width < 2 || box.height < 2) { requestAnimationFrame(step); return; }
+         const quick = read(el);
+         if (quick.outlineStyle !== 'none' || quick.focusVisible !== true) {
+           blur();
+           classify(index, quick);
+           requestAnimationFrame(step);
+           return;
+         }
+         // Focus is HELD across the wait, and that is not a detail: blurring first would let the
+         // transition run back to its unfocused value, and the settled read would be of the state
+         // the element is in when nothing is focused — the same t=0 reading with four frames of
+         // delay in front of it. Found by taking exactly that reading and believing it.
+         let left = 4;
+         const settle = function () {
+           if (--left > 0) { requestAnimationFrame(settle); return; }
+           const settled = style(el);
+           blur();
+           classify(index, settled);
+           requestAnimationFrame(step);
+         };
+         requestAnimationFrame(settle);
+       };
+       requestAnimationFrame(step);`,
+      [out.witness?.outlineColor ?? null],
     )
     out.loadAfter = load()
     return out

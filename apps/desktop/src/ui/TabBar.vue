@@ -191,6 +191,19 @@ async function onMenuSelect(id: string): Promise<void> {
               color var(--app-motion-fast) var(--app-ease),
               box-shadow var(--app-motion-fast) var(--app-ease);
 }
+/* Every control in the strip draws the app's own ring. Without this the strip was the one place
+   in the window where focus fell back to the engine's blue: the roving tabindex makes one `.tab`
+   the only tab stop that selects a document, and a keyboard reader who reached it saw a ring in a
+   colour nothing else in the product uses. `1px`, not the `-2px` the full-bleed surfaces use:
+   these are 28px boxes with their own background inside a bar that pads them by 6px, so the ring
+   belongs beside the box rather than on top of its content — the same offset `.rail-tab`, the
+   app's other tab strip, already uses. */
+.tab:focus-visible,
+.tab-close:focus-visible,
+.new-tab:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
 .tab:hover {
   background: color-mix(in srgb, var(--app-elevated) 54%, transparent);
   color: var(--app-text);

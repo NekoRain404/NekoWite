@@ -37,7 +37,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { AGENT_FAILURE_CODES, AGENT_STOP_REASONS } from './agent-contracts'
+import { AGENT_FAILURE_CODES, AGENT_STOP_REASONS, isAgentSessionState } from './agent-contracts'
 
 const TAURI = resolve(__dirname, '../../../src-tauri/src')
 
@@ -96,6 +96,28 @@ describe('the agent contract’s hand-kept halves', () => {
       .map(kebab)
       .filter((kind) => !readable.has(kind))
     expect(unreadable, 'every frame of these kinds would be refused').toEqual([])
+  })
+
+  it('names every session state the runtime can report, and is allowed to name more', () => {
+    // The window's own copy of this fact is gone: `AGENT_SESSION_STATES` is the contract's value
+    // and `AgentSessionState` is derived from it, so the boundary cannot be wider or narrower than
+    // the type any more. What can still drift is the pair *across* the boundary — and this
+    // direction is the one with a cost, because `readHostState` refuses a name it does not have
+    // and the refusal takes the whole snapshot with it (the replayable tail and every pending
+    // permission prompt, `channel.ts`; the Rust side cites the same cost at `snapshot.rs`, where
+    // it is the reason an ending it cannot classify is carried rather than invented).
+    //
+    // The other direction is deliberate and must stay open, exactly as it is for event kinds:
+    // `idle` and `starting` describe the runtime before a session exists, so this host has no
+    // producer for them and `snapshot.rs` says so ("a state it cannot reach is not one it should
+    // be able to invent"). So this is a subset check, and only this way round.
+    // Held to the contract's own test of its own list (`isAgentSessionState`, the one
+    // `readHostState` branches on) rather than to a membership check written here: the claim is
+    // that the boundary would accept this word, and this is the boundary's own question.
+    const unnameable = enumVariants(rust('agent_runtime/snapshot.rs'), 'SessionState', 'snapshot.rs')
+      .map(kebab)
+      .filter((state) => !isAgentSessionState(state))
+    expect(unnameable, 'a snapshot in these states would be refused whole').toEqual([])
   })
 
   it('classifies exactly the stop reasons the contract names', () => {

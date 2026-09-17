@@ -54,7 +54,7 @@ export type { AgentEvent, AgentEventEnvelope, AgentIdentity } from './agent-cont
 export { readAgentEvent } from './agent-contracts/validation'
 export { readCapabilityReports } from './agent-contracts/readers/session'
 
-export { AGENT_CAPABILITY_FEATURES } from './agent-contracts/gateway'
+export { AGENT_CAPABILITY_FEATURES, AGENT_SESSION_STATES, isAgentSessionState } from './agent-contracts/gateway'
 export type {
   AgentCapabilityDeclaration,
   AgentCapabilityFeature,

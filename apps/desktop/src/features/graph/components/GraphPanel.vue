@@ -244,6 +244,16 @@ defineExpose({ rebuild })
   height: 100%;
   cursor: grab;
 }
+/* Inset, and this is the one offset that works here. The canvas fills `.graph-canvas-wrap`
+   exactly, and the wrap is `overflow: hidden`, so a ring drawn outside the canvas's box is
+   clipped away entirely: before this rule the engine still reported its own ring on the canvas
+   and the engine painted none of it — the element took focus with nothing on screen to say so.
+   `-2px` puts the ring inside the same box, which is what the other full-bleed surfaces in this
+   app (`.agent-timeline`, `.chat-scroll`) do for the same reason. */
+.graph-canvas:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: -2px;
+}
 .graph-tooltip {
   position: absolute;
   max-width: 240px;

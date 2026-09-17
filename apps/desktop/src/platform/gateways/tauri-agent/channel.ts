@@ -20,7 +20,12 @@
  * correct rather than hopeful.
  */
 
-import { AgentFailure, type AgentEvent, type AgentSessionSnapshot } from '../agent-contracts'
+import {
+  AgentFailure,
+  isAgentSessionState,
+  type AgentEvent,
+  type AgentSessionSnapshot,
+} from '../agent-contracts'
 import { mapHostFrame, readFrameShape } from './frames'
 import type { AgentIpc, AgentHostSnapshot } from './ipc'
 import type { SessionRecord } from './session'
@@ -192,26 +197,15 @@ export function createEventChannel(deps: ChannelDeps): EventChannel {
 /**
  * The host's state, where it is one the view can draw.
  *
- * The list is written out here because the contract exports the *type* but no runtime list —
- * unlike `AGENT_STOP_REASONS` and `AGENT_FAILURE_CODES`, which are values a producer can be
- * held to. A state the panel cannot draw has to be refused at the boundary, not cast into the
- * contract's union.
+ * The vocabulary is the contract's own list (`AGENT_SESSION_STATES`, the value
+ * `AgentSessionState` is derived from), so this boundary is the type's one runtime
+ * reader rather than a second copy of it. What it still does is *refuse*: a name the
+ * contract does not have is a state the panel cannot draw, and the panel's vocabulary
+ * is the union — so the name is rejected here, with the reason, instead of being
+ * carried on as a string nothing renders.
  */
-const SESSION_STATES = [
-  'idle',
-  'starting',
-  'ready',
-  'running',
-  'waiting-permission',
-  'completed',
-  'cancelled',
-  'failed',
-] as const
-
 export function readHostState(raw: string): AgentSessionSnapshot['state'] {
-  if ((SESSION_STATES as readonly string[]).includes(raw)) {
-    return raw as AgentSessionSnapshot['state']
-  }
+  if (isAgentSessionState(raw)) return raw
   throw new AgentFailure('invalid-response', `the host reported a session state named ${raw}`)
 }
 

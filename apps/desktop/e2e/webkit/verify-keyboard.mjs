@@ -169,6 +169,15 @@ if (focus && !focus.skipped) {
   // better against what is behind it (the floor the standards name for a focus indicator); and
   // the pixels must show something actually repainting, because an outline the engine reports
   // and does not draw is a rule, not an indicator. Shown red under `--violate ringless`.
+  // **The ring has to be this app's, and that clause is the one that can fail.** Every focusable
+  // element in a WebKit page paints a ring: the user agent draws one from its own stylesheet, at
+  // 5px, in its own blue — so "an indicator is painted, of at least 2px, at 3:1" is satisfied by
+  // an element with no author rule at all, and a check made of those clauses alone stays green
+  // after the rule it was written for is deleted. What the app's own focus language is instead is
+  // one colour, the accent the witness paints, and comparing against it is what makes these
+  // checks able to answer both ways. A surface that ever needs a ring of a different colour is a
+  // surface whose expectation has to be declared here rather than assumed.
+  const appRing = focus.witness?.outlineColor ?? null
   for (const surface of focus.surfaces ?? []) {
     const r = surface.reading ?? null
     const px = surface.pixels ?? null
@@ -202,6 +211,7 @@ if (focus && !focus.skipped) {
           `${px?.diff?.inside ?? '?'} pixels inside the box and ${px?.diff?.outside ?? '?'} outside it ` +
           `(max channel delta ${px?.diff?.insideDelta ?? 0}/${px?.diff?.outsideDelta ?? 0}), stable over ` +
           `${px?.shots ?? '?'} screenshot(s)${px?.settled === false ? ' and NEVER SETTLED' : ''}` +
+          `; the ring ${r?.outlineColor === appRing ? 'is' : `is NOT the app's (${appRing ?? '?'})`}` +
           (focus.injected ? `; INJECTED (${focus.injected.mode}) ${focus.injected.what}` : ''),
       surface.present === true &&
         surface.on !== undefined &&
@@ -210,6 +220,7 @@ if (focus && !focus.skipped) {
         width >= 2 &&
         contrast !== null &&
         contrast >= 3 &&
+        r.outlineColor === appRing &&
         px?.painted === true,
     )
   }
@@ -228,6 +239,20 @@ if (focus && !focus.skipped) {
         `${focus.sweep.clean ?? '?'} painted an indicator, ${focus.sweep.unaddressable?.length ?? 0} could not be addressed` +
         (focus.sweep.blind ? ' — AND THE SWEEP WAS BLIND' : ''),
       focus.sweep.blind !== true && (focus.sweep.total ?? 0) > 0,
+    )
+  }
+  // The census, printed for the same reason the sweep is: it covers stops this task does not own,
+  // and the number it produces is a fact about the product rather than about this change. What it
+  // claims is only that it ran over the page and could classify what it saw — the counts are in
+  // the detail, and the two classes it separates are the two answers the sweep cannot tell apart.
+  if (focus.census) {
+    c.run(
+      'focus indicator: the census counts whose ring each tab stop paints',
+      `of ${focus.census.total ?? '?'} stops, ${focus.census.accent ?? '?'} paint the app's own accent ` +
+        `(${JSON.stringify(focus.census.accentList ?? [])}) and ${focus.census.engine ?? '?'} paint the ` +
+        `engine's ring from the user agent's stylesheet (${JSON.stringify(focus.census.engineList ?? [])}); ` +
+        `${focus.census.other ?? '?'} paint something else (${JSON.stringify(focus.census.otherList ?? [])})`,
+      (focus.census.total ?? 0) > 0,
     )
   }
 }

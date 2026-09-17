@@ -23,16 +23,36 @@ import type { AgentRunResult } from './payloads'
  * session exists, so an open session's snapshot never reports them; a runtime
  * that died mid-turn reports `failed` through the `run-failed` event, which is
  * the record that survives the process.
+ *
+ * The list is the runtime value and the type is derived from it — the direction
+ * `AGENT_FAILURE_CODES` and `AGENT_CAPABILITY_FEATURES` already use, and for the
+ * same reason: the adapter that reads a state off the wire has to test a name
+ * that arrived from outside the process, and a type alone can neither be
+ * enumerated nor tested. Writing the two out separately is what would make them
+ * drift; here a name cannot exist in one without existing in the other.
  */
-export type AgentSessionState =
-  | 'idle'
-  | 'starting'
-  | 'ready'
-  | 'running'
-  | 'waiting-permission'
-  | 'completed'
-  | 'cancelled'
-  | 'failed'
+export const AGENT_SESSION_STATES = [
+  'idle',
+  'starting',
+  'ready',
+  'running',
+  'waiting-permission',
+  'completed',
+  'cancelled',
+  'failed',
+] as const
+
+export type AgentSessionState = (typeof AGENT_SESSION_STATES)[number]
+
+/**
+ * The one runtime test of that list, kept next to it the way `isAgentFailureCode`
+ * is kept next to its own — so the boundary that has to refuse a foreign name
+ * states the refusal without restating the vocabulary, and without casting a
+ * string into the union.
+ */
+export function isAgentSessionState(raw: unknown): raw is AgentSessionState {
+  return typeof raw === 'string' && AGENT_SESSION_STATES.some((state) => state === raw)
+}
 
 /**
  * A model the engine offers for a session — one `value`/`name` pair of a

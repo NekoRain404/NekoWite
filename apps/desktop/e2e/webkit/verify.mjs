@@ -14,6 +14,7 @@
  * engine's font metrics) while a delta pins the behaviour.
  */
 import { verifyKeyboard } from './verify-keyboard.mjs'
+import { verifyTable } from './verify-table.mjs'
 
 const TOLERANCE = 0.5
 
@@ -615,6 +616,9 @@ export function verify(results) {
   // decides the surfaces the existing probes measure, and this decides the two this task added —
   // which share nothing with them but the collector.
   verifyKeyboard(c, results, avg)
+  // The table's own subject, and the shape every split here takes: the collector arrives as an
+  // argument, so `Checks` stays the one place a verdict is formed.
+  verifyTable(c, results)
 
   return {
     passed: c.results.filter((r) => r.holds).length,
