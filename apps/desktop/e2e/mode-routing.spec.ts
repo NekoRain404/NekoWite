@@ -75,15 +75,46 @@ test.describe('plugin command routing', () => {
     expect(await sourceDoc(page)).toContain('$$\n\n$$')
   })
 
-  test('the table button writes a Markdown table into the source text', async ({ page }) => {
+  test('the table button asks for a size in source mode, and writes that table', async ({ page }) => {
+    // It used to write a fixed 3×3 with no question asked — the same button
+    // meaning two different things in two view modes, and no way for the reader
+    // to say how big the table was. There is no grid to insert into here, but
+    // "how many rows and columns" still has an answer the reader has to give,
+    // and it is the same dialog the rendered pane raises.
     await openNote(page, { doc: 'body\n' })
     await showSource(page)
     await page.locator('[data-testid="source-pane"] .cm-content').click()
 
     await page.locator('.toolbar-btn[data-command-id="table.insert"]').click()
 
-    await expect.poll(() => sourceDoc(page)).toContain('| a | b | c |')
-    expect(await sourceDoc(page)).toContain('| - | - | - |')
+    // Nothing is written before the reader answers.
+    const dialog = page.locator('.table-dialog')
+    await expect(dialog).toBeVisible()
+    expect(await sourceDoc(page)).toBe('body\n')
+
+    // Two columns, the way a reader would ask for them.
+    const steps = page.locator('.table-dialog-stepper')
+    await steps.nth(1).locator('button').nth(1).click()
+    await page.locator('.table-dialog-actions button.primary').click()
+    await expect(dialog).toHaveCount(0)
+
+    await expect.poll(() => sourceDoc(page)).toContain('| a | b |')
+    expect(await sourceDoc(page)).toContain('| - | - |')
+  })
+
+  test('a cancelled size dialog inserts nothing', async ({ page }) => {
+    // The old fixed template was a default the reader never chose. Cancelling
+    // has to mean "no table", or the dialog is decoration.
+    await openNote(page, { doc: 'body\n' })
+    await showSource(page)
+    await page.locator('[data-testid="source-pane"] .cm-content').click()
+
+    await page.locator('.toolbar-btn[data-command-id="table.insert"]').click()
+    await expect(page.locator('.table-dialog')).toBeVisible()
+    await page.locator('.table-dialog-actions button').first().click()
+    await expect(page.locator('.table-dialog')).toHaveCount(0)
+
+    expect(await sourceDoc(page)).toBe('body\n')
   })
 
   test('the callout button writes JSX source into the source text', async ({ page }) => {
@@ -112,6 +143,8 @@ test.describe('plugin command routing', () => {
     await showSource(page)
     await page.locator('[data-testid="source-pane"] .cm-content').click()
     await page.locator('.toolbar-btn[data-command-id="table.insert"]').click()
+    await expect(page.locator('.table-dialog')).toBeVisible()
+    await page.locator('.table-dialog-actions button.primary').click()
     await expect.poll(() => sourceDoc(page)).toContain('| a | b | c |')
 
     await showRendered(page)

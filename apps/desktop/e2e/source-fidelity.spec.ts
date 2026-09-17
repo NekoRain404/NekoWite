@@ -70,9 +70,16 @@ const CANONICALIZED: Array<[string, string, string]> = [
   ],
   ['a missing final newline is added', 'no newline at the end', 'no newline at the end\n'],
   [
-    'an empty table cell gains the empty-paragraph marker',
+    // It used to gain one: milkdown's paragraph serializer writes a standalone
+    // `<br />` for an empty paragraph, and inside a cell that paragraph IS the
+    // cell — so every blank cell of every table carried six characters the
+    // reader never typed, the source pane showed them, and the delimiter row was
+    // padded to them. A cell is not a blank line between two blocks; the
+    // convention that marker serves is untouched and has its own cases in
+    // `inline-break.test.ts`. See `table/cell-placeholder.test.ts`.
+    'an empty table cell stays empty',
     '| a | b |\n| - | - |\n|  |  |\n',
-    '| a      | b      |\n| ------ | ------ |\n| <br /> | <br /> |\n',
+    '| a | b |\n| - | - |\n|   |   |\n',
   ],
   [
     'table columns are re-padded, alignment preserved',
