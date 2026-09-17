@@ -359,6 +359,27 @@ describe('the sessions the engine holds, from the panel’s own control', () => 
       row.getAttribute('aria-current') === 'true' ? [row.getAttribute('data-session')] : [],
     )
 
+  /** Every session the list is drawing, in the order it draws them. */
+  const listedRows = (): (string | null)[] =>
+    Array.from(document.querySelectorAll<HTMLElement>('.agent-history-option')).map((row) =>
+      row.getAttribute('data-session'),
+    )
+
+  /**
+   * Type into the find box the way a browser does — the value, then the event that carries it —
+   * and wait for the list to have redrawn with the count the query leaves.
+   */
+  async function typeInFindBox(text: string, rowsLeft: number): Promise<void> {
+    const field = document.querySelector<HTMLInputElement>('[data-history-search]')
+    if (field === null) throw new Error('the list is not drawing a find box')
+    field.value = text
+    field.dispatchEvent(new Event('input'))
+    await untilDom(
+      () => document.querySelectorAll('.agent-history-option').length === rowsLeft,
+      `the list to be down to ${rowsLeft} row(s)`,
+    )
+  }
+
   it('reopens the session the reader picks, and the panel ends up on it', async () => {
     const { earlier, loads } = await shellWithHistory()
     const before = panel()
@@ -388,6 +409,45 @@ describe('the sessions the engine holds, from the panel’s own control', () => 
     await untilDom(() => document.querySelector('[data-agent-history]') !== null, 'the control again')
     await openHistory()
     expect(openRow()).toEqual([earlier.sessionId])
+  })
+
+  /**
+   * The find box, from the window rather than from a mounted component.
+   *
+   * The rule it applies is `filterSessionRows`' and is tested where it lives; what this case adds
+   * is the *reach*: the reader's own control (the bar's history button), the popup the panel draws
+   * inside the real shell, and the box in it — narrowed to a row, emptied to nothing with a
+   * sentence saying so, and given back whole. A box that only worked when a component was mounted
+   * by a test would be the eleventh "built but out of reach" on this project's list.
+   */
+  it('narrows the list from the box in the popup, and gives it back', async () => {
+    const { earlier } = await shellWithHistory()
+    await openHistory()
+    const all = listedRows()
+    expect(all.length).toBeGreaterThan(1)
+
+    // A query taken from the row's own title rather than from this file: what the engine named the
+    // session is the fact the box is supposed to answer, and reading it out of the row keeps the
+    // assertion from being about how the double names anything.
+    const titled = document
+      .querySelector<HTMLElement>(`[data-session="${earlier.sessionId}"] .agent-history-option-title`)
+      ?.textContent?.trim()
+    expect(titled).toBeTruthy()
+    await typeInFindBox(titled!, 1)
+    expect(listedRows()).toEqual([earlier.sessionId])
+
+    // A query no row carries is answered with a sentence, not with a blank box.
+    await typeInFindBox('nothing at all says this', 0)
+    expect(document.querySelector('[data-history-nomatch]')).not.toBeNull()
+
+    // And the engine's own rows are one press away: what the ✕ clears is the query.
+    document.querySelector<HTMLElement>('[data-history-clear]')!.click()
+    await untilDom(
+      () => document.querySelectorAll('.agent-history-option').length === all.length,
+      'the engine’s whole list',
+    )
+    expect(listedRows()).toEqual(all)
+    expect(document.querySelector('[data-history-nomatch]')).toBeNull()
   })
 
   it('says so in the engine’s words when a session cannot be reopened, and keeps the one open', async () => {

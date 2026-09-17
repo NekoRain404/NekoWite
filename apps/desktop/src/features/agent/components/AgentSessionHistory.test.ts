@@ -114,6 +114,8 @@ interface Harness {
   resumes: string[]
   el: (selector: string) => HTMLElement | null
   click: (selector: string) => Promise<void>
+  /** Type into the find box the way a reader does, and let the list redraw. */
+  type: (text: string) => Promise<void>
   settle: () => Promise<void>
   /** What the open list says, as the engine titled its rows. */
   titles: () => string[]
@@ -340,6 +342,15 @@ async function mountPanel(options: {
       target.click()
       await settle()
     },
+    type: async (text) => {
+      const field = document.querySelector<HTMLInputElement>('[data-history-search]')
+      if (field === null) throw new Error('the list is not drawing a find box')
+      // The value and the event the browser would fire with it, rather than a simulated
+      // keystroke: what is under test is the filter, and the field is what the popup reads.
+      field.value = text
+      field.dispatchEvent(new Event('input'))
+      await settle()
+    },
     titles: () =>
       Array.from(document.querySelectorAll<HTMLElement>('.agent-history-option-title')).map(
         (node) => node.textContent?.trim() ?? '',
@@ -428,6 +439,53 @@ describe('the sessions the engine holds', () => {
     // serving, and "show me this one" about the one showing has no work in it.
     expect(harness.resumes).toEqual([])
     expect(harness.el('[role="listbox"]')).toBeNull()
+  })
+
+  /**
+   * The find box, from the control the reader actually has: the bar's history button, the popup it
+   * opens, and the box in it.
+   *
+   * What the box may match is `filterSessionRows`' rule and is asserted there. What is asserted
+   * here is the half only the whole chain can show — that typing in the popup the panel mounts
+   * narrows the engine's answer *without asking the engine again*, that a query which matches
+   * nothing says so instead of leaving the popup blank, and that emptying the box gives back
+   * exactly the rows the engine sent.
+   */
+  it('narrows the engine’s own rows as the reader types, without asking the engine again', async () => {
+    const harness = await mountPanel({ available: true })
+    let listed = 0
+    const list = harness.gateway.listSessions.bind(harness.gateway)
+    harness.gateway.listSessions = async () => {
+      listed += 1
+      return list()
+    }
+
+    await harness.click('[data-agent-history]')
+    expect(listed).toBe(1)
+    expect(harness.titles()).toEqual([
+      'New session - 2026-01-01T00:00:01Z',
+      'New session - 2026-01-01T00:00:02Z',
+    ])
+
+    // One row left: the one the engine recorded in /notes/elsewhere, which is the fact the query
+    // matched — the row keeps the engine's own title either way.
+    await harness.type('elsewhere')
+    expect(harness.titles()).toEqual(['New session - 2026-01-01T00:00:01Z'])
+
+    // The answer already in hand was narrowed, not re-asked for: this is a filter over what
+    // `session/list` sent, and a second round trip per keystroke would be a call nobody asked for.
+    expect(listed).toBe(1)
+
+    await harness.type('nothing says this')
+    expect(harness.el('[data-history-nomatch]')).not.toBeNull()
+    expect(harness.el('.agent-history-option')).toBeNull()
+
+    await harness.click('[data-history-clear]')
+    expect(harness.titles()).toEqual([
+      'New session - 2026-01-01T00:00:01Z',
+      'New session - 2026-01-01T00:00:02Z',
+    ])
+    expect(listed).toBe(1)
   })
 
   /**

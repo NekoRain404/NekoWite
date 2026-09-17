@@ -33,16 +33,27 @@ export type AgentSessionHistoryFooter =
  * the panel measured it against the trigger, which lives in the session bar.
  *
  * **It owns the keyboard, unlike the config picker.** That picker keeps focus on its trigger and
- * hands the arrows to it (`AgentConfigPicker.vue`); here the list takes focus on arrival, so it
- * is the only handler and there is no second place the highlight could live. The rows follow the
- * app's list vocabulary — one row per session, `role="option"`, `aria-activedescendant` on the
- * listbox — and Enter, a click and a pointer-down-and-release all mean the same thing.
+ * hands the arrows to it (`AgentConfigPicker.vue`); here the find box above the rows takes focus
+ * on arrival and every key the list needs — the arrows, Home/End, Enter — bubbles to the one
+ * handler below, so there is still exactly one place the highlight lives and a reader can type,
+ * arrow and commit without leaving the field. Escape is the one key with two meanings, and it is
+ * ordered: a query is cleared first, and only an empty box closes the list.
+ *
+ * The rows follow the app's list vocabulary — one row per session, `role="option"`,
+ * `aria-activedescendant` on the listbox — and Enter, a click and a pointer-down-and-release all
+ * mean the same thing. The listbox owns options and nothing else, which is why the page sentence
+ * and the notices sit outside it and why the free action below is a sibling of the option.
  *
  * What a row may say is deliberately narrow. The title is the engine's or it is absent, and the
  * absence is drawn as a statement about the engine rather than as a name this app invented; the
  * age is the engine's own `updatedAt` read (`services/agent-session-history.ts`); and the two
  * marks beside it are the two facts a reader needs before pressing anything — this is the one
  * already open, and this one was recorded in another folder.
+ *
+ * **The list can be narrowed without asking the engine anything.** `filterSessionRows` is a
+ * service rule over the rows already in hand, so what a query leaves is the engine's own answer
+ * with rows removed, never a second list this app composed — and a query that leaves nothing says
+ * so in a sentence of its own, rather than by drawing an empty box.
  *
  * **The free action is a second element beside the option, not inside it.** A listbox may only
  * own options, and an interactive child inside one is a control whose role the AT cannot
@@ -55,50 +66,70 @@ import { X } from 'lucide-vue-next'
 import { t } from '../../../i18n'
 import {
   describeSessionAge,
+  filterSessionRows,
   type AgentSessionHistoryRow,
 } from '../services/agent-session-history'
+import AgentSessionHistoryHead from './AgentSessionHistoryHead.vue'
 
-const props = defineProps<{
-  view: AgentSessionHistoryView
-  /** The engine's sessions, in the engine's order. Empty for every view but `rows`. */
-  rows: readonly AgentSessionHistoryRow[]
-  /** Why an `unreadable` list could not be read: the gateway's own sentence. */
-  reason: string | null
-  /** The engine named a further page, so this list is not the whole history. */
-  more: boolean
-  /**
-   * Whether the engine reported that it answers `session/close` — the panel's answer, from the
-   * engine's own report, exactly as the history control's was.
-   *
-   * False draws no free button on any row. The action is not offered on a capability this window
-   * has not been told about; the row the reader is on is never offered it either (`row.current`),
-   * because freeing the session on screen from a list that is about the others is a trap; and a
-   * row `row.held` is false for is not offered it, because the host refuses that call before the
-   * engine hears about it (the button's own comment has the three together).
-   */
-  closeable: boolean
-  /** What the strip under the rows says, if anything. The panel owns it. */
-  footer: AgentSessionHistoryFooter | null
-  /** The row the footer is about, so the question is attached to what it names. */
-  confirming: string | null
-  /** The instant the ages are read against — one clock for the whole list. */
-  now: number
-  /** The list element's id, which the trigger's `aria-controls` names. */
-  listId: string
-  /** Where the panel put it, in viewport coordinates. */
-  left: number
-  top: number
-  minWidth: number
-  /** Which way it had to open, so the arrival comes from the control it belongs to rather than
-   *  from the gap on the other side of it. */
-  drop: 'down' | 'up'
-}>()
+const props = withDefaults(
+  defineProps<{
+    view: AgentSessionHistoryView
+    /** The engine's sessions, in the engine's order. Empty for every view but `rows`. */
+    rows: readonly AgentSessionHistoryRow[]
+    /** Why an `unreadable` list could not be read: the gateway's own sentence. */
+    reason: string | null
+    /** The engine named a further page, so this list is not the whole history. */
+    more: boolean
+    /**
+     * Whether the engine reported that it answers `session/close` — the panel's answer, from the
+     * engine's own report, exactly as the history control's was.
+     *
+     * False draws no free button on any row. The action is not offered on a capability this window
+     * has not been told about; the row the reader is on is never offered it either (`row.current`),
+     * because freeing the session on screen from a list that is about the others is a trap; and a
+     * row `row.held` is false for is not offered it, because the host refuses that call before the
+     * engine hears about it (the button's own comment has the three together).
+     */
+    closeable: boolean
+    /**
+     * Whether the caller can open a *new* session on the runtime this list belongs to — the gate on
+     * the one entry here that is not about a row.
+     *
+     * A gate for the same reason `closeable` is one, and it is the caller's to answer: opening a
+     * session is the *rail's* move — the rail is what mounts this panel, and a panel cannot
+     * re-point itself at a session it opened — so this list may offer it only when the caller has
+     * said it will carry the call out. Absent (or false) draws no entry rather than a button whose
+     * press goes nowhere, which is §5.2's rule and the reason this one is optional while the rest
+     * are required: the caller that has not wired it yet is a list without that entry, not a broken
+     * component.
+     */
+    openable?: boolean
+    /** What the strip under the rows says, if anything. The panel owns it. */
+    footer: AgentSessionHistoryFooter | null
+    /** The row the footer is about, so the question is attached to what it names. */
+    confirming: string | null
+    /** The instant the ages are read against — one clock for the whole list. */
+    now: number
+    /** The list element's id, which the trigger's `aria-controls` names. */
+    listId: string
+    /** Where the panel put it, in viewport coordinates. */
+    left: number
+    top: number
+    minWidth: number
+    /** Which way it had to open, so the arrival comes from the control it belongs to rather than
+     *  from the gap on the other side of it. */
+    drop: 'down' | 'up'
+  }>(),
+  { openable: false },
+)
 
 const emit = defineEmits<{
   /** The user settled on a session. The panel decides what that means. */
   activate: [sessionId: string]
   /** The user asked to free a session on the engine. The panel asks before it acts. */
   ask: [sessionId: string]
+  /** The user asked for a new session. The caller decides what that means and who does it. */
+  open: []
   /** The question in the footer was answered yes. */
   confirm: []
   /** The question in the footer was answered no. */
@@ -108,19 +139,41 @@ const emit = defineEmits<{
 }>()
 
 const rootEl = ref<HTMLElement | null>(null)
+const headEl = ref<InstanceType<typeof AgentSessionHistoryHead> | null>(null)
 const confirmEl = ref<HTMLButtonElement | null>(null)
-/** The row Enter would take, as an index into `rows`. */
+/** The row Enter would take, as an index into {@link visibleRows} — the list on screen, which is
+ *  the engine's own minus whatever the query does not match. */
 const activeIndex = ref(0)
+
+/** What is in the find box. It narrows the engine's answer here and is sent nowhere. */
+const query = ref('')
+
+/** Whether there is a box to draw: one is drawn exactly when there are rows for it to narrow. */
+const searchable = computed(() => props.view === 'rows')
+
+/** The rows the list is drawing, in the engine's order — `filterSessionRows`' own rule, applied
+ *  to the answer the panel was given. */
+const visibleRows = computed(() => filterSessionRows(props.rows, query.value))
+
+/** A search that left nothing: the popup's own sentence, never "the engine holds no sessions". */
+const noMatch = computed(() => visibleRows.value.length === 0)
+
+/** The option the arrows are on, as an id — or `undefined` when there is no row to point at, which
+ *  is also what tells the find box it has nothing expanded under it. */
+const activeOptionId = computed(() =>
+  visibleRows.value.length === 0 ? undefined : `${props.listId}-option-${activeIndex.value}`,
+)
 
 /** The element the panel measures to place the list — it is the only layer that can reach it. */
 function element(): HTMLElement | null {
   return rootEl.value
 }
 
-/** Focus the list on arrival: the arrows are its own from the moment it is up, and a reader who
- *  opened it with the keyboard should not have to press Tab to reach what they opened. */
+/** Focus what the reader came for on arrival: the find box when there is one, so the arrows, Enter
+ *  and typing all work from the first key, and the list itself when there is nothing to type into. */
 function focus(): void {
-  rootEl.value?.focus()
+  if (searchable.value) headEl.value?.focusQuery()
+  else rootEl.value?.focus()
 }
 
 onMounted(focus)
@@ -150,20 +203,25 @@ function metaOf(row: AgentSessionHistoryRow): string[] {
 }
 
 function move(offset: number): void {
-  const count = props.rows.length
+  const count = visibleRows.value.length
   if (count === 0) return
   activeIndex.value = (activeIndex.value + offset + count) % count
 }
 
 function jump(to: 0 | -1): void {
-  if (props.rows.length === 0) return
-  activeIndex.value = to === 0 ? 0 : props.rows.length - 1
+  if (visibleRows.value.length === 0) return
+  activeIndex.value = to === 0 ? 0 : visibleRows.value.length - 1
 }
 
 function commit(index: number): void {
-  const row = props.rows[index]
+  const row = visibleRows.value[index]
   if (row === undefined) return
   emit('activate', row.sessionId)
+}
+
+/** Whether a key is being typed into the find box, which is also where the caret keys belong. */
+function inFindBox(target: EventTarget | null): boolean {
+  return target instanceof HTMLInputElement
 }
 
 function onKeydown(event: KeyboardEvent): void {
@@ -174,6 +232,13 @@ function onKeydown(event: KeyboardEvent): void {
     // The dialog handlers that have not run yet; the modal claim the panel took is what silences
     // the ones that already have.
     event.stopPropagation()
+    // …except while there is something to clear. A reader who has typed a query and presses
+    // Escape is asking for the list they had before they typed, and a popup that vanished instead
+    // would make the one key they have learned mean "throw my search away *and* close".
+    if (query.value !== '') {
+      query.value = ''
+      return
+    }
     emit('close')
     return
   }
@@ -189,6 +254,12 @@ function onKeydown(event: KeyboardEvent): void {
     return
   }
   if (event.key === 'Home' || event.key === 'End') {
+    // Home inside a box with text in it belongs to the caret, not to the list — the rule the
+    // config picker's own filter box established for this app (`AgentConfigOptionsPopup.vue`).
+    if (event.key === 'Home' && inFindBox(event.target)) {
+      const field = event.target as HTMLInputElement
+      if (field.selectionStart !== 0) return
+    }
     event.preventDefault()
     jump(event.key === 'Home' ? 0 : -1)
     return
@@ -198,6 +269,22 @@ function onKeydown(event: KeyboardEvent): void {
     commit(activeIndex.value)
   }
 }
+
+// A new query is a new list, so the row Enter would take is the first one it left: without this a
+// reader who had arrowed down the whole list would commit whatever now sits at that index — a row
+// they never picked.
+watch(query, () => {
+  activeIndex.value = 0
+})
+
+// The list can also move under a query — the panel re-reads the engine's answer after a free — and
+// an index past the end would leave Enter with nothing to take.
+watch(
+  () => visibleRows.value.length,
+  (count) => {
+    activeIndex.value = Math.max(0, Math.min(activeIndex.value, count - 1))
+  },
+)
 
 // The question takes the focus, because it is the only thing in the popup the reader has to
 // answer: a footer that arrived under a list still holding the keyboard would leave its buttons
@@ -225,21 +312,36 @@ defineExpose({ element, focus })
 
 <template>
   <div
-    :id="listId"
     ref="rootEl"
     class="agent-history-popup"
     :class="{ 'is-above': drop === 'up' }"
     :style="{ left: `${left}px`, top: `${top}px`, minWidth: `${minWidth}px` }"
-    role="listbox"
-    :aria-label="t('agent.panel.history.list')"
-    :aria-activedescendant="view === 'rows' ? `${listId}-option-${activeIndex}` : undefined"
     :data-view="view"
     tabindex="-1"
     @keydown="onKeydown"
   >
-    <template v-if="view === 'rows'">
+    <!-- The box, and the one entry that is not a row. Above the listbox rather than inside it: a
+         listbox owns options, and neither of these is one. -->
+    <AgentSessionHistoryHead
+      v-if="searchable || openable"
+      ref="headEl"
+      v-model:query="query"
+      :searchable="searchable"
+      :openable="openable"
+      :list-id="listId"
+      :active-option-id="activeOptionId"
+      @open="emit('open')"
+    />
+    <div
+      v-if="searchable && !noMatch"
+      :id="listId"
+      class="agent-history-list"
+      role="listbox"
+      :aria-label="t('agent.panel.history.list')"
+      :aria-activedescendant="activeOptionId"
+    >
       <div
-        v-for="(row, index) in rows"
+        v-for="(row, index) in visibleRows"
         :key="row.sessionId"
         class="agent-history-row"
         :class="{
@@ -306,18 +408,19 @@ defineExpose({ element, focus })
           />
         </button>
       </div>
-      <!-- role=presentation: a listbox may only own options. An engine that named a further page
-           has not shown the whole table, and a list that read as complete would be the one answer
-           worse than a short one. -->
-      <p
-        v-if="more"
-        class="agent-history-more"
-        role="presentation"
-        data-history-more
-      >
-        {{ t('agent.panel.history.more') }}
-      </p>
-    </template>
+    </div>
+    <!-- A search that left nothing, said as the search's own answer. It is a different sentence
+         from the engine's "it holds no sessions" on purpose: this app has not asked the engine
+         whether such a session exists, and a box that filtered itself empty must not read as a
+         statement about the engine's table. -->
+    <p
+      v-else-if="searchable"
+      class="agent-history-notice"
+      role="presentation"
+      data-history-nomatch
+    >
+      {{ t('agent.panel.history.search.noMatch') }}
+    </p>
     <p
       v-else
       class="agent-history-notice"
@@ -325,6 +428,18 @@ defineExpose({ element, focus })
       :title="view === 'unreadable' ? reason ?? undefined : undefined"
     >
       {{ notice }}
+    </p>
+    <!-- Outside the listbox, which may only own options, and drawn for a short list whether or not
+         a search found anything: an engine that named a further page has not shown the whole
+         table, and "no session matches" is only ever true of the page that was sent. A list that
+         read as complete would be the one answer worse than a short one. -->
+    <p
+      v-if="searchable && more"
+      class="agent-history-more"
+      role="presentation"
+      data-history-more
+    >
+      {{ t('agent.panel.history.more') }}
     </p>
     <!-- The strip under the rows. `role=presentation` for the reason the notices carry it: this
          is a child of the listbox and not one of its options. -->

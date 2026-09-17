@@ -19,6 +19,7 @@ import {
   agentSessionHistoryRows,
   capabilityAvailable,
   describeSessionAge,
+  filterSessionRows,
 } from './agent-session-history'
 
 /** A whole report — one row per feature the contract knows — with `session-list` set to what the
@@ -124,6 +125,50 @@ describe('the rows an engine’s answer draws', () => {
     // The engine recorded this one in a different directory from the one this runtime works in.
     expect(elsewhere?.elsewhere).toBe(true)
   })
+})
+
+describe('the rows a query keeps', () => {
+  const rows = (): ReturnType<typeof agentSessionHistoryRows> =>
+    agentSessionHistoryRows(PAGE, { currentSessionId: 'session-1', cwd: '/notes/vault' })
+
+  it('keeps the engine’s rows, in its order, when nothing has been asked for', () => {
+    // A field the reader has opened and not typed in is not a query, and a whitespace-only one is
+    // the same nothing: the list the engine answered with is what is drawn, unchanged.
+    expect(filterSessionRows(rows(), '')).toEqual(rows())
+    expect(filterSessionRows(rows(), '   ')).toEqual(rows())
+  })
+
+  it('matches the engine’s own title, wherever it falls and whatever its case', () => {
+    expect(filterSessionRows(rows(), 'session - 2026-01-01T00:00:02Z').map(idOf)).toEqual([
+      'session-2',
+    ])
+    expect(filterSessionRows(rows(), 'NEW SESSION').map(idOf)).toEqual(['session-2'])
+  })
+
+  it('matches the folder the engine recorded a row in', () => {
+    // The one fact about a row that changes what picking it means, and the one a reader who is
+    // looking for "the session I had open in that other folder" is actually searching for.
+    expect(filterSessionRows(rows(), 'other').map(idOf)).toEqual(['session-1'])
+  })
+
+  it('answers with nothing at all when no row carries the query', () => {
+    // Not the whole list: a field that appeared to do nothing is worse than one that says it found
+    // nothing, and the popup has a sentence for the second.
+    expect(filterSessionRows(rows(), 'no session says this')).toEqual([])
+  })
+
+  it('does not match a row on a word this app wrote about it', () => {
+    // Two strings that sit on or beside a row and are **not** the engine's facts: the sentence this
+    // app draws where the engine sent no title (`agent.panel.history.untitled`), and the session id
+    // the row is keyed by. A row drawn for either would be a match the row itself does not explain
+    // — the reader sees a row whose visible facts contain nothing they typed.
+    expect(filterSessionRows(rows(), 'the engine sent no title')).toEqual([])
+    expect(filterSessionRows(rows(), 'session-1')).toEqual([])
+  })
+
+  function idOf(row: { sessionId: string }): string {
+    return row.sessionId
+  }
 })
 
 describe('the age of a row', () => {

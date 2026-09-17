@@ -134,6 +134,46 @@ export function agentSessionHistoryRows(
   }))
 }
 
+/**
+ * The rows a query keeps, in the engine's order.
+ *
+ * A rule rather than a `computed` inside the popup, for the reason this file exists: each wrong
+ * version of it is a claim about the engine, and the claims are the kind a reader cannot check.
+ *
+ *  - **A row matches on the two facts it carries that the engine stated** — its title, and the
+ *    folder the engine recorded it in. That is Zed's pair (`threads_archive_view.rs:294-318`:
+ *    the title, else the basename of a worktree path), and it is a pair because they are the two
+ *    things a reader looking for a session remembers: its name, or where it was.
+ *  - **Nothing this app wrote matches.** The sentence drawn where the engine sent no title
+ *    (`agent.panel.history.untitled`) is this app's words, and so is the id the row is keyed by,
+ *    which is drawn nowhere. A row returned for either would be a match the row's own visible
+ *    facts do not explain — the reader would see a row that contains nothing they typed. That is
+ *    also the one place this deliberately differs from Zed: it matches fuzzily
+ *    (`fuzzy_match_positions`) and paints the matched characters, so a surprising hit there is
+ *    still a visible one; a containment test with no highlighting has to be narrower instead.
+ *  - **An empty query is every row, and the same rows.** Whitespace is not a query — a field the
+ *    reader has emptied must not filter the list down to nothing — and the engine's own order and
+ *    set are returned untouched rather than re-sorted, which is the same rule the rows below are
+ *    built under.
+ *
+ * A plain case-insensitive containment rather than a fuzzy match: `needle` in `haystack` is a
+ * sentence a reader can verify by looking at the row, and it is what the copy promises.
+ */
+export function filterSessionRows(
+  rows: readonly AgentSessionHistoryRow[],
+  query: string,
+): readonly AgentSessionHistoryRow[] {
+  const needle = query.trim().toLowerCase()
+  if (needle === '') return rows
+  return rows.filter(
+    (row) =>
+      (row.title ?? '').toLowerCase().includes(needle) ||
+      // Not `elsewhere` and not the rendered path: the whole string the engine sent, so a
+      // component of it — a folder's own name — is a query the row answers.
+      row.cwd.toLowerCase().includes(needle),
+  )
+}
+
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
 const DAY = 24 * HOUR
