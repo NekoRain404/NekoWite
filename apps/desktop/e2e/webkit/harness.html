@@ -184,6 +184,15 @@
         const agentListeners = new Map()
         let agentEventSeq = 0
         let agentRun = null
+        /**
+         * How many prompts this stand-in has answered. A real runtime mints a run id per turn,
+         * and the app's reducer depends on that: a run that ended is remembered in `closedRuns`
+         * and a second run reusing its id would be refused as `closed-run` — which is correct,
+         * and would have made every probe that drives a second turn measure a refusal. The first
+         * prompt still answers `probe-run-1`, so every frame a probe pushes by that name keeps
+         * working.
+         */
+        let agentRunCount = 0
 
         const agentIdentity = () => ({
           agentId: AGENT.agentId,
@@ -346,17 +355,26 @@
               }
             }
             if (cmd === 'agent_session_snapshot') {
+              // The live sequence, not a constant. This stand-in replays no events, so the only
+              // truthful thing it can say about its own tail is where the tail currently is —
+              // and `sequence: 0` was a lie with teeth: a window that re-subscribes (the rail's
+              // own toggle unmounts and remounts the panel) arrives holding a higher sequence
+              // than the snapshot claims, and `channel.ts` refuses that as `invalid-response` —
+              // correctly, since a host whose snapshot is behind the caller cannot be continued
+              // from. The visible result was a panel that looked mounted and received nothing:
+              // two frames pushed after the rail phase were delivered to nobody, the store's
+              // sequence stayed where it was and nothing was reported as dropped.
               return {
                 identity: agentIdentity(),
                 state: 'ready',
                 runId: null,
-                sequence: 0,
+                sequence: agentEventSeq,
                 events: [],
                 permissions: [],
               }
             }
             if (cmd === 'agent_prompt') {
-              agentRun = 'probe-run-1'
+              agentRun = 'probe-run-' + (++agentRunCount)
               return agentRun
             }
             if (cmd === 'agent_cancel_run') return undefined

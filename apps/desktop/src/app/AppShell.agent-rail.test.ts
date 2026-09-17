@@ -338,13 +338,14 @@ describe('the sessions the engine holds, from the panel’s own control', () => 
       return load(sessionId, request)
     }
 
-    composeMock.mockReturnValue(fakeComposition({ gateway }).composition)
+    const fake = fakeComposition({ gateway })
+    composeMock.mockReturnValue(fake.composition)
     const store = useSettingsStore()
     store.agentPanel = true
     shell({})
     await untilDom(() => panel() !== null, 'the agent panel')
     await untilDom(() => document.querySelector('[data-agent-history]') !== null, 'the history control')
-    return { gateway, earlier, loads }
+    return { gateway, earlier, loads, fake }
   }
 
   /** Open the list and wait for the engine's answer to be drawn. */
@@ -409,6 +410,37 @@ describe('the sessions the engine holds, from the panel’s own control', () => 
     await untilDom(() => document.querySelector('[data-agent-history]') !== null, 'the control again')
     await openHistory()
     expect(openRow()).toEqual([earlier.sessionId])
+  })
+
+  /**
+   * The new-session entry, from the window: the popup's own button, the panel's emit, the rail
+   * body's event, the shell's handler and the rail's second `openSession` — and the panel the
+   * reader was looking at replaced by the one they asked for.
+   *
+   * The rail's own tests hold `newSession`'s latch and the settings page holds the chooser; what
+   * cannot be asserted from either is that the control the reader presses *reaches* it. A panel
+   * that declared the emit and a rail that never heard it would leave both suites green.
+   */
+  it('opens a new session from the entry in the list, and the panel is replaced', async () => {
+    const { fake } = await shellWithHistory()
+    const before = panel()
+    await openHistory()
+
+    const entry = document.querySelector<HTMLElement>('[data-history-new]')
+    // FAILS IF: the entry is not drawn — which is what the released app did until the panel
+    // started declaring `openable` and the rail started passing it, and what a panel mounted
+    // anywhere else still does (the default is absent, so a panel with no rail behind it draws
+    // no control that could be pressed and do nothing).
+    expect(entry).not.toBeNull()
+    entry!.click()
+
+    // One more session on the runtime that is up, for the folder that runtime works in — the
+    // composition is the same one, so the fake's own list is where the call lands.
+    await untilDom(() => fake.opened.length === 2, 'a second openSession')
+    expect(fake.opened[1]).toEqual({ vaultId: '/notes/vault', cwd: '/notes/vault' })
+    // …and the reader is looking at a *new* panel: a session change is a remount, never a
+    // re-point, because the panel is bound to the session it was mounted for.
+    await untilDom(() => panel() !== null && panel() !== before, 'a new panel element')
   })
 
   /**

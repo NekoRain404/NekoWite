@@ -896,6 +896,57 @@ export function verify(results) {
         rows.length > 0 && tooTall.length === 0,
       )
     }
+
+    // ---- The turn's own stats: what it cost and what it took -----------------
+    //
+    // Row 37's elapsed half, and the token half beside it. The wire carries no duration — no
+    // timestamp on the envelope and no elapsed on `run-finished` — so the clock can only be this
+    // window's own stopwatch over the run it watched. What makes this a measurement rather than a
+    // drawing is the comparison: the seconds the bar shows against the window the page held open
+    // between the send it clicked and the frame it pushed.
+    const stats = agent.elapsed ?? {}
+    const drawnSeconds = (() => {
+      const label = stats.after?.clock
+      if (typeof label !== 'string') return null
+      const hours = /(\d+)h/.exec(label)
+      const minutes = /(\d+)m/.exec(label)
+      const seconds = /(\d+)s/.exec(label)
+      if (seconds === null) return null
+      return Number(hours?.[1] ?? 0) * 3600 + Number(minutes?.[1] ?? 0) * 60 + Number(seconds[1])
+    })()
+    const heldSeconds =
+      stats.window === undefined || stats.window === null
+        ? null
+        : (stats.window.closedAt - stats.window.openedAt) / 1000
+    // Two seconds of slack, and the whole of it is the run's own edges: the panel's stopwatch
+    // starts when the store applies `startAgentRun` (a few milliseconds after the click this
+    // phase made) and stops when it applies the frame the page pushed. A clock reading anything
+    // else — the panel's mount, the last turn, a constant — would be out by the difference.
+    const CLOCK_SLACK = 2
+    c.run(
+      'agent turn stats: the turn’s own elapsed time and its tokens are both drawn',
+      stats.after === undefined
+        ? `not measured${injected}`
+        : `the turn was opened by a real click on send (prompts ${stats.prompts?.before ?? '?'} → ` +
+          `${stats.prompts?.after ?? '?'}), ran as ${JSON.stringify(stats.runId ?? null)}; before it ` +
+          `ended the bar read clock ${JSON.stringify(stats.before?.clock ?? null)} and usage ` +
+          `${JSON.stringify(stats.before?.usage ?? null)} (state ${JSON.stringify(stats.before?.state ?? null)}); ` +
+          `after it: clock ${JSON.stringify(stats.after?.clock ?? null)} = ${drawnSeconds}s against a ` +
+          `window of ${heldSeconds === null ? '?' : Math.round(heldSeconds * 100) / 100}s, usage ` +
+          `${JSON.stringify(stats.after?.usage ?? null)}, state ${JSON.stringify(stats.after?.state ?? null)}; ` +
+          `the store holds ${JSON.stringify(stats.store?.state ?? null)} at sequence ${stats.store?.sequence ?? '?'}`,
+      drawnSeconds !== null &&
+        heldSeconds !== null &&
+        stats.prompts?.after === (stats.prompts?.before ?? 0) + 1 &&
+        Math.abs(drawnSeconds - heldSeconds) <= CLOCK_SLACK &&
+        // The pair, as Zed draws it: the clock and the engine's counters stand together.
+        typeof stats.after?.usage === 'string' &&
+        stats.after.usage.trim().endsWith('tokens') &&
+        // The clock is this turn's and not the one the bar was already showing: that turn was
+        // ended by this phase, so the drawn seconds have to be the window's, and a stale clock
+        // left over from an earlier turn reads as 0s beside a window of 1.25s.
+        drawnSeconds >= 1,
+    )
   }
 
   // The chat panel's keyboard surface and every focus indicator on the page. Split out at the

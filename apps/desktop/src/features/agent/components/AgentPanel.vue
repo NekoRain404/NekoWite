@@ -92,7 +92,7 @@ export interface AgentPanelLabels {
  * composition site keys it (or remounts it) rather than re-pointing it at another session —
  * a store binding cannot be moved to a session the panel was not mounted for.
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type {
   AgentCommand,
   AgentGateway,
@@ -116,6 +116,11 @@ import {
 } from '../services/agent-session-history'
 import { describeFailure } from '../services/agent-session-subscription'
 import { isRunLive } from '../services/agent-session-view'
+import {
+  INITIAL_AGENT_TURN_CLOCK,
+  noteRunState,
+  type AgentTurnClock,
+} from '../services/agent-turn-stats'
 import type { AgentToolEntry } from '../services/agent-timeline'
 import { useAgentSessionStore } from '../stores/agent-session'
 import AgentCommandMenu from './AgentCommandMenu.vue'
@@ -141,6 +146,14 @@ const props = defineProps<{
    * that the two are the same string today is a fact about the composition site.
    */
   cwd: string
+  /**
+   * Whether the rail behind this panel can open a new session — a capability of the *rail*,
+   * which is what owns the runtime a session is opened on, and therefore not something this
+   * component can answer for itself. Absent means no: the panel draws the entry only when its
+   * caller says it can act, so a panel mounted anywhere else (`AgentPanel.test.ts` mounts one
+   * over a gateway with no rail at all) has no control that could be pressed and do nothing.
+   */
+  openable?: boolean
   labels: AgentPanelLabels
 }>()
 
@@ -154,6 +167,14 @@ const emit = defineEmits<{
    * the rail's generation latch did not reach.
    */
   resume: [sessionId: string]
+  /**
+   * The reader asked for a new session on the runtime that is up.
+   *
+   * An event for the same reason `resume` is one: opening a session is the rail's — it composes
+   * the runtime, and it replaces the session this panel is mounted on, which a panel cannot do
+   * to itself (`AgentRailBody.vue` → `agent-rail.ts`'s `newSession`).
+   */
+  'new-session': []
 }>()
 
 const store = useAgentSessionStore()
@@ -258,6 +279,29 @@ const droppedSentence = computed<string | null>(() => {
  * from the view through the store's own definition of "live" rather than a second list of states
  * that could drift from it. */
 const running = computed(() => view.value !== null && isRunLive(view.value))
+
+/**
+ * How long the last turn took (row 37's elapsed half), measured here because nothing else can:
+ * the wire carries no duration — no timestamp on the envelope, no elapsed on `run-finished` — so
+ * the only two moments that exist are the view becoming live and the view stopping being live,
+ * and this is the component that watches both.
+ *
+ * **Not `immediate`.** A panel that mounts while a run is already in flight did not see it
+ * begin, and a stopwatch started at mount would report the part of the turn this window happened
+ * to watch as if it were the whole of it. Starting from {@link INITIAL_AGENT_TURN_CLOCK} and
+ * only ever feeding it *transitions* means a turn is timed whole or not at all, and a resumed
+ * session shows the tokens the host replayed beside no clock rather than beside a lie.
+ *
+ * `Date.now()` and not `performance.now()`: the value is compared with nothing and shown as
+ * seconds, so a monotonic origin buys nothing, and this is the clock the rest of the panel's
+ * faces already read. `services/agent-turn-stats.ts` holds the policy and takes the time as a
+ * parameter, which is what keeps it testable without waiting.
+ */
+const turnClock = ref<AgentTurnClock>(INITIAL_AGENT_TURN_CLOCK)
+watch(running, (live) => {
+  turnClock.value = noteRunState(turnClock.value, live, Date.now())
+})
+const elapsedMs = computed<number | null>(() => turnClock.value.lastMs)
 
 /**
  * The request the reader can answer: the first one bound to the run in flight.
@@ -616,6 +660,7 @@ function onHistoryPick(sessionId: string): void {
       :state="state"
       :failure="view?.failure ?? null"
       :result="view?.lastResult ?? null"
+      :elapsed-ms="elapsedMs"
       :history="historyOffered"
       :history-open="historyMenu.open.value"
       :labels="labels.bar"
@@ -733,6 +778,7 @@ function onHistoryPick(sessionId: string): void {
           :reason="historyReason"
           :more="historyMore"
           :closeable="closeOffered"
+          :openable="openable === true"
           :footer="historyFooter"
           :confirming="freeTarget"
           :now="historyAt"
@@ -742,6 +788,7 @@ function onHistoryPick(sessionId: string): void {
           :min-width="historyMenu.placement.value.minWidth"
           :drop="historyMenu.placement.value.drop"
           @activate="onHistoryPick"
+          @open="emit('new-session')"
           @ask="askFree"
           @confirm="confirmFree"
           @cancel="cancelFree"

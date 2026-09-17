@@ -278,7 +278,16 @@ const MOTION_SURFACE = [
   // It is the chat transcript's twin down to the curve, which is the other
   // reason to hold them to the same list: the two arrive on one vocabulary or
   // they drift apart one file at a time.
-  '../features/agent/components/AgentTimeline.vue',
+  //
+  // **The entry moved with the control.** The jump affordance — the one
+  // animated thing this surface ever had — now lives in its own file beside the
+  // copy, navigation and follow controls that were added around it
+  // (`AgentTimelineControls.vue`), so `AgentTimeline.vue` declares no motion at
+  // all and a list that went on naming it would be pointing at a file whose
+  // every per-file guard passes by having nothing to hold. The surface is the
+  // same one; the file that declares it changed, and this list follows the
+  // declaration rather than the feature's name.
+  '../features/agent/components/AgentTimelineControls.vue',
   // The palette's shell, likewise: its motion moved out of `ui/CommandPalette.vue`
   // into the feature's stylesheet, and the mount point that is left keeps none
   // of its own. The chat split made the same move when the panel was split.

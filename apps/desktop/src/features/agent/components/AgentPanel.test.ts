@@ -12,7 +12,7 @@
  * The runtime is T1's memory double, driven by hand, so the turn genuinely suspends on the
  * request rather than the test asserting against a canned state.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import AgentPanel, { type AgentPanelLabels } from './AgentPanel.vue'
@@ -457,5 +457,83 @@ describe('AgentPanel — the frames this window refused', () => {
 
     expect(store.records[key].dropped).toBe(3)
     expect(harness.text('[data-agent-dropped]')).toContain('3')
+  })
+})
+
+/**
+ * Row 37's elapsed half, driven through the panel: a real run, started from the composer and
+ * ended by the engine, with the clock moved between the two moments.
+ *
+ * The unit tests hold the stopwatch's policy (`services/agent-turn-stats.test.ts`) and the strip's
+ * formatting (`AgentSessionBar.test.ts`). What this adds is the seam neither can see: that the
+ * panel watches the *run* and not the state word — the turn here is suspended on a permission
+ * while the clock runs, which is the case a stopwatch keyed on `running` would get wrong.
+ */
+describe('AgentPanel — what the last turn took', () => {
+  const clock = (harness: Harness): string => harness.text('[data-agent-clock]')
+
+  it('times the turn from the run’s own edges, and shows it beside the tokens', async () => {
+    // `Date` alone is faked: the gateway's turn runs on microtasks and its settle helper on real
+    // timers, and a suite-wide fake clock would be measuring the test harness instead of the panel.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-09-17T10:00:00Z'))
+      const harness = await mountPanel({
+        chunks: ['Working on it. '],
+        permission: { title: 'Read notes/plan.md', options: [...OPTIONS] },
+        usage: { totalTokens: 9189 },
+      })
+
+      // Nothing has run yet, so there is nothing to time and nothing to draw.
+      expect(clock(harness)).toBe('')
+
+      await harness.send('read the plan')
+      expect(harness.state()).toBe('waiting-permission')
+      // Running, but not finished: the clock is the *last* turn's, and this one has not ended.
+      expect(clock(harness)).toBe('')
+
+      // Five seconds of the turn pass while it waits for the reader — a wall clock runs through a
+      // permission prompt, and this panel's stopwatch is a wall clock.
+      vi.setSystemTime(new Date('2026-09-17T10:00:05Z'))
+      await harness.click('.agent-perm-options button')
+      expect(harness.state()).toBe('completed')
+
+      expect(clock(harness)).toBe('5s')
+      // Both halves of the stats, in the same strip: the engine's counters and this window's clock.
+      expect(harness.text('[data-agent-usage]')).toBe('9.2k tokens')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the last turn’s time while the next run is in flight', async () => {
+    // The strip shows the last *finished* turn, tokens included, so the clock beside those tokens
+    // has to survive the next run's start rather than blanking while its neighbour stays. A turn
+    // that is still running has no duration yet, and the honest thing to draw is the previous one.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-09-17T10:00:00Z'))
+      const harness = await mountPanel({
+        chunks: ['Working. '],
+        permission: { title: 'Read notes/a.md', options: [...OPTIONS] },
+        usage: { totalTokens: 9189 },
+      })
+
+      await harness.send('first')
+      vi.setSystemTime(new Date('2026-09-17T10:00:05Z'))
+      await harness.click('.agent-perm-options button')
+      expect(clock(harness)).toBe('5s')
+
+      vi.setSystemTime(new Date('2026-09-17T10:00:08Z'))
+      await harness.send('second')
+      expect(harness.state()).toBe('waiting-permission')
+      expect(clock(harness)).toBe('5s')
+
+      vi.setSystemTime(new Date('2026-09-17T10:00:10Z'))
+      await harness.click('.agent-perm-options button')
+      expect(clock(harness)).toBe('2s')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

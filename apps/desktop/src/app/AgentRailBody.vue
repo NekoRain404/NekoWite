@@ -141,9 +141,9 @@ const emit = defineEmits<{
    * Declared here and handled by the shell, and the one hop between them is the panel's: the entry
    * that asks for this is drawn by the list the panel mounts, so `AgentPanel` is where the gesture
    * crosses from the popup to this component (it forwards `AgentSessionHistoryMenu`'s `open` as
-   * `new-session`). Until that forwarding exists, nothing emits this and the shell's handler is
-   * inert — see the entry's own gate in `AgentSessionHistoryMenu.vue`, which draws nothing when
-   * nobody has said the call can be made.
+   * `new-session`). That hop landed with row 10, and the entry's own gate is what keeps it honest
+   * in the other direction: `AgentSessionHistoryMenu.vue` draws nothing until its caller says the
+   * call can be made, and this file is the caller that says so.
    */
   (e: 'new-session'): void
 }>()
@@ -163,6 +163,8 @@ const labels = computed(() => agentPanelLabels(engineName.value))
     :gateway="state.gateway"
     :session="state.session"
     :cwd="state.cwd"
+    :openable="true"
+    @new-session="emit('new-session')"
     :labels="labels"
     @resume="emit('resume', $event)"
   />

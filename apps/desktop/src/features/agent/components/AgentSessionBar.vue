@@ -62,6 +62,7 @@ import {
 } from 'lucide-vue-next'
 import { t } from '../../../i18n'
 import type { AgentRunResult, AgentUsage } from '../../../platform/gateways/agent-contracts'
+import { turnDurationParts } from '../services/agent-turn-stats'
 
 const props = defineProps<{
   /**
@@ -80,6 +81,16 @@ const props = defineProps<{
   failure: { code: string; message: string } | null
   /** How the last run ended. Its stop reason is shown only when it is not the ordinary one. */
   result: AgentRunResult | null
+  /**
+   * How long the last turn took, in milliseconds, or null when this window did not watch one
+   * end.
+   *
+   * Measured by the panel rather than read off the wire, because the wire carries no duration —
+   * `services/agent-turn-stats.ts` holds that measurement and the reason for it. Null is "not
+   * measured": a turn that began before this window was looking has no time to show, and the
+   * tokens it reported are drawn beside nothing rather than beside a made-up zero.
+   */
+  elapsedMs: number | null
   /**
    * Whether to draw the history control — the panel's answer, from the engine's own report.
    *
@@ -252,6 +263,25 @@ const usageDetail = computed<string | null>(() => {
   }
   return lines.length === 0 ? null : lines.join('\n')
 })
+
+/**
+ * The elapsed half of the turn's stats, in the same strip as the token half and drawn only when
+ * this window measured it.
+ *
+ * The three arms are Zed's (`duration_alt_display`, `crates/util/src/time.rs:3-15`): hours and
+ * minutes and seconds, each drawn only when it is above zero, so a short turn is `12s` and a
+ * long one is `1h 2m 3s`. The words are the catalogue's, written out per arm rather than built
+ * from the numbers — the i18n guard resolves keys from the source text, and a key assembled from
+ * a variable is invisible to it.
+ */
+const elapsedLabel = computed<string | null>(() => {
+  const ms = props.elapsedMs
+  if (ms === null) return null
+  const { hours, minutes, seconds } = turnDurationParts(ms)
+  if (hours > 0) return t('agent.panel.bar.elapsed.hours', { h: hours, m: minutes, s: seconds })
+  if (minutes > 0) return t('agent.panel.bar.elapsed.minutes', { m: minutes, s: seconds })
+  return t('agent.panel.bar.elapsed.seconds', { s: seconds })
+})
 </script>
 
 <template>
@@ -283,12 +313,21 @@ const usageDetail = computed<string | null>(() => {
         aria-hidden="true"
       />
     </button>
-    <!-- What the last finished turn cost, in the engine's own numbers (rows 5b and 37's token
-         half). It sits *before* the state line rather than inside it: the state word is the one
-         thing in this strip that must draw the eye, so it keeps the end of the row, and the live
-         region keeps the cadence it was written for rather than announcing a count as well. Drawn
-         only for the counters the engine sent — `usage: null` is an engine that reported nothing,
-         and §5.1's rule is that an unknown cost stays unknown rather than becoming a zero. -->
+    <!-- What the last finished turn cost and took, in the engine's own numbers and this
+         window's own stopwatch (rows 5b and 37). They sit *before* the state line rather than
+         inside it: the state word is the one thing in this strip that must draw the eye, so it
+         keeps the end of the row, and the live region keeps the cadence it was written for
+         rather than announcing a count as well. Each half is drawn only when it was actually
+         reported or measured — `usage: null` is an engine that reported nothing, and
+         `elapsedMs: null` is a turn this window did not watch, and §5.1's rule is that an unknown
+         stays unknown rather than becoming a zero. -->
+    <p
+      v-if="elapsedLabel !== null"
+      class="agent-bar-clock"
+      data-agent-clock
+    >
+      {{ elapsedLabel }}
+    </p>
     <p
       v-if="usageParts.length > 0"
       class="agent-bar-usage"
@@ -392,8 +431,11 @@ const usageDetail = computed<string | null>(() => {
 }
 /* The last turn's numbers: quieter than the state word beside them and never elided — the title
    gives way first, because a number cut in half is worse than no number. Tabular figures so the
-   strip does not jitter as the counters change width between turns. */
-.agent-bar-usage {
+   strip does not jitter as the counters change width between turns. The clock is the same rung:
+   it is the second half of one fact (what the last turn cost, and what it took), so it is drawn
+   with the same weight rather than as a heading of its own. */
+.agent-bar-usage,
+.agent-bar-clock {
   flex: none;
   margin: 0;
   color: var(--app-muted);

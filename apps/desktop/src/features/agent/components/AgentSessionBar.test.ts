@@ -55,7 +55,7 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-function mountBar(result: AgentRunResult | null): HTMLElement {
+function mountBar(result: AgentRunResult | null, elapsedMs: number | null = null): HTMLElement {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const app = createApp(AgentSessionBar, {
@@ -63,6 +63,7 @@ function mountBar(result: AgentRunResult | null): HTMLElement {
     state: 'completed',
     failure: null,
     result,
+    elapsedMs,
     history: false,
     historyOpen: false,
     labels: LABELS,
@@ -135,5 +136,39 @@ describe('AgentSessionBar — the turn’s own token counts', () => {
     expect(exact(8733)).toBe('8.7k tokens')
     expect(exact(87330)).toBe('87k tokens')
     expect(exact(1_250_000)).toBe('1.3M tokens')
+  })
+})
+
+/**
+ * The strip's third fact: how long the turn took (row 37's elapsed half).
+ *
+ * The number is this window's own (`services/agent-turn-stats.ts`) and not the engine's, which is
+ * why the cases here are about absence as much as about formatting: a turn nobody watched must
+ * draw nothing where a duration would go, and the token line beside it must survive that.
+ */
+describe('AgentSessionBar — what the turn took', () => {
+  const barClock = (host: HTMLElement): HTMLElement | null =>
+    host.querySelector<HTMLElement>('[data-agent-clock]')
+
+  it('draws a measured turn the way Zed’s own formatter does', () => {
+    // `duration_alt_display` (zed-main/crates/util/src/time.rs:3-15): whole seconds, and each
+    // larger unit only when it is above zero.
+    expect(barClock(mountBar(null, 12_000))?.textContent?.trim()).toBe('12s')
+    expect(barClock(mountBar(null, 65_000))?.textContent?.trim()).toBe('1m 5s')
+    expect(barClock(mountBar(null, 3_723_000))?.textContent?.trim()).toBe('1h 2m 3s')
+  })
+
+  it('draws nothing for a turn this window did not measure', () => {
+    // FAILS IF: an unmeasured turn is drawn as `0s`. That is the same defect as a `0 tokens` for
+    // an engine that reported nothing — a number this app made up, read as a fact about the turn.
+    expect(barClock(mountBar(null, null))).toBeNull()
+    expect(barClock(mountBar({ stopReason: 'end-turn', usage: { totalTokens: 10 } }))).toBeNull()
+  })
+
+  it('stands beside the token counters rather than replacing them', () => {
+    // One turn, both halves: the engine's counters and this window's clock, in that order.
+    const host = mountBar({ stopReason: 'end-turn', usage: { totalTokens: 9189 } }, 65_000)
+    expect(barClock(host)?.textContent?.trim()).toBe('1m 5s')
+    expect(barUsage(host)?.textContent?.trim()).toBe('9.2k tokens')
   })
 })

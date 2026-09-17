@@ -106,6 +106,141 @@ export async function followSwitchPhase(wd, run) {
 }
 
 /**
+ * Row 37's elapsed half: a turn the probe starts, ends and times for itself.
+ *
+ * The turn is opened the way a reader opens one — text in the composer and a real click on send,
+ * through the driver's pointer — and closed by a `run-finished` frame the page pushes 1.25
+ * seconds later. Both moments are therefore known twice, by two independent clocks: the panel's
+ * own stopwatch (which is what the bar draws) and the page's `Date.now()` around the window it
+ * held open. The verdict is the comparison.
+ *
+ * It ends whatever run the phases above left open first, and that is not tidiness: a live run
+ * leaves the composer offering a *stop*, so the send this phase needs would not be there. The
+ * ending frame can be refused (`closed-run`, if the run is already over) and that is expected —
+ * which is why the phase judges nothing by it.
+ */
+export async function elapsedPhase(wd, run) {
+  const out = { before: null, after: null }
+
+  const readBar = (extra) => wd.execute(
+    `const clock = document.querySelector('[data-agent-clock]');
+     const usage = document.querySelector('[data-agent-usage]');
+     const dropped = document.querySelector('[data-agent-dropped]');
+     const action = document.querySelector('.agent-composer [data-action="send"]') ? 'send'
+       : document.querySelector('.agent-composer [data-action="stop"]') ? 'stop' : null;
+     return {
+       clock: clock ? clock.textContent.trim() : null,
+       usage: usage ? usage.textContent.trim() : null,
+       state: (document.querySelector('.agent-bar-state') || {}).dataset?.state ?? null,
+       action: action,
+       hostRunId: window.__NEKO_AGENT__ ? window.__NEKO_AGENT__.runId() : null,
+       dropped: dropped ? dropped.textContent.trim() : null,
+       now: Date.now()${extra ?? ''},
+     }`,
+  )
+
+  out.before = await readBar()
+
+  // Whatever run the phases above left open is ended first, with a frame of its own id: a live
+  // run would leave the composer offering a stop, and the turn this phase is here to measure is
+  // one it starts itself. A refusal here is harmless and expected when the run is already over —
+  // the reducer remembers closed runs and answers `closed-run` — so its outcome is not judged.
+  out.ended = await wd.execute(
+    `const id = window.__NEKO_AGENT__.runId();
+     return id === null ? null : window.__NEKO_AGENT__.push('run-finished',
+       { stopReason: 'cancelled', usage: null }, id)`,
+  )
+  await settle(wd, 3)
+  out.afterEnding = await readBar()
+
+  // The turn under measurement: a prompt typed into the composer and sent with the driver's own
+  // click, which is the path a reader takes and the moment the panel's stopwatch starts.
+  const before = await wd.execute(
+    `const seen = window.__nkwInvokes || [];
+     return seen.filter(function (e) { return e.cmd === 'agent_prompt'; }).length`,
+  )
+  out.typed = await wd.execute(
+    `const field = document.querySelector('.agent-composer-field');
+     if (!field) return { ok: false, why: 'no composer field' };
+     field.focus();
+     return { ok: true, value: field.value };`,
+  )
+  await wd.executeAsync(
+    `const done = arguments[arguments.length - 1];
+     import('/src/features/agent/stores/agent-session.ts').then(function (m) {
+       const store = m.useAgentSessionStore();
+       const key = store.activeKey;
+       const before = store.recordFor(key) ? store.recordFor(key).draft : null;
+       if (store.recordFor(key)) store.recordFor(key).draft = 'elapsed probe';
+       done({ ok: true, draftBefore: before });
+     }, function (e) { done({ ok: false, why: String(e && e.message ? e.message : e) }); })`,
+  )
+  await settle(wd, 2)
+  out.sendClick = await clickSelector(wd, '.agent-composer [data-action="send"]')
+  await settle(wd, 3)
+  out.prompts = {
+    before: before,
+    after: await wd.execute(
+      `const seen = window.__nkwInvokes || [];
+       return seen.filter(function (e) { return e.cmd === 'agent_prompt'; }).length`,
+    ),
+  }
+  out.started = await readBar()
+  out.runId = out.started?.hostRunId ?? null
+
+  if (out.runId !== null) {
+    // One and a quarter seconds of turn, measured by the page's own clock and ended by a frame
+    // the page pushes — so the panel's stopwatch and this phase's clock are two independent
+    // readings of the same interval.
+    out.window = await wd.executeAsync(
+      `const done = arguments[arguments.length - 1];
+       const id = arguments[0];
+       const openedAt = Date.now();
+       setTimeout(function () {
+         window.__NEKO_AGENT__.push('text-delta', { text: 'elapsed probe output. ' }, id);
+         window.__NEKO_AGENT__.push('run-finished',
+           { stopReason: 'end-turn', usage: { totalTokens: 9189, inputTokens: 1721, outputTokens: 6 } },
+           id);
+         done({ openedAt: openedAt, closedAt: Date.now() });
+       }, arguments[1]);`,
+      [out.runId, 1250],
+    )
+  }
+  await settle(wd, 5)
+  out.after = await readBar()
+  out.store = await readStore(wd)
+  out.invokes = await wd.execute(
+    `return (window.__nkwInvokes || []).slice(-40)
+       .filter(function (e) { return e.failed || e.cmd.indexOf('agent_') === 0; })
+       .map(function (e) { return { cmd: e.cmd, ok: e.ok === true, failed: e.failed || null }; })`,
+  )
+  return out
+}
+
+/** What the store believes, read through the app's own module — the same route the fit phase
+ *  takes to the appearance store. A frame that changed nothing has one of two shapes and the DOM
+ *  cannot tell them apart: the reducer refused it (and the reason is in the record) or it never
+ *  became an event at all (and the record is untouched). */
+function readStore(wd) {
+  return wd.executeAsync(
+    `const done = arguments[arguments.length - 1];
+     import('/src/features/agent/stores/agent-session.ts').then(function (m) {
+       const store = m.useAgentSessionStore();
+       const record = store.recordFor(store.activeKey);
+       done(record ? {
+         state: record.view.state,
+         sequence: record.view.sequence,
+         runId: record.view.runId,
+         closedRuns: record.view.closedRuns,
+         lastResult: record.view.lastResult,
+         dropped: record.dropped,
+         lastDrop: record.lastDrop,
+       } : { why: 'the store holds no record for the active key' });
+     }, function (e) { done({ why: String(e && e.message ? e.message : e) }); })`,
+  )
+}
+
+/**
  * The three controls row 36 is about, each pressed for real.
  *
  * The copy is measured through two taps installed in the page (the async clipboard and the

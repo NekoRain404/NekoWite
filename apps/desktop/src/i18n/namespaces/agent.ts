@@ -74,6 +74,18 @@ export const agent = {
               cachedWrite: 'cache write {n}',
             },
           },
+          /* The other half of the turn's stats: how long the turn took, as this window's own
+             stopwatch measured it (`services/agent-turn-stats.ts` — the wire carries no
+             duration). One arm per rung of Zed's own formatter (`duration_alt_display`,
+             `crates/util/src/time.rs:3-15`), and the arm is chosen by which rungs are above
+             zero, so `45s`, `2m 3s` and `1h 2m 3s` are three sentences rather than one with two
+             empty slots. Nothing here rounds up: a wall clock that claimed a tenth of a second
+             would be claiming a precision it does not have. */
+          elapsed: {
+            hours: '{h}h {m}m {s}s',
+            minutes: '{m}m {s}s',
+            seconds: '{s}s',
+          },
         },
         /* The session history menu (T17): the rows an engine's `session/list` answer draws.
            Every row is the engine's own facts — its title, its folder, its last-activity stamp —
@@ -1087,6 +1099,16 @@ export const agent = {
               cachedRead: '缓存读取 {n}',
               cachedWrite: '缓存写入 {n}',
             },
+          },
+          /* 轮次统计的另一半：这一轮花了多久，由本窗口自己的秒表量出（`services/agent-turn-stats.ts`
+             ——线上没有任何时长字段）。按 Zed 自己的格式化器的三档各写一句
+             （`duration_alt_display`，`crates/util/src/time.rs:3-15`），由哪几档大于零决定用哪一句，
+             所以 `45s`、`2m 3s`、`1h 2m 3s` 是三句话，而不是一句带两个空槽的话。这里一律不进位：
+             秒表声称有十分之一秒的精度，就是声称了它没有的精度。 */
+          elapsed: {
+            hours: '{h}小时{m}分{s}秒',
+            minutes: '{m}分{s}秒',
+            seconds: '{s}秒',
           },
         },
         /* 会话历史菜单（T17）：引擎对 `session/list` 的回答所画出的行。每一行都是引擎自己的

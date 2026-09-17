@@ -68,7 +68,7 @@ import {
   wheel,
 } from './agent-scroll-driver.mjs'
 import { distinct, frameStats, liveTrace, summariseFollow, summariseHeld } from './agent-scroll-readings.mjs'
-import { followSwitchPhase, transcriptControlsPhase } from './agent-controls-phase.mjs'
+import { elapsedPhase, followSwitchPhase, transcriptControlsPhase } from './agent-controls-phase.mjs'
 
 /**
  * `--violate pin` / `--violate width`: a deliberate violation, so the instrument can be shown
@@ -135,13 +135,17 @@ export const agentScrollProbe = {
     // failed is the whole diagnosis. Wrapped here, in the page, rather than guessed at from the
     // rail's own words: the sentinel is what the harness already answers for, so this is a tap
     // on an existing seam and not a second stand-in.
+    //
+    // `at` is stamped here because one reading downstream needs it: the turn the panel times for
+    // row 37's elapsed half begins at the `agent_prompt` the composer's send made, and the page's
+    // own clock is the only one both sides of that measurement share.
     await wd.execute(
       `const internals = window.__TAURI_INTERNALS__;
        if (internals && !internals.__nkwWrapped) {
          const original = internals.invoke;
          window.__nkwInvokes = [];
          internals.invoke = function (cmd, args) {
-           const entry = { cmd: cmd, args: JSON.stringify(args || {}).slice(0, 120) };
+           const entry = { cmd: cmd, args: JSON.stringify(args || {}).slice(0, 120), at: Date.now() };
            window.__nkwInvokes.push(entry);
            let result;
            try { result = original.apply(internals, arguments); }
@@ -482,6 +486,12 @@ export const agentScrollProbe = {
     // controls, and the send button — is asked to fit in 204px, and the controls are the widest
     // thing in it. The numbers this phase returns are the ones the checks in `verify.mjs` read.
     out.fit = await fitPhase(wd)
+
+    // ---- The turn's own stats: what it cost and what it took ------------------
+    //
+    // Last of all because it *ends* the run the probe has been driving: the elapsed half (row 37)
+    // can only be read off a turn that finished, and every phase above wants a live run.
+    out.elapsed = await elapsedPhase(wd, RUN)
     return out
   },
 }
@@ -1013,9 +1023,47 @@ async function fitPhase(wd) {
     const narrowest = out.widths.find((r) => r.requested === 220) ?? out.widths[0] ?? null
     if (narrowest?.action) {
       await applyRailWidth(wd, narrowest.requested)
+      // Text in the field first, because the press has to have something to do: the button is a
+      // send whenever no run is live, and a send with an empty draft is a press the composer
+      // refuses — which read as "the click reached nothing" and made this check depend on the
+      // state the phases above happened to leave behind rather than on whether the button is
+      // reachable. With text in it, either button is a real action: stop cancels a live run, send
+      // starts one.
+      //
+      // Written here rather than with the driver's `/element/value`, and the difference is the
+      // whole of why this line exists: that call sets the element's value without the `input`
+      // event Vue's model listens for, so the field showed text while the component's draft was
+      // still empty and the press submitted nothing. The event is what a reader's keystroke
+      // produces, and it is what the panel's own tests dispatch for the same reason.
+      out.realClick = {
+        typing: await wd.execute(
+          `const field = document.querySelector('.agent-composer-field');
+           if (!field) return { ok: false, why: 'no composer field' };
+           field.value = 'probe';
+           field.dispatchEvent(new Event('input', { bubbles: true }));
+           // A tap on the two events the press has to produce, so a press that reaches nothing
+           // is diagnosed as "the pointer never arrived" or "it arrived and nothing submitted"
+           // rather than as one indistinguishable red.
+           window.__nkwPresses = [];
+           if (!window.__nkwPressTap) {
+             window.__nkwPressTap = true;
+             document.addEventListener('click', function (e) {
+               const hit = e.target && e.target.closest ? e.target.closest('[data-action]') : null;
+               window.__nkwPresses.push({ kind: 'click', action: hit ? hit.dataset.action : null,
+                 tag: e.target ? e.target.tagName : null, trusted: e.isTrusted,
+                 defaultPrevented: e.defaultPrevented, at: Date.now() });
+             }, true);
+             document.addEventListener('submit', function (e) {
+               window.__nkwPresses.push({ kind: 'submit', cls: (e.target.className || '').toString().slice(0, 40), at: Date.now() });
+             }, true);
+           }
+           return { ok: true, value: field.value };`,
+        ),
+      }
       const at = await fitReading(wd)
       const before = await buttonCalls(wd)
       out.realClick = {
+        ...out.realClick,
         width: narrowest.requested,
         panel: at.panel.clientWidth,
         kind: at.action.kind,
@@ -1030,8 +1078,25 @@ async function fitPhase(wd) {
       } catch (error) {
         out.realClick.failure = String(error.message || error)
       }
+      // The reading waits for the call rather than pausing for a fixed number of milliseconds:
+      // the send path is asynchronous (the store settles the turn's baselines before it asks the
+      // runtime for anything), and a press that reached nothing is still red — three seconds
+      // later, with both counts where they were.
+      try {
+        await until(
+          async () => {
+            const seen = await buttonCalls(wd)
+            return seen.prompt > before.prompt || seen.cancel > before.cancel
+          },
+          { timeout: 3000, what: 'the press to reach the runtime' },
+        )
+      } catch {
+        // Nothing to do with the failure: the counts below are what the check reads, and a press
+        // that never arrived is exactly the case this wait gives up on.
+      }
       const after = await buttonCalls(wd)
       out.realClick.after = after
+      out.realClick.presses = await wd.execute('return window.__nkwPresses || null')
       // The press arrived at the button: the button emitted, the store called the gateway, and
       // the gateway asked the runtime for something.
       out.realClick.landed = after.cancel > before.cancel || after.prompt > before.prompt
