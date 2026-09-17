@@ -91,6 +91,11 @@ import {
   type AgentInsertionPlanResult,
   type AgentSvgInsertionPlan,
 } from '../features/agent/services/agent-svg-insertion'
+// The binding's shape is the feature's own interface — every type in its signature belongs to
+// `agent-svg-insertion.ts` — so it is declared there and implemented here. Re-exported because
+// callers of this file have always named it from here.
+import type { AgentSvgInsertionBinding } from '../features/agent/services/agent-insertion-source'
+export type { AgentSvgInsertionBinding } from '../features/agent/services/agent-insertion-source'
 
 export interface AgentCompositionDeps {
   /**
@@ -189,23 +194,6 @@ export interface AgentComposition {
 export interface AgentSvgInsertionEditor {
   /** The editor's account of one note, or null when no tab holds that path. */
   liveNote(path: string): AgentLiveNote | null
-}
-
-/**
- * The insertion service, bound to a session and an editor.
- *
- * `plan` takes the request without its identity — the binding's is the one in force — so a call
- * site cannot plan an insertion for a session it does not hold, and every plan carries the identity
- * that {@link commit} re-checks.
- */
-export interface AgentSvgInsertionBinding {
-  readonly identity: AgentIdentity
-  /** The target for a spot in a note, or why that spot cannot be inserted into. */
-  capture(path: string, from: number, to: number): AgentInsertionCapture
-  plan(request: Omit<AgentInsertionPlanRequest, 'identity'>): AgentInsertionPlanResult
-  /** The note edit. The caller reports whether it has already written the attachment, because the
-   *  order cannot be checked here and a note must not link a file nothing wrote. */
-  commit(plan: AgentSvgInsertionPlan, attachmentSaved: boolean): AgentInsertionOutcome
 }
 
 function detectEnvironment(): 'tauri' | 'browser' {

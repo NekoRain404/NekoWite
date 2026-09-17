@@ -21,9 +21,8 @@ import {
   useSplitScrollSync,
 } from '../features/editor'
 import { runEditorCommand } from '../services/run-editor-command'
-import AgentNoteProposals, {
-  type AgentInsertionSource,
-} from '../features/agent/components/AgentNoteProposals.vue'
+import AgentNoteProposals from '../features/agent/components/AgentNoteProposals.vue'
+import type { AgentInsertionSource } from '../features/agent/services/agent-insertion-source'
 import type { AgentIdentity } from '../platform/gateways/agent-contracts'
 import { useFloatStore } from '../stores/float'
 import { resetFocusedPane } from '../services/editor-ownership'

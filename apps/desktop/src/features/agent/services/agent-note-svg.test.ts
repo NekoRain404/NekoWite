@@ -15,7 +15,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentIdentity } from '../../../platform/gateways/agent-contracts'
 import type { AgentStagedSvg } from './agent-svg-insertion'
-import type { AgentSvgInsertionBinding } from '../../../app/agent-composition'
+import type { AgentSvgInsertionBinding } from './agent-insertion-source'
 import { STAGED_SVG_MEDIA_TYPE, inspectStagedSvg, planSvgInsertion } from './agent-svg-insertion'
 import { readStagedSvg, savePlannedAttachment } from './agent-note-svg'
 
