@@ -45,7 +45,11 @@
 //! are four different answers, and
 //! `tests/desktop_pet_notification_channel_test.rs` measures them against buses it starts itself.
 
+// Linux-only, like everything below that names the bus: the channel that uses them is compiled
+// only there, and an import that survived the `cfg` would be a warning on every other target.
+#[cfg(target_os = "linux")]
 use std::collections::HashMap;
+#[cfg(target_os = "linux")]
 use std::time::Duration;
 
 use serde::Serialize;
