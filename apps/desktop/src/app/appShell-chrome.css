@@ -1,0 +1,129 @@
+/* The shell's own chrome: the boxes it draws and the two clusters of controls it puts in them.
+
+   Beside `AppShell.vue` rather than inside it, for the rule `appShell.css` already states and for
+   the same budget: a rule that is global — every selector here reaches past the component, and
+   `.shell` is the element the whole application is laid out inside — is not markup's business, and
+   the shell's line budget belongs to the assembly. `appShell.css` took the motion half for that
+   reason ("that budget belongs to the layout, not to keyframes"); the layout is now over the
+   business cap on its own, so it takes the same route.
+
+   Two of these rules are restatements, and they stay restatements. `style.css:1-2` already sets
+   `box-sizing` and the `html, body, #app` frame, and `#app { max-width: none; padding: 0;
+   text-align: left }` overrides the Vite template's centred `#app`. They are kept beside the shell
+   because *order* is what makes the override work: this file loads with the component, after
+   `main.ts`'s stylesheet imports, and a rule that moved into `style.css` would be winning or losing
+   against the template by accident of position rather than by being the shell's. Nothing here was
+   changed in the move. */
+* { box-sizing: border-box; }
+html, body, #app { margin: 0; padding: 0; height: 100%; width: 100%; }
+#app { max-width: none; padding: 0; text-align: left; }
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--app-canvas);
+  /* The family has to be re-declared HERE, on the element that redefines
+     `--app-font` (the inline style above), and not only on `:root` and `body`
+     where `style.css` states it. A custom property is inherited, but a
+     `font-family` declaration is resolved where it is written: `body`'s
+     `var(--app-font)` is substituted with the value body inherits — the
+     `tokens.css` default — and every descendant inherits that RESULT, not the
+     variable. So the picker used to reach only the elements that happened to
+     read `var(--app-font)` themselves (buttons, inputs) and left everything
+     that merely inherited on the default: choosing a serif interface gave a
+     serif button inside a sans application. */
+  font-family: var(--app-font);
+}
+.shell-body {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  min-height: 0;
+  overflow: hidden;
+}
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--app-canvas);
+}
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.status-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+  transition: background var(--app-motion-fast) var(--app-ease),
+              color var(--app-motion-fast) var(--app-ease);
+}
+.status-btn:hover {
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
+}
+.status-btn.is-active {
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--app-accent-soft) 72%, var(--app-elevated));
+}
+
+.onboard {
+  width: 240px;
+  min-width: 240px;
+  border-right: 1px solid var(--app-border);
+  background: var(--app-panel);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.onboard-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+.onboard-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 4px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--app-elevated) 80%, var(--app-canvas));
+  border: 1px solid var(--app-border);
+  color: var(--app-muted);
+}
+.onboard-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--app-text);
+}
+.onboard-hint {
+  margin: 0 0 6px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--app-muted);
+}

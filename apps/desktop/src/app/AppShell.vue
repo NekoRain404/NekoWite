@@ -489,121 +489,12 @@ const shellStyle = computed<Record<string, string>>(() => ({
   </div>
 </template>
 
-<style>
-* { box-sizing: border-box; }
-html, body, #app { margin: 0; padding: 0; height: 100%; width: 100%; }
-#app { max-width: none; padding: 0; text-align: left; }
-.shell {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  min-height: 0;
-  overflow: hidden;
-  background: var(--app-canvas);
-  /* The family has to be re-declared HERE, on the element that redefines
-     `--app-font` (the inline style above), and not only on `:root` and `body`
-     where `style.css` states it. A custom property is inherited, but a
-     `font-family` declaration is resolved where it is written: `body`'s
-     `var(--app-font)` is substituted with the value body inherits — the
-     `tokens.css` default — and every descendant inherits that RESULT, not the
-     variable. So the picker used to reach only the elements that happened to
-     read `var(--app-font)` themselves (buttons, inputs) and left everything
-     that merely inherited on the default: choosing a serif interface gave a
-     serif button inside a sans application. */
-  font-family: var(--app-font);
-}
-.shell-body {
-  flex: 1;
-  display: flex;
-  flex-direction: row;
-  min-height: 0;
-  overflow: hidden;
-}
-.main {
-  flex: 1;
-  display: flex;
-  flex-direction: row;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  background: var(--app-canvas);
-}
-.main-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.status-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 22px;
-  padding: 0;
-  border: none;
-  border-radius: var(--app-radius-sm);
-  background: transparent;
-  color: var(--app-muted);
-  cursor: pointer;
-  transition: background var(--app-motion-fast) var(--app-ease),
-              color var(--app-motion-fast) var(--app-ease);
-}
-.status-btn:hover {
-  color: var(--app-text);
-  background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
-}
-.status-btn.is-active {
-  color: var(--app-text);
-  background: color-mix(in srgb, var(--app-accent-soft) 72%, var(--app-elevated));
-}
-
-.onboard {
-  width: 240px;
-  min-width: 240px;
-  border-right: 1px solid var(--app-border);
-  background: var(--app-panel);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-}
-.onboard-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  text-align: center;
-}
-.onboard-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
-  margin-bottom: 4px;
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--app-elevated) 80%, var(--app-canvas));
-  border: 1px solid var(--app-border);
-  color: var(--app-muted);
-}
-.onboard-title {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  color: var(--app-text);
-}
-.onboard-hint {
-  margin: 0 0 6px;
-  font-size: 11px;
-  line-height: 1.6;
-  color: var(--app-muted);
-}
-</style>
+<!-- The shell's chrome, beside it for the reason `appShell.css` states: these rules are global, and
+     the two files are the two halves of one move that took the shell's line budget back from its
+     stylesheets. Markup and assembly are what this file keeps; the boxes they are laid out in are
+     in the two files below, in that order, which is the order they were in when the chrome was
+     still inline. -->
+<style src="./appShell-chrome.css"></style>
 
 <style src="./appShell.css"></style>
 
