@@ -302,7 +302,7 @@ async fn the_real_engine_completes_a_real_prompt() {
 
     // ---- 4. one prompt, and everything it produces ---------------------------------------------
     let run_id = runtime
-        .prompt(&session.session_id, TEST_PROMPT)
+        .prompt(&session.session_id, TEST_PROMPT, &[])
         .expect("the session accepts a prompt");
     eprintln!("prompt sent, host run id {run_id}");
     let collected = collect_run(&mut events).await;

@@ -350,7 +350,7 @@ async fn the_real_engine_does_not_write_the_file_itself_when_the_host_refuses() 
         escape.display()
     );
     let run_id = runtime
-        .prompt(&session.session_id, &prompt)
+        .prompt(&session.session_id, &prompt, &[])
         .expect("the session accepts a prompt");
     eprintln!("prompt sent, host run id {run_id}");
 

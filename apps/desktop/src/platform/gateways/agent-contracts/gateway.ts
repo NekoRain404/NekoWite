@@ -8,7 +8,12 @@
  */
 
 import type { AgentEvent, AgentIdentity } from './envelope'
-import type { AgentConfigOption, AgentConfigOptionList, AgentRunResult } from './payloads'
+import type {
+  AgentConfigOption,
+  AgentConfigOptionList,
+  AgentPromptAttachment,
+  AgentRunResult,
+} from './payloads'
 
 /**
  * The session lifecycle, exactly as the plan spells it out:
@@ -456,8 +461,20 @@ export interface AgentGateway {
    * answers the prompt request (P0 §2.3: the response carries the stop reason and
    * the usage); rejects when the turn could not be delivered or the runtime went
    * away while it ran.
+   *
+   * `attachments` is what the reader put in the message beside its words, optional so that a
+   * caller with nothing to attach sends exactly the prompt this port has always sent. It is *not*
+   * gated here: whether each block may travel is the engine's own report, read by the host at send
+   * time, and a turn carrying one the handshake did not license is refused with
+   * `attachment-unsupported` rather than quietly sent or quietly emptied. A surface that draws an
+   * attach control asks the same report first (`AgentGateway.capabilities`), so the refusal is the
+   * race and not the ordinary path.
    */
-  prompt(session: AgentSession, text: string): Promise<AgentRunResult>
+  prompt(
+    session: AgentSession,
+    text: string,
+    attachments?: readonly AgentPromptAttachment[],
+  ): Promise<AgentRunResult>
   /**
    * Stop the turn in flight. Allowed while it waits for a permission (§6.2), and a
    * no-op when no turn is running.

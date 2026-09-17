@@ -23,6 +23,7 @@ import {
 } from '../../../platform/gateways/memory-agent'
 import type {
   AgentPermissionOption,
+  AgentPromptAttachment,
   AgentSession,
 } from '../../../platform/gateways/agent-contracts'
 import { useAgentSessionStore } from '../stores/agent-session'
@@ -119,6 +120,8 @@ interface Harness {
   answers: Array<[string, string]>
   /** Every prompt it handed over, so "nothing was sent" is an assertion about a call. */
   prompts: string[]
+  /** What each of those prompts carried beside its words, in the order they were sent. */
+  carried: Array<readonly AgentPromptAttachment[]>
   el: (selector: string) => HTMLElement | null
   text: (selector: string) => string
   /** The options the prompt is offering, as the engine labelled them. */
@@ -165,15 +168,17 @@ async function mountPanel(script: MemoryRunScript): Promise<Harness> {
 
   const answers: Array<[string, string]> = []
   const prompts: string[] = []
+  const carried: Array<readonly AgentPromptAttachment[]> = []
   const answer = gateway.answerPermission.bind(gateway)
   gateway.answerPermission = async (target, requestId, optionId) => {
     answers.push([requestId, optionId])
     return answer(target, requestId, optionId)
   }
   const prompt = gateway.prompt.bind(gateway)
-  gateway.prompt = (target, text) => {
+  gateway.prompt = (target, text, attachments = []) => {
     prompts.push(text)
-    return prompt(target, text)
+    carried.push(attachments)
+    return prompt(target, text, attachments)
   }
 
   const app = createApp(AgentPanel, { gateway, session, labels: LABELS })
@@ -194,6 +199,7 @@ async function mountPanel(script: MemoryRunScript): Promise<Harness> {
   const harness: Harness = {
     answers,
     prompts,
+    carried,
     el,
     text: (selector) => el(selector)?.textContent?.trim() ?? '',
     options: () =>
@@ -296,6 +302,63 @@ describe('AgentPanel — the authorization a run waits on', () => {
     // press, and the text waits in the field rather than being sent beside the running turn.
     expect(harness.state()).toBe('running')
     expect(harness.prompts).toEqual(['first'])
+  })
+
+  it('carries what the message was holding all the way to the gateway', async () => {
+    // The whole click path, from the panel's own composer: a pasted screenshot becomes a chip and
+    // the chip is what `AgentGateway.prompt` is called with. This is the case that would be
+    // missing if the strip existed and nothing downstream had been told about it.
+    const asked = createMemoryAgentGateway({
+      agentId: 'memory',
+      profileId: 'test',
+      capabilities: { 'image-attachments': { status: 'available' } },
+    })
+    await asked.start()
+    const opened = await asked.openSession({ vaultId: 'vault', cwd: '/vault' })
+
+    let carried: readonly AgentPromptAttachment[] = []
+    const real = asked.prompt.bind(asked)
+    asked.prompt = (target, text, attachments = []) => {
+      carried = attachments
+      return real(target, text, attachments)
+    }
+    asked.script({ chunks: ['ok. '] })
+
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const app = createApp(AgentPanel, { gateway: asked, session: opened, labels: LABELS })
+    app.use(pinia)
+    app.mount(host)
+    mounted.push(app)
+    await nextTick()
+    // The panel reads the report on mount, so the composer's gate is answered before the paste.
+    await flush()
+    await nextTick()
+
+    const field = host.querySelector<HTMLTextAreaElement>('.agent-composer-field')
+    expect(field).not.toBeNull()
+    const image = new File([new Uint8Array(8)], 'shot.png', { type: 'image/png' })
+    field!.dispatchEvent(
+      Object.assign(new Event('paste', { bubbles: true, cancelable: true }), {
+        clipboardData: {
+          items: [{ kind: 'file', type: image.type, getAsFile: () => image }],
+          files: [image],
+        },
+      }),
+    )
+    await nextTick()
+    await flush()
+
+    expect(host.querySelector('[data-test="composer-attachments"]')).not.toBeNull()
+
+    field!.value = 'what is this'
+    field!.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLFormElement>('form')?.dispatchEvent(new Event('submit'))
+    await flush()
+
+    expect(carried).toHaveLength(1)
+    expect(carried[0]).toMatchObject({ kind: 'image', name: 'shot.png', mediaType: 'image/png' })
   })
 })
 

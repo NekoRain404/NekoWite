@@ -77,6 +77,7 @@ import {
   type AgentGateway,
   type AgentIdentity,
   type AgentOpenRequest,
+  type AgentPromptAttachment,
   type AgentRunResult,
   type AgentSession,
   type AgentSessionHistory,
@@ -423,7 +424,11 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
       return setConfigOption(session, record.modelOptionId, modelId)
     },
 
-    async prompt(session: AgentSession, text: string): Promise<AgentRunResult> {
+    async prompt(
+      session: AgentSession,
+      text: string,
+      attachments: readonly AgentPromptAttachment[] = [],
+    ): Promise<AgentRunResult> {
       const record = book.recordFor(session)
       // One turn at a time per session (§6.2): a second would interleave two runs into one
       // stream with no way to tell which text belongs to which — and the refusal says *that*,
@@ -465,7 +470,7 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
       starting = { sessionId: session.sessionId, turn, parked: [] }
       let runId: string | null = null
       try {
-        runId = await ipc.prompt(session.sessionId, text)
+        runId = await ipc.prompt(session.sessionId, text, attachments)
         run.runId = runId
         pending.set(runKey(record.identity, runId), run)
         // An ending that arrived while the call was in flight belongs to this run — the engine

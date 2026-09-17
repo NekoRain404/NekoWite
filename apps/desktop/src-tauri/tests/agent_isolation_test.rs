@@ -223,7 +223,7 @@ async fn run_to_finish(
 ) -> Vec<AgentEventEnvelope> {
     instance
         .runtime()
-        .prompt(session_id, prompt)
+        .prompt(session_id, prompt, &[])
         .expect("prompt");
     let events = instance
         .events_mut()
@@ -266,8 +266,14 @@ async fn two_engines_reporting_the_same_session_id_do_not_cross_streams() {
         "the collision is this test's premise: the id is the engine's to choose"
     );
     assert_eq!(session_a, "ses_fake_1", "and the fixture's is fixed");
-    let run_a = a.runtime().prompt(&session_a, "hello").expect("prompt a");
-    let run_b = b.runtime().prompt(&session_b, "hello").expect("prompt b");
+    let run_a = a
+        .runtime()
+        .prompt(&session_a, "hello", &[])
+        .expect("prompt a");
+    let run_b = b
+        .runtime()
+        .prompt(&session_b, "hello", &[])
+        .expect("prompt b");
     let events_a = events_until(a.events_mut().expect("a's reader is still here"), |event| {
         event.kind == AgentEventKind::RunFinished
     })
@@ -480,7 +486,7 @@ async fn a_live_instance_keeps_its_registration_from_being_disabled() {
     let session = open_session(&mut instance, &root).await;
     instance
         .runtime()
-        .prompt(&session, "hello")
+        .prompt(&session, "hello", &[])
         .expect("prompt");
     let error = registry.set_enabled("fake-a", false);
     assert!(

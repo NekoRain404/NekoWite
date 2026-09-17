@@ -36,7 +36,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { AgentIdentity } from '../agent-contracts'
+import type { AgentIdentity, AgentPromptAttachment } from '../agent-contracts'
 
 /**
  * The channel the host publishes the runtime's events on.
@@ -160,8 +160,17 @@ export interface AgentIpc {
   selectModel(sessionId: string, configId: string, value: string): Promise<unknown>
   /** Starts a turn and answers the host's own run id for it. The turn's ending arrives as an
    *  event, not as this call's result: the engine answers when the generation is over, and the
-   *  Rust runtime is explicit that a caller cannot be left holding that (`runs.rs`). */
-  prompt(sessionId: string, text: string): Promise<string>
+   *  Rust runtime is explicit that a caller cannot be left holding that (`runs.rs`).
+   *
+   *  `attachments` is what the turn carries beside its text. The Rust command's parameter is
+   *  `Option<Vec<PromptAttachment>>`, so the empty case is sent as `null` rather than as an absent
+   *  key: an explicit "this turn carries none" is a statement, and every caller before this one
+   *  made it by sending nothing at all. */
+  prompt(
+    sessionId: string,
+    text: string,
+    attachments: readonly AgentPromptAttachment[],
+  ): Promise<string>
   cancel(sessionId: string): Promise<void>
   answerPermission(answer: AgentPermissionAnswerWire): Promise<void>
   snapshot(sessionId: string): Promise<AgentHostSnapshot>
@@ -187,7 +196,12 @@ export function createTauriAgentIpc(): AgentIpc {
     closeSession: (sessionId) => invoke<void>('agent_close_session', { sessionId }),
     selectModel: (sessionId, configId, value) =>
       invoke<unknown>('agent_set_config_option', { sessionId, configId, value }),
-    prompt: (sessionId, text) => invoke<string>('agent_prompt', { sessionId, text }),
+    prompt: (sessionId, text, attachments) =>
+      invoke<string>('agent_prompt', {
+        sessionId,
+        text,
+        attachments: attachments.length === 0 ? null : attachments,
+      }),
     cancel: (sessionId) => invoke<void>('agent_cancel_run', { sessionId }),
     answerPermission: (answer) => invoke<void>('agent_permission_answer', { answer }),
     snapshot: (sessionId) => invoke<AgentHostSnapshot>('agent_session_snapshot', { sessionId }),

@@ -280,6 +280,10 @@ while IFS= read -r line; do
             ;;
         *'"method":"session/prompt"'*)
             PROMPT_ID=$id
+            # The frame as it arrived, verbatim. What a turn carries is the one thing a test of the
+            # prompt payload has to read off the wire rather than off our own structs — the blocks
+            # this host builds are the claim, and this line is the evidence.
+            capture "prompt=$line"
             chunk "first"
             # A thought chunk is part of the measured stream (P0 §2.3) and now has a host kind
             # of its own; under every behaviour it arrives between the answer's chunks, which is

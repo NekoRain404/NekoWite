@@ -27,6 +27,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
   AGENT_CAPABILITY_FEATURES,
+  AGENT_PROMPT_ATTACHMENT_KINDS,
   AgentFailure,
   readAgentEvent,
   type AgentEvent,
@@ -572,7 +573,7 @@ describe('the window’s half of the IPC', () => {
     await ipc.stop()
     await ipc.openSession('vault-1', '/vault')
     await ipc.selectModel('ses_fake_1', 'model', 'fake/model-b')
-    await ipc.prompt('ses_fake_1', 'hello')
+    await ipc.prompt('ses_fake_1', 'hello', [])
     await ipc.snapshot('ses_fake_1')
     expect(invokeMock.mock.calls.map((call) => call[0])).toEqual([
       'agent_start',
@@ -582,10 +583,51 @@ describe('the window’s half of the IPC', () => {
       'agent_prompt',
       'agent_session_snapshot',
     ])
+    // `null` rather than an absent key, and that is the Rust command's own signature: its
+    // `attachments` parameter is `Option<Vec<PromptAttachment>>`, so a turn with nothing attached
+    // is stated rather than left out — and the assertion has to say which of the two it is, or it
+    // would pass on both.
     expect(invokeMock).toHaveBeenCalledWith('agent_prompt', {
       sessionId: 'ses_fake_1',
       text: 'hello',
+      attachments: null,
     })
+  })
+
+  it('carries an attachment to the command as the window described it', async () => {
+    invokeMock.mockResolvedValue('run-0')
+    const ipc = createTauriAgentIpc()
+    await ipc.prompt('ses_fake_1', 'look', [
+      { kind: 'image', name: 'shot.png', mediaType: 'image/png', data: 'QUJD' },
+    ])
+    expect(invokeMock).toHaveBeenCalledWith('agent_prompt', {
+      sessionId: 'ses_fake_1',
+      text: 'look',
+      attachments: [{ kind: 'image', name: 'shot.png', mediaType: 'image/png', data: 'QUJD' }],
+    })
+  })
+
+  it('spells the attachment the way the Rust enum does', () => {
+    // The Rust half is a serde internally-tagged enum: `#[serde(tag = "kind", rename_all =
+    // "camelCase")]` over variants `Resource`/`Image` carrying `path`/`text`/`mediaType` and
+    // `name`/`mediaType`/`data`. Read off the source rather than restated, because a field that
+    // drifted would deserialize to a default and the block would reach the engine empty.
+    const rust = readFileSync(
+      resolve(__dirname, '../../../src-tauri/src/agent_runtime/attachments.rs'),
+      'utf8',
+    )
+    const enumStart = rust.indexOf('pub enum PromptAttachment {')
+    expect(enumStart, 'PromptAttachment is not declared in attachments.rs').toBeGreaterThan(-1)
+    const body = rust.slice(enumStart, rust.indexOf('\n}', enumStart))
+    expect(rust.slice(0, enumStart)).toContain('#[serde(tag = "kind", rename_all = "camelCase")]')
+    expect(body).toContain('Resource {')
+    expect(body).toContain('Image {')
+    for (const field of ['path: String', 'text: String', 'name: String', 'data: String']) {
+      expect(body, `the Rust enum has no field ${field}`).toContain(field)
+    }
+    // The two `media_type` fields, each renamed to the wire's spelling — one per arm.
+    expect(body.match(/#\[serde\(rename = "mediaType"\)\]/g)).toHaveLength(2)
+    expect(AGENT_PROMPT_ATTACHMENT_KINDS).toEqual(['resource', 'image'])
   })
 
   it('unwraps the event envelope Tauri hands a listener', async () => {

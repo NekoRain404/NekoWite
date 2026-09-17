@@ -196,7 +196,7 @@ async fn run_to_finish(
 ) -> Vec<AgentEventEnvelope> {
     instance
         .runtime()
-        .prompt(session_id, prompt)
+        .prompt(session_id, prompt, &[])
         .expect("prompt");
     let events = instance
         .events_mut()

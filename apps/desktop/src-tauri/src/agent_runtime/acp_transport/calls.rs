@@ -26,7 +26,6 @@ use agent_client_protocol::schema::v1::{
     InitializeResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionRequest,
     LoadSessionResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
     SessionConfigValueId, SessionId, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
-    TextContent,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{JsonRpcRequest, UntypedMessage};
@@ -168,13 +167,17 @@ impl EngineConnection {
     /// Nothing else about the response changes: a frame that reader will not
     /// read fails through `classify` exactly as the SDK's router would have
     /// failed it.
+    ///
+    /// `prompt` is the whole of what the turn carries, in the order the caller built it: this
+    /// layer does not decide what a message is made of, and it does not add a block to one. What
+    /// the blocks may legally be is the engine's own report and belongs with the code that reads
+    /// it (`super::super::attachments`); what this call owns is the frame and its deadline.
     pub async fn prompt(
         &self,
         session_id: SessionId,
-        text: &str,
+        prompt: Vec<ContentBlock>,
         bound: Duration,
     ) -> Result<PromptEnding, TransportError> {
-        let prompt = vec![ContentBlock::Text(TextContent::new(text))];
         let request = UntypedMessage::new("session/prompt", PromptRequest::new(session_id, prompt))
             .map_err(classify)?;
         // The method the request itself carries, so the timeout this call may

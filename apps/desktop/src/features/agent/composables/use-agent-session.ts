@@ -18,7 +18,12 @@
  */
 
 import { computed, onBeforeUnmount, onMounted, type ComputedRef, type WritableComputedRef } from 'vue'
-import type { AgentGateway, AgentSession, AgentSessionState } from '../../../platform/gateways/agent-contracts'
+import type {
+  AgentGateway,
+  AgentPromptAttachment,
+  AgentSession,
+  AgentSessionState,
+} from '../../../platform/gateways/agent-contracts'
 import { isRunLive, sessionKey, type AgentSessionView } from '../services/agent-session-view'
 import type { AgentDropReason } from '../services/agent-event-reducer'
 import type { AgentLiveNote, LiveNoteLookup } from '../services/agent-context-snapshot'
@@ -108,10 +113,15 @@ export interface AgentSessionBinding {
   /** §6.2's one active generation: false while a run is in flight, so the composer offers
    *  stop instead of send. */
   canSend: ComputedRef<boolean>
-  /** Send one turn. `targets` are the notes the request is about, as the editor holds them at
-   *  this instant — they are what an accepted answer is later checked against, so they have to
-   *  be read here rather than when the reply arrives (`stores/agent-session.ts`). */
-  send(text: string, targets?: readonly AgentLiveNote[]): Promise<AgentSendOutcome>
+  /** Send one turn. `attachments` is what the message carries beside its words, as the composer
+   *  was holding them at this instant; `targets` are the notes the request is about, as the editor
+   *  holds them at this instant — they are what an accepted answer is later checked against, so
+   *  they have to be read here rather than when the reply arrives (`stores/agent-session.ts`). */
+  send(
+    text: string,
+    attachments: readonly AgentPromptAttachment[],
+    targets?: readonly AgentLiveNote[],
+  ): Promise<AgentSendOutcome>
   stop(): Promise<void>
   answer(requestId: string, optionId: string): Promise<AgentAnswerOutcome>
   /** Re-establish the state from a fresh snapshot, keeping the timeline. */
@@ -167,8 +177,11 @@ export function useAgentSession(options: UseAgentSessionOptions): AgentSessionBi
     // The default is the composer's own subject: the panel hands over the words, and the document
     // they are about is the one the editor has open. See `openNoteTargets` for why an unnamed
     // request still names a version rather than capturing nothing.
-    send: (text: string, targets?: readonly AgentLiveNote[]) =>
-      store.send(key, text, targets ?? openNoteTargets(useTabsStore())),
+    send: (
+      text: string,
+      attachments: readonly AgentPromptAttachment[],
+      targets?: readonly AgentLiveNote[],
+    ) => store.send(key, text, attachments, targets ?? openNoteTargets(useTabsStore())),
     stop: () => store.cancel(key),
     answer: (requestId: string, optionId: string) => store.answer(key, requestId, optionId),
     resync: () => store.resync(key),

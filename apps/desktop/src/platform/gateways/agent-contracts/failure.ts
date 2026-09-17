@@ -44,6 +44,13 @@ export const AGENT_FAILURE_CODES = [
   // is still running. A reader had to open both sources to learn what either code meant, which is
   // the proof. This is the condition's own name, and it is what both layers answer now.
   'turn-in-flight',
+  // Extension. A turn carried a content block that ACP requires the *client* to have checked the
+  // engine's `promptCapabilities` for, and the engine's handshake did not report it. The host
+  // refuses before the frame is built, so nothing was sent and the engine never saw a call it did
+  // not say it answers. Not `invalid-response` — that is a frame this window could not read — and
+  // not `buffer-conflict`, which is this list's word for a stream or a session's state; a reader
+  // told either would go looking for a protocol bug instead of at the engine's own report.
+  'attachment-unsupported',
 ] as const
 
 export type AgentFailureCode = (typeof AGENT_FAILURE_CODES)[number]

@@ -7,13 +7,14 @@
  * each finishing the turn in their own way and drifting apart.
  */
 
-import type { AgentRunResult } from '../agent-contracts'
+import type { AgentPromptAttachment, AgentRunResult } from '../agent-contracts'
 import { pushEvent, suspend, type LiveRun, type LiveSession } from './session'
 import type { MemoryRunScript } from './scenario'
 
 export async function runTurn(
   record: LiveSession,
   text: string,
+  attachments: readonly AgentPromptAttachment[],
   run: LiveRun,
   script: MemoryRunScript,
 ): Promise<AgentRunResult> {
@@ -23,7 +24,13 @@ export async function runTurn(
   // `session/load` that restored the conversation. So this goes into the record's stored turns
   // (`LiveSession.prompts`) and is replayed by `loadSession`, rather than through `pushEvent`,
   // which would put a frame on the live stream that no engine ever sends.
-  record.prompts.push({ runId: run.runId, text })
+  //
+  // The attachments are stored and **not** replayed: a `user-delta` carries text and one string is
+  // all the measured frame holds, so a restored conversation says what was typed and not what was
+  // attached. They are kept because a test of the composer-to-engine path has to be able to read
+  // what the turn actually carried, and a double that dropped them could not tell "the window sent
+  // them" from "the window sent nothing".
+  record.prompts.push({ runId: run.runId, text, attachments: [...attachments] })
 
   for (const chunk of script.chunks ?? [text]) {
     pushEvent(record, 'text-delta', { text: chunk }, run.runId)

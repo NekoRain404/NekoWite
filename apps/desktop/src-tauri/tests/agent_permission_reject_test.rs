@@ -429,7 +429,7 @@ async fn run_once(label: &str, permission: Option<&str>) -> Option<Run> {
         escape.display()
     );
     let run_id = runtime
-        .prompt(&session.session_id, &prompt)
+        .prompt(&session.session_id, &prompt, &[])
         .expect("the session accepts a prompt");
     eprintln!("prompt sent, host run id {run_id}");
 

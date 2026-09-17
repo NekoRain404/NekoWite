@@ -116,6 +116,13 @@ pub enum AgentEventKind {
 /// `BufferConflict`, which is this list's word for a stream that cannot be
 /// continued. Both told a reader the wrong fact, and the answer that names the
 /// condition is the same on both sides of the boundary.
+///
+/// `AttachmentUnsupported`: a block that needs a prompt capability ACP requires
+/// the *client* to have checked, sent to an engine whose own handshake does not
+/// report it. It is not `InvalidResponse` — that is a frame the host could not
+/// read — and it is not `BufferConflict`, which is about a stream or a session's
+/// state. The condition is that the engine said no to this kind of content, and a
+/// reader told anything else would go looking for a protocol bug.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AgentFailureCode {
@@ -131,6 +138,7 @@ pub enum AgentFailureCode {
     InvalidResponse,
     CertificateUntrusted,
     TurnInFlight,
+    AttachmentUnsupported,
 }
 
 /// Everything that can go wrong between issuing a request and reading its

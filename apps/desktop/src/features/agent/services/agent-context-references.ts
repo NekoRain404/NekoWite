@@ -3,14 +3,19 @@
  *
  * Zed's composer carries an "Add Context" menu whose rows insert a *mention* of the chosen thing
  * into the message text (`conversation_view/thread_view.rs:5538`'s `build_add_context_menu` calling
- * `message_editor.update(|editor, cx| editor.insert_context_type("file", window, cx))`). That is the
- * only shape this app can copy honestly, because **the message text is the only channel a turn
- * has**: `AgentGateway.prompt(session, text)` takes a string, and the host builds one `ContentBlock::
- * Text` from it (`src-tauri/src/agent_runtime/acp_transport/calls.rs:177`, `EngineConnection::
- * prompt`). There is no content slot for an attachment, so nothing here may promise that a model was
- * *shown* a file — a row names a path, and the engine's own tools decide what to do with it.
+ * `message_editor.update(|editor, cx| editor.insert_context_type("file", window, cx))`). What this
+ * module owns is the half of that which is about *text*: which rows a person may point at, and what
+ * a chosen row's words are.
  *
- * Three rules follow from that, and all three are structural rather than careful:
+ * **That used to be the only half a turn had, and it is not any more.** A prompt now carries
+ * content blocks beside its text (`AgentGateway.prompt(session, text, attachments)`, and
+ * `agent_runtime/attachments.rs` on the host side), so a chosen file can travel as its own
+ * contents rather than as a path — and which of the two happens is `agent-composer-attachments.ts`'s
+ * decision, because it is the engine's own report that makes it. Nothing here reads a capability,
+ * deliberately: a row in this vocabulary names a thing a person may point at, and whether the thing
+ * may be *sent* is asked one layer up, once, where the report is in hand.
+ *
+ * Three rules follow, and all three are structural rather than careful:
  *
  *  - **Every reference is inside the vault.** The engine runs with the vault as its working
  *    directory, so a vault-relative path is the one spelling it can resolve; a path that is not
@@ -18,29 +23,26 @@
  *    row that names a file outside the workspace the user opened. The containment test is the
  *    attachments feature's own (`isPathWithinVault`) and the prefix strip is the shared path
  *    grammar's (`stripVaultPrefix`) — one rule, not a second one written here.
- *  - **The reference is the path and nothing else.** No `@` sigil: the catalogue's own note in the
- *    panel's copy is that `prompt()` takes no context slot and nothing in the composer triggers
- *    `@`, and a syntax the engine does not parse would be a promise made by punctuation. The
- *    inserted text is what a user would type to point the agent at a file.
+ *  - **A reference here is the path and nothing else.** No `@` sigil in the words this module
+ *    produces: the `@` the composer does offer is a *menu* (`use-agent-composer-mentions.ts`), and
+ *    what it settles on becomes an attachment rather than a syntax. A `@` left in the message text
+ *    would be a promise made by punctuation — the engine parses no such thing — so the inserted
+ *    text stays what a user would type to point the agent at a file.
  *  - **A selection is added as its own words.** {@link selectedPassage} is the one kind of row that
  *    is not a path, and the reason is that a range has no path to name: the reader cannot type one
  *    and the engine cannot look one up. What a reader would otherwise do by hand — copy the passage
  *    and paste it into the message — is what the row does for them, in the same channel as
  *    everything else here.
  *
- * **Why there is no attachment row, and why no capability gates the rows above.** Zed's menu has an
- * Image entry, `.disabled(!supports_images)`, and ours has no counterpart — not because this app
- * has not read the capability, but because reading it would licence the wrong thing. The engine's
- * answer (`promptCapabilities.image`; the pinned OpenCode advertises it, `adapters/opencode.rs:117`)
- * is about content *blocks* in a prompt, and this host cannot put one there: `prompt` builds a
- * single `ContentBlock::Text` from one string, which is why `AgentModelCapabilities`'
- * `acceptedAttachmentKinds` (`agent-context-snapshot.ts`) has no production reader — a gate keyed
- * to it would draw a row that looks available at exactly the engine whose capability is `true`, and
- * the file would not travel. That is the defect the capability rule names, arriving from the
- * direction the rule does not usually come from. A path or a passage in the message needs no
- * capability at all: it is text on every engine, and the one thing it must not do — claim the file
- * itself was sent — no capability can make true. Sending what Zed's menu gates is a host change
- * (one `prompt` call carrying more than one block), not a UI change.
+ * **Why no capability gates the rows above, and why the attachment gate lives elsewhere.** Zed's
+ * menu has an Image entry, `.disabled(!supports_images)`, and the rows here have no counterpart: a
+ * path or a passage in the message is text on every engine and needs no capability at all. The one
+ * thing a row here must not do is claim the file itself was sent, and that claim is now somebody
+ * else's to make — `agent-composer-attachments.ts` reads the engine's own report and decides
+ * whether a picked file becomes a block or a path. `AgentModelCapabilities`'
+ * `acceptedAttachmentKinds` (`agent-context-snapshot.ts`) still has no production reader, and that
+ * is a separate fact about a separate vocabulary (the AI path's model capability list, not ACP's
+ * prompt capabilities), recorded here so the two are not mistaken for each other.
  */
 
 import { isPathWithinVault } from '../../attachments'

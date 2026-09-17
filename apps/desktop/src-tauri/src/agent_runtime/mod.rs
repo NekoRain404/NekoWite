@@ -72,6 +72,7 @@
 //! crate should prefer.
 
 pub mod adapters;
+pub mod attachments;
 pub mod binary_registry;
 pub mod capabilities;
 pub mod catalogue;

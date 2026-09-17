@@ -651,7 +651,7 @@ describe('the versions a request is submitted with', () => {
     const { store, key, record } = await attached()
 
     const target = note()
-    const outcome = await store.send(key, 'rewrite this', [target])
+    const outcome = await store.send(key, 'rewrite this', [], [target])
     expect(outcome).toEqual({ accepted: true, refusedEdits: [] })
     expect(store.editBaseline(key, 'notes/a.md')).toMatchObject({
       path: 'notes/a.md',
@@ -682,7 +682,7 @@ describe('the versions a request is submitted with', () => {
     // would keep handing out. The baseline is a copy, which is what makes "the version at the
     // request" a fact rather than a reference that keeps up.
     const target = note()
-    await store.send(key, 'rewrite this', [target])
+    await store.send(key, 'rewrite this', [], [target])
     target.revision = 'r9'
     target.buffer = { state: 'clean', text: 'what I typed while it thought' }
 
@@ -696,8 +696,8 @@ describe('the versions a request is submitted with', () => {
     const { store, gateway, key } = await attached()
     gateway.script({ hang: true })
 
-    const sending = store.send(key, 'the first question', [note()])
-    const refused = await store.send(key, 'a second question', [note({ revision: 'r9' })])
+    const sending = store.send(key, 'the first question', [], [note()])
+    const refused = await store.send(key, 'a second question', [], [note({ revision: 'r9' })])
 
     expect(refused).toEqual({ accepted: false, reason: 'run-in-flight' })
     expect(store.editBaseline(key, 'notes/a.md')?.revision).toBe('r1')
@@ -709,7 +709,7 @@ describe('the versions a request is submitted with', () => {
   it('refuses a note from another vault, and says which one, without holding up the prompt', async () => {
     const { store, key, record } = await attached()
 
-    const outcome = await store.send(key, 'rewrite all of these', [
+    const outcome = await store.send(key, 'rewrite all of these', [], [
       note(),
       note({ path: 'notes/b.md', vaultId: 'vault-2', revision: 'r5' }),
     ])
@@ -728,7 +728,7 @@ describe('the versions a request is submitted with', () => {
 
   it('answers null for a note the request never named, and for a session it does not hold', async () => {
     const { store, key } = await attached()
-    await store.send(key, 'rewrite this', [note()])
+    await store.send(key, 'rewrite this', [], [note()])
 
     // Null is a refusal the apply path reads as one: a proposal for a note no request named has
     // nothing to be checked against, and writing on that is the guess this whole path refuses.
@@ -740,7 +740,7 @@ describe('the versions a request is submitted with', () => {
     const { store, gateway, key, record } = await attached()
     gateway.script({ hang: true })
 
-    const sending = store.send(key, 'rewrite this', [note()])
+    const sending = store.send(key, 'rewrite this', [], [note()])
     await store.cancel(key)
     await sending
 
@@ -750,7 +750,7 @@ describe('the versions a request is submitted with', () => {
 
   it('keeps them across a detach and re-attach, so a reconnect is not a new request', async () => {
     const { store, gateway, session, key } = await attached()
-    await store.send(key, 'rewrite this', [note()])
+    await store.send(key, 'rewrite this', [], [note()])
 
     // The rail closes and reopens, the runtime is resynced — the run this request started is
     // still the one whose answer may arrive, and its version is still the one to check against.

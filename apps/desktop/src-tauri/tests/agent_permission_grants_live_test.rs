@@ -368,7 +368,7 @@ async fn run_turn(engine: &mut Engine, session: &str, name: &str, answer: &Answe
 
     engine
         .runtime
-        .prompt(session, &prompt)
+        .prompt(session, &prompt, &[])
         .expect("the session accepts a prompt");
 
     loop {

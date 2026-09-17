@@ -299,7 +299,7 @@ async fn take_one_turn(
         .expect("the engine accepts the model this probe is configured for");
 
     let run = runtime
-        .prompt(&session, TEST_PROMPT)
+        .prompt(&session, TEST_PROMPT, &[])
         .expect("the turn starts");
     eprintln!("turn {run}: {TEST_PROMPT:?}");
 

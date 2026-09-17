@@ -268,6 +268,55 @@ export const agent = {
             selection: 'Add the text you have selected',
             unreadable: 'The folder could not be read: {detail}',
           },
+          /* What the message is carrying beside its words: one chip per attachment, and the
+             sentences for the two ways a control can be absent or a gesture refused.
+             `attachOnly` is the state that is easiest to get wrong and the reason this block
+             exists at all - an engine that reads embedded files and not images still gets a `+`
+             and still gets its pasted screenshots refused, and a reader who was not told would
+             believe the model had seen one. */
+          attach: {
+            strip: 'Attached to this message',
+            /* The chip's own control: what pressing it takes away. Named with the attachment, so
+               the tooltip is not one of a row of identical "Remove"s. */
+            remove: 'Remove {name}',
+            /* The chip's accessible name, for a reader who cannot see the file's icon. */
+            label: '{name}, attached to this message',
+            /* The `+` rows for the two kinds, each drawn only where the engine's report says the
+               capability is available. */
+            file: 'Attach a file from this folder',
+            image: 'Attach a picture',
+            /* The picture row is a picker rather than a drop, and it says so. */
+            pick: 'Choose a picture to attach',
+            /* Why one kind has no control. `{detail}` is the engine's own sentence about what its
+               handshake reported, kept verbatim: this app's reading of the report would be a
+               second account of a fact the engine already stated. */
+            refused: '{name} was not attached: {detail}',
+            unreported: '{name} was not attached: {detail}',
+            /* The three refusals the message's own budget produces, and the one a file that could
+               not be read produces. Same shape as the above: a refusal names what was left out. */
+            tooMany: 'This message already holds the most attachments it can send ({max}).',
+            tooLarge: '{name} is larger than the {max} one attachment may be.',
+            noRoom: 'This message already holds {max} of attachments; {name} did not fit.',
+            unreadable: '{name} could not be read, so there is nothing to send in it.',
+            /* The `@` menu: the same folder listing the `+` walks, opened by typing. */
+            /* The `@` menu: the same folder the `+` walks, opened by typing a note's name. Its
+               four "nothing to show" states are separate sentences for the reason the `/` menu's
+               are: a list still being read, a vault with no notes, a word that matches none and an
+               index that could not be walked are four different things to do about it. */
+            mention: {
+              list: 'Notes in this folder',
+              noMatch: 'No note in this folder matches',
+              empty: 'This folder has no notes to name',
+              reading: 'Reading the folder…',
+              unreadable: 'The folder could not be listed, so no note can be named.',
+              /* The field's own tooltip: how the `@` menu is learned about. There is no room for
+                 it in the composer's one-row hint, which is already the sentence that gets
+                 ellipsised first at the rail's narrow end - and a reference affordance nobody can
+                 find is the failure this line exists to avoid. `@` alone is punctuation to a
+                 screen reader, so the sentence spells the trigger out. */
+              hint: "Type {'@'} to name a note in this folder",
+            },
+          },
           /* The bar's right-hand group: the options the session's engine reported, one control
              each. Every word the controls themselves show is the engine's — a value's name, an
              option's name, the order they arrive in — and this block is only what this app can
@@ -1269,6 +1318,28 @@ export const agent = {
             up: '上一级文件夹',
             selection: '加入你选中的文字',
             unreadable: '无法读取该文件夹：{detail}',
+          },
+          attach: {
+            strip: '这条消息已附加',
+            remove: '移除 {name}',
+            label: '{name}，已附加到这条消息',
+            file: '附加这个文件夹里的文件',
+            image: '附加一张图片',
+            pick: '选择一张要附加的图片',
+            refused: '{name} 没有附加：{detail}',
+            unreported: '{name} 没有附加：{detail}',
+            tooMany: '这条消息已经持有能发送的附件上限（{max}）。',
+            tooLarge: '{name} 超过了单个附件允许的 {max}。',
+            noRoom: '这条消息已持有 {max} 的附件，{name} 放不下。',
+            unreadable: '无法读取 {name}，里面没有可发送的内容。',
+            mention: {
+              list: '这个文件夹里的笔记',
+              noMatch: '这里没有匹配的笔记',
+              empty: '这个文件夹里没有可以点名的笔记',
+              reading: '正在读取文件夹……',
+              unreadable: '无法列出这个文件夹，因此没有笔记可以点名。',
+              hint: "输入 {'@'} 点名这个文件夹里的笔记",
+            },
           },
           config: {
             group: '会话选项',

@@ -376,7 +376,7 @@ async fn a_prompt_streams_text_and_ends_with_the_measured_stop_reason() {
         .expect("session/new");
 
     let run_id = runtime
-        .prompt(&session.session_id, "hello")
+        .prompt(&session.session_id, "hello", &[])
         .expect("prompt");
     let events = events_until(&mut events, |event| {
         event.kind == AgentEventKind::RunFinished
@@ -413,7 +413,7 @@ async fn a_turn_that_ends_for_a_reason_this_version_does_not_know_is_not_a_failu
         .expect("session/new");
 
     let run_id = runtime
-        .prompt(&session.session_id, "hello")
+        .prompt(&session.session_id, "hello", &[])
         .expect("prompt");
     let events = events_until(&mut events, |event| {
         event.kind == AgentEventKind::RunFinished || event.kind == AgentEventKind::RunFailed
@@ -457,7 +457,7 @@ async fn a_thought_chunk_reaches_the_host_as_its_own_kind() {
         .expect("session/new");
 
     runtime
-        .prompt(&session.session_id, "hello")
+        .prompt(&session.session_id, "hello", &[])
         .expect("prompt");
     let events = events_until(&mut events, |event| {
         event.kind == AgentEventKind::RunFinished
@@ -511,7 +511,7 @@ async fn an_update_with_no_kind_here_is_dropped_rather_than_failing_the_turn() {
         .expect("session/new");
 
     let run_id = runtime
-        .prompt(&session.session_id, "hello")
+        .prompt(&session.session_id, "hello", &[])
         .expect("prompt");
     let events = events_until(&mut events, |event| {
         event.kind == AgentEventKind::RunFinished
@@ -560,7 +560,7 @@ async fn a_tool_calls_three_frames_arrive_correlated_and_in_order() {
         .expect("session/new");
 
     let run_id = runtime
-        .prompt(&session.session_id, "hello")
+        .prompt(&session.session_id, "hello", &[])
         .expect("prompt");
     let events = events_until(&mut events, |event| {
         event.kind == AgentEventKind::RunFinished
@@ -636,7 +636,7 @@ async fn the_usage_the_engine_reported_is_published_field_by_field() {
         .expect("session/new");
 
     runtime
-        .prompt(&session.session_id, "hello")
+        .prompt(&session.session_id, "hello", &[])
         .expect("prompt");
     let events = events_until(&mut events, |event| {
         event.kind == AgentEventKind::RunFinished
@@ -681,7 +681,7 @@ async fn a_usage_missing_a_core_field_still_reports_the_counters_it_sent() {
         .expect("session/new");
 
     runtime
-        .prompt(&session.session_id, "hello")
+        .prompt(&session.session_id, "hello", &[])
         .expect("prompt");
     let events = events_until(&mut events, |event| {
         event.kind == AgentEventKind::RunFinished
@@ -724,11 +724,11 @@ async fn a_second_prompt_while_running_is_refused() {
         .await
         .expect("session/new");
     let run_id = runtime
-        .prompt(&session.session_id, "first")
+        .prompt(&session.session_id, "first", &[])
         .expect("prompt");
     assert!(run_id.starts_with("run-"));
 
-    let refused = runtime.prompt(&session.session_id, "second");
+    let refused = runtime.prompt(&session.session_id, "second", &[]);
 
     assert!(
         matches!(
@@ -751,7 +751,7 @@ async fn a_cancelled_run_drops_its_late_text_and_finishes_once() {
         .expect("session/new");
 
     let run_id = runtime
-        .prompt(&session.session_id, "hello")
+        .prompt(&session.session_id, "hello", &[])
         .expect("prompt");
     // The fixture sends "first", then waits for the cancel before sending
     // "late" — the text that must not revive a stopped run (§6.2).

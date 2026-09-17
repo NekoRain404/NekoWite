@@ -26,7 +26,7 @@
 export { AGENT_FAILURE_CODES, AgentFailure, isAgentFailureCode } from './agent-contracts/failure'
 export type { AgentFailureCode } from './agent-contracts/failure'
 
-export { AGENT_STOP_REASONS } from './agent-contracts/payloads'
+export { AGENT_PROMPT_ATTACHMENT_KINDS, AGENT_STOP_REASONS, promptAttachmentLabel } from './agent-contracts/payloads'
 export type {
   AgentCommand,
   AgentConfigChoice,
@@ -41,6 +41,7 @@ export type {
   AgentPermissionOption,
   AgentPermissionRequest,
   AgentPlanEntry,
+  AgentPromptAttachment,
   AgentRunEnding,
   AgentRunResult,
   AgentStopReason,

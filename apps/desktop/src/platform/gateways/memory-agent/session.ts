@@ -20,6 +20,7 @@ import {
   type AgentConfigOption,
   type AgentModelOption,
   type AgentPayloads,
+  type AgentPromptAttachment,
   type AgentSession,
   type AgentSessionSnapshot,
   type AgentSessionState,
@@ -97,8 +98,17 @@ export interface LiveSession {
    * (`agent_session_replay_live_test.rs`). A double that published the prompt live would be
    * inventing a frame the engine never sends; one that kept no record would restore a
    * conversation with the agent talking to itself.
+   *
+   * `attachments` is what the turn carried beside that text. It is recorded and not replayed: the
+   * measured `user-delta` holds one string, so restoring a conversation says what was typed and
+   * not what was attached — but a double that dropped them could not tell a window that sent an
+   * attachment from one that sent nothing, which is the whole of what a test of this path reads.
    */
-  prompts: { runId: string; text: string }[]
+  prompts: {
+    runId: string
+    text: string
+    attachments: readonly AgentPromptAttachment[]
+  }[]
   /** Unanswered permission requests, in arrival order. */
   permissions: Extract<AgentEvent, { kind: 'permission-request' }>[]
   subscribers: Set<(event: AgentEvent) => void>

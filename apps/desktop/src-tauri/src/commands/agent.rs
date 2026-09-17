@@ -394,17 +394,24 @@ pub async fn agent_set_config_option(
 }
 
 /// Sends a turn. The answer is the host's run id; the turn's *ending* arrives as an event.
+///
+/// `attachments` is what the reader put in the message beside its words, as the window described
+/// them (`agent_runtime::attachments::PromptAttachment`). Optional so that a window which sends
+/// none — and every older caller — asks for exactly the frame that existed before, and passed
+/// through unread: whether the turn may carry each block is the engine's own report, and the
+/// runtime is the layer that holds it.
 #[tauri::command]
 pub async fn agent_prompt<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     ipc: tauri::State<'_, AgentIpcState>,
     session_id: String,
     text: String,
+    attachments: Option<Vec<crate::agent_runtime::attachments::PromptAttachment>>,
 ) -> Result<String, String> {
     let session = ipc.session()?;
     let run_id = session
         .runtime
-        .prompt(&session_id, &text)
+        .prompt(&session_id, &text, &attachments.unwrap_or_default())
         .map_err(|error| error.failure_message())?;
     // Marked from here and not from a frame, because no frame says "a turn began" — the runtime's
     // own answer is the run id, and a window that mounts while a turn is running has to be told

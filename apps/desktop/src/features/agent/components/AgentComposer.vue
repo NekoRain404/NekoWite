@@ -46,13 +46,36 @@ export interface AgentComposerLabels {
  * (§5.3 「输入区初始约 96–120px，随内容增长到面板高度的约 35% 后内部滚动」). The bound is
  * measured from the nearest positioned ancestor — the panel, which is what it must not
  * outgrow — and not from the window, because the panel is not always the window.
+ *
+ * **The message can carry more than its words, and this is the layer that decides what travels.**
+ * A turn is built from a text block plus one block per attachment (`agent_runtime/attachments.rs`
+ * on the host side), and everything that puts something in is here: a paste of an image, a drag
+ * over the field, and a file picked in the `+`'s own list. What may go out is the engine's own
+ * report and nothing else — `promptCapabilities` decides, the host reads it again at send time, and
+ * a block it does not licence is refused with the engine's own sentence rather than dropped. The
+ * rules that do not need an element — what a file becomes, what fits, what is refused — live in
+ * `services/agent-composer-attachments.ts` and `composables/use-agent-composer-attachments.ts`.
  */
 import { computed, nextTick, ref, watch } from 'vue'
 import { Send, Square } from 'lucide-vue-next'
+import type {
+  AgentCapabilityReport,
+  AgentPromptAttachment,
+} from '../../../platform/gateways/agent-contracts'
+import { t } from '../../../i18n'
+import { useAgentSessionStore } from '../stores/agent-session'
+import { useAgentComposerAttachments } from '../composables/use-agent-composer-attachments'
+import {
+  textWithoutMention,
+  useAgentComposerMentions,
+} from '../composables/use-agent-composer-mentions'
 import type { AgentConfigControl } from '../services/agent-config-options'
 import { insertReferenceText } from '../services/agent-context-references'
+import AgentComposerAttachments from './AgentComposerAttachments.vue'
 import AgentComposerContext, { type AgentComposerSelection } from './AgentComposerContext.vue'
 import AgentConfigRow from './AgentConfigRow.vue'
+import AgentReferenceMenu, { type AgentReferenceRow } from './AgentReferenceMenu.vue'
+import { FileText } from 'lucide-vue-next'
 
 const props = defineProps<{
   /** A run is in flight: the button is a stop, and Enter will not send. */
@@ -96,6 +119,16 @@ const props = defineProps<{
    * that the default (the app's own read) applies when nobody supplies one.
    */
   selection?: () => AgentComposerSelection | null
+  /**
+   * The engine's own report for this session, or null while it has not arrived.
+   *
+   * It reaches this component for one reason: whether a chosen file becomes an attachment the
+   * engine reads or a path in the message is the engine's answer and nobody else's, and this is
+   * the layer that owns both the file row and the send. Null is a state of its own — nothing has
+   * answered yet — and it draws no attach affordance at all rather than a disabled one, because a
+   * control nothing can licence is not a control the reader can act on.
+   */
+  capabilities?: readonly AgentCapabilityReport[] | null
   labels: AgentComposerLabels
 }>()
 
@@ -104,8 +137,14 @@ const props = defineProps<{
 const draft = defineModel<string>({ default: '' })
 
 const emit = defineEmits<{
-  /** The reader sent this text. Whether it was accepted is the store's answer, not ours. */
-  send: [text: string]
+  /**
+   * The reader sent this text, and what the message was carrying beside it.
+   *
+   * The attachments travel with the send rather than through a second channel, because they are
+   * part of the same act: a turn that carried the words and lost the files would be a prompt
+   * nobody chose, and there is no moment between the two for a state to disagree.
+   */
+  send: [text: string, attachments: readonly AgentPromptAttachment[]]
   /** Stop the run in flight. */
   stop: []
   /** A composition opened or closed. The menu's filter is held still across one (T8), so the
@@ -135,10 +174,139 @@ const composing = ref(false)
 const COMMIT_GRACE = 60
 let composedAt = Number.NEGATIVE_INFINITY
 
+/**
+ * What the message is carrying, and the three intakes that put something there.
+ *
+ * The vault is read from the store's active record because that IS the session this composer sends
+ * to — the same seam, and the same reason, `AgentComposerContext.vue` gives for its folder listing.
+ */
+const attachments = useAgentComposerAttachments({
+  capabilities: () => props.capabilities ?? null,
+  vault: () => useAgentSessionStore().activeRecord?.identity.vaultId ?? null,
+})
+
+/**
+ * The `@` menu: typing a note's name into the message.
+ *
+ * The rows are the workspace's own notes (`services/vault-files.ts`'s index, which is what the
+ * file tree lists), and settling on one puts the file into the turn rather than its name into the
+ * text — the same two outcomes `pickFile` chooses between, for the same reason. The typed word is
+ * taken out of the message when it settles, because the file is now a chip and the half-written
+ * name is no longer what the reader meant to say.
+ */
+/**
+ * The file a mention settled on: the half-typed word comes out of the message, and the file goes
+ * into the turn.
+ *
+ * One function for both ways in — the row the reader clicked and the Enter the menu took — because
+ * the two have to do exactly the same thing, and the second of them is reached from inside the
+ * composable that was built with this very function as its `select`.
+ */
+function pickMention(path: string): void {
+  draft.value = textWithoutMention(draft.value)
+  pickFile(path)
+}
+
+const mentions = useAgentComposerMentions({
+  vault: () => useAgentSessionStore().activeRecord?.identity.vaultId ?? null,
+  text: () => draft.value,
+  select: pickMention,
+})
+
+/** The rows the `@` menu draws. Ids are the paths themselves, so the row the reader took and the
+ *  file that is attached cannot drift apart. */
+const mentionRows = computed((): AgentReferenceRow[] =>
+  mentions.matches.value.map((path) => ({ id: path, label: path, icon: FileText })),
+)
+
+/** A sentence for each way the `@` menu can have nothing to show. `closed` and `rows` draw the
+ *  list itself, so they are not here. */
+const mentionNotice = computed((): string | null => {
+  switch (mentions.view.value) {
+    case 'reading':
+      return t('agent.panel.composer.attach.mention.reading')
+    case 'empty':
+      return t('agent.panel.composer.attach.mention.empty')
+    case 'no-match':
+      return t('agent.panel.composer.attach.mention.noMatch')
+    case 'unreadable':
+      return t('agent.panel.composer.attach.mention.unreadable')
+    default:
+      return null
+  }
+})
+
 const blank = computed(() => draft.value.trim() === '')
+
+/**
+ * The message a send was just attempted with, or null when no send is outstanding.
+ *
+ * It exists for one decision: whether an emptied draft means the store *accepted* the turn or the
+ * reader cleared the field. `send` empties the draft only on acceptance (`agent-session.ts`), so an
+ * emptied draft with a send outstanding is the store's own word for "it went", while any keystroke
+ * of the reader's own clears this and takes a manual clearing with it.
+ */
+const pendingSend = ref<string | null>(null)
 
 function focus(): void {
   field.value?.focus()
+}
+
+/**
+ * A file the reader picked in the `+`'s list, and what becomes of it.
+ *
+ * Two outcomes and the engine's own report decides between them, which is Zed's reading too: it
+ * builds a mention's block at *send* time from the capability it has in hand
+ * (`zed-main/crates/agent_ui/src/message_editor.rs:2138-2180` `mention_to_content_block`, whose
+ * `supports_embedded_context` branch produces `Resource` and whose other branch produces
+ * `ResourceLink`). The difference from Zed is what the second branch does: Zed sends a link the
+ * engine may or may not follow, and this app has not measured that the pinned engine follows one —
+ * so the file's *path* goes into the message as text instead, which is what pressing the same row
+ * has always done and is the one shape whose effect is known. Nothing is claimed about the model
+ * having been shown the file, and the chip says which of the two happened.
+ */
+function pickFile(path: string): void {
+  if (attachments.resourceStanding.value.kind === 'allowed') {
+    void attachments.attachFile(path)
+    return
+  }
+  insertReference(path)
+}
+
+/**
+ * A paste. Images become attachments; anything else is left to the field.
+ *
+ * The event is only taken when the clipboard actually carried an image: a paste of text must reach
+ * the textarea unchanged, and preventing the default on every paste would be this component
+ * swallowing the reader's copy of a sentence to look for a screenshot in it.
+ */
+function onPaste(event: ClipboardEvent): void {
+  const clipboard = event.clipboardData
+  const carriesImage = Array.from(clipboard?.items ?? []).some(
+    (item) => item.kind === 'file' && item.type.startsWith('image/'),
+  )
+  if (!carriesImage) return
+  event.preventDefault()
+  void attachments.addFromTransfer(clipboard)
+}
+
+/** A drag over the field. Only claimed when the drag actually carries files, and refused by
+ *  default otherwise so the field keeps its ordinary text-drop behaviour. */
+function onDragOver(event: DragEvent): void {
+  if (!carriesFiles(event.dataTransfer)) return
+  event.preventDefault()
+  if (event.dataTransfer !== null) event.dataTransfer.dropEffect = 'copy'
+}
+
+function onDrop(event: DragEvent): void {
+  if (!carriesFiles(event.dataTransfer)) return
+  event.preventDefault()
+  void attachments.addFromTransfer(event.dataTransfer)
+}
+
+function carriesFiles(data: DataTransfer | null): boolean {
+  if (data === null) return false
+  return Array.from(data.types).includes('Files')
 }
 
 /** How tall the field may grow: about a third of the panel (§5.3).
@@ -165,14 +333,31 @@ function submit(): void {
   // not part of what the reader meant to say, and anything more would be this layer editing
   // their prompt.
   const text = draft.value.trim()
+  // A message with words but nothing attached is the ordinary case; a message with attachments and
+  // no words is not — the attachments have nothing to refer to, and the host's prompt would carry
+  // an empty text block. So the field's own rule stands unchanged and the attachments ride along.
   if (text === '' || !props.canSend) return
-  emit('send', text)
+  // One value, read once: what travels and what the strip is cleared against cannot be two
+  // different readings of it.
+  const carried = attachments.held.value
+  // Sent, not cleared. Whether the turn was *accepted* is the store's answer, and this component
+  // is not told it: `AgentPanel.onSend` has the outcome and this is not where it lands
+  // (`agent-session.ts` refuses a second turn on a session with `run-in-flight` and puts the text
+  // straight back). So the strip is cleared on the store's own signal — the draft going empty,
+  // which `send` does only once the turn is accepted — and never on the mere press of Enter. A
+  // refusal therefore leaves the chips exactly where they were, beside the text that came back.
+  pendingSend.value = text
+  emit('send', text, carried)
   void nextTick(focus)
 }
 
 function onKeydown(event: KeyboardEvent): void {
-  // The menu above is asked first: an arrow key and the Enter that settles on a row are its
-  // keys while a `/token` is open, and it says so by having already called `preventDefault`.
+  // The menus are asked first, and the `@` list before the engine's: a word starting `@` cannot be
+  // a `/command` (that one has to start the message), so the two never both have a claim, and the
+  // order only decides which one answers when neither does. Both say "mine" by having already
+  // called `preventDefault`, and both tell the IME apart from a key of their own.
+  const mentioned = mentions.onKeydown(event)
+  if (mentioned !== 'pass') return
   const verdict = props.resolveKey?.(event) ?? 'pass'
   if (verdict !== 'pass') return
   if (event.key !== 'Enter') return
@@ -224,9 +409,22 @@ function onCompositionEnd(): void {
   emit('composition', 'end')
 }
 
-watch(draft, () => {
+watch(draft, (value) => {
+  // The store took the turn: the words are in the timeline and the files went with them. The
+  // attachments are cleared here rather than at the press because this is the first moment
+  // anything has said the send was accepted.
+  if (value === '' && pendingSend.value !== null) {
+    pendingSend.value = null
+    attachments.clear()
+  }
   void nextTick(grow)
 })
+
+/** A keystroke of the reader's own: whatever send was outstanding is no longer what this draft is
+ *  about, so an empty field from here on is theirs rather than the store's. */
+function onInput(): void {
+  if (pendingSend.value !== null && draft.value !== pendingSend.value) pendingSend.value = null
+}
 
 defineExpose({ focus })
 </script>
@@ -236,17 +434,56 @@ defineExpose({ focus })
     class="agent-composer"
     @submit.prevent="submit"
   >
+    <!-- What the turn is carrying, above the words it carries them with. Drawn only when there is
+         something in it: an empty frame with a heading would be a surface telling a reader about a
+         state they are not in. -->
+    <AgentComposerAttachments
+      v-if="attachments.hasAny.value"
+      :attachments="attachments.held.value"
+      @remove="attachments.remove"
+    />
+    <!-- The `@` list, over the field it is being typed into. Its own positioning box, because
+         `AgentReferenceMenu` places itself against the element that owns it and this is not the
+         `+`'s control: it belongs to the field, and it opens upward from the field's top edge. -->
+    <div class="agent-composer-mentions">
+      <Transition name="v">
+        <AgentReferenceMenu
+          v-if="mentions.view.value !== 'closed'"
+          :rows="mentionRows"
+          :label="t('agent.panel.composer.attach.mention.list')"
+          @select="pickMention"
+          @close="mentions.close"
+          @leave="mentions.close"
+        />
+      </Transition>
+      <!-- A list with nothing in it says which nothing it is: still being read, a workspace with
+           no notes, a word that matches none, or an index that could not be walked. Drawn in the
+           field's own box rather than as an empty menu, because an empty frame is the failure
+           this sentence exists to avoid. -->
+      <p
+        v-if="mentionRows.length === 0 && mentionNotice !== null"
+        class="agent-composer-mention-notice"
+        role="status"
+      >
+        {{ mentionNotice }}
+      </p>
+    </div>
     <textarea
       ref="field"
       v-model="draft"
       class="agent-composer-field"
       :placeholder="labels.placeholder"
       :aria-label="labels.placeholder"
+      :title="t('agent.panel.composer.attach.mention.hint')"
       rows="2"
       spellcheck="false"
       @keydown="onKeydown"
       @compositionstart="onCompositionStart"
       @compositionend="onCompositionEnd"
+      @input="onInput"
+      @paste="onPaste"
+      @dragover="onDragOver"
+      @drop="onDrop"
     />
     <div class="agent-composer-bar">
       <!-- The left-hand end of the row: the files of the folder the agent works in, brought into
@@ -258,6 +495,7 @@ defineExpose({ focus })
       <AgentComposerContext
         :selection="selection"
         @insert="insertReference"
+        @pick="pickFile"
       />
       <p class="agent-composer-hint">
         <span>{{ running ? labels.hintBusy : labels.hint }}</span>
@@ -338,6 +576,28 @@ defineExpose({ focus })
 }
 .agent-composer-field::placeholder {
   color: var(--app-muted);
+}
+/* The `@` list's positioning box: the anchor `AgentReferenceMenu` places itself against, and the
+   place the "nothing to show" sentences are drawn that is not the menu box. `position: relative`
+   and no size of its own — it must not take a line of the composer's height when it is empty. */
+.agent-composer-mentions {
+  position: relative;
+}
+/* The sentence a state with no rows is said with. It sits below the field's top edge, over the
+   field rather than pushing it, so the composer does not change height as the reader types. */
+.agent-composer-mention-notice {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  z-index: 300;
+  margin: 0;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--app-border) 86%, transparent);
+  border-radius: var(--app-radius-sm);
+  background: color-mix(in srgb, var(--app-elevated) 96%, var(--app-panel));
+  box-shadow: var(--app-shadow-menu);
+  color: var(--app-muted);
+  font-size: 12px;
 }
 .agent-composer-bar {
   display: flex;

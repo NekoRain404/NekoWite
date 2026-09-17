@@ -327,7 +327,7 @@ async fn ask_full(label: &str, behaviour: &str, open_run: bool, frame: Option<St
     let table = PermissionTable::new(identity(), &runtime);
     if open_run {
         runtime
-            .prompt(&session.session_id, "write the note")
+            .prompt(&session.session_id, "write the note", &[])
             .expect("a prompt starts a run");
     }
     let prompt = table

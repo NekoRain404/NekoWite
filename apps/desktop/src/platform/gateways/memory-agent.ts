@@ -30,6 +30,7 @@ import {
   type AgentGateway,
   type AgentIdentity,
   type AgentOpenRequest,
+  type AgentPromptAttachment,
   type AgentRunResult,
   type AgentSession,
   type AgentSessionHistory,
@@ -508,7 +509,11 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
       return setConfigOption(session, MEMORY_MODEL_ID, modelId)
     },
 
-    async prompt(session: AgentSession, text: string): Promise<AgentRunResult> {
+    async prompt(
+      session: AgentSession,
+      text: string,
+      attachments: readonly AgentPromptAttachment[] = [],
+    ): Promise<AgentRunResult> {
       const record = engineCall(session)
       // One turn at a time per session (§6.2). A second turn would interleave two runs
       // into one stream with no way to tell which text belongs to which, so it is
@@ -536,7 +541,7 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
       record.run = run
       record.state = 'running'
       try {
-        return await runTurn(record, text, run, script)
+        return await runTurn(record, text, attachments, run, script)
       } finally {
         record.run = null
         dropRunPermissions(record, run.runId)

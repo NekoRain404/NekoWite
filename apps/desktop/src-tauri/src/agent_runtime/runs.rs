@@ -14,6 +14,7 @@ use agent_client_protocol::schema::v1::{SessionId, SessionNotification, SessionU
 use serde_json::{json, Value};
 use tokio::sync::oneshot;
 
+use super::attachments::PromptAttachment;
 use super::capabilities::SessionCapabilities;
 use super::events::{normalize_update, AgentEventKind};
 use super::fs_capability::{FsCapability, FsRequest};
@@ -32,8 +33,35 @@ impl AgentRuntime {
     /// The answer arrives as events, not as this call's result: the run
     /// outlives it, and what this returns is only the host's name for the work
     /// that is now under way.
-    pub fn prompt(&self, session_id: &str, text: &str) -> Result<String, SessionError> {
+    pub fn prompt(
+        &self,
+        session_id: &str,
+        text: &str,
+        attachments: &[PromptAttachment],
+    ) -> Result<String, SessionError> {
         let run_id = format!("run-{}", self.run_counter.fetch_add(1, Ordering::Relaxed));
+        // The blocks are built here, before the run is registered and before anything is sent, so a
+        // turn the engine never said it would read is refused with the session left exactly as it
+        // was — no run id handed out, nothing marked in flight, and nothing on the wire. Reading
+        // the engine's own report rather than a copy kept beside it is what makes the check a
+        // measurement of the runtime in front of the user; the read happens before the lock below
+        // and not inside it, because `capabilities` takes the same table.
+        let findings = self.capabilities(session_id)?;
+        let vault_root = {
+            let sessions = self.sessions.lock().unwrap();
+            let slot = sessions
+                .get(session_id)
+                .ok_or_else(|| SessionError::UnknownSession {
+                    session_id: session_id.to_string(),
+                })?;
+            slot.vault_root.clone()
+        };
+        let blocks = super::attachments::blocks(text, attachments, findings.as_ref(), &vault_root)
+            .map_err(|refusal| SessionError::AttachmentRefused {
+                detail: refusal.message(),
+            })?;
+        // Taken once, so the check and the registration cannot be separated by a second caller:
+        // two turns racing here must leave one of them refused, not both registered.
         {
             let mut sessions = self.sessions.lock().unwrap();
             let slot =
@@ -59,14 +87,13 @@ impl AgentRuntime {
         let emitter = self.emitter.clone();
         let session = session_id.to_string();
         let run = run_id.clone();
-        let text = text.to_string();
 
         // The prompt is awaited on its own task: the engine answers when the
         // generation is over, which may be minutes after this returns, and a
         // caller (a Tauri command) cannot be left holding that.
         tokio::spawn(async move {
             let ended = match connection
-                .prompt(SessionId::new(session.as_str()), &text, PROMPT_BOUND)
+                .prompt(SessionId::new(session.as_str()), blocks, PROMPT_BOUND)
                 .await
             {
                 // The stop reason and the usage arrive with the result (P0

@@ -364,6 +364,7 @@ async fn a_window_opens_a_session_and_reads_the_turn_it_runs() {
         wired.ipc(),
         opened.session_id.clone(),
         "hello".to_string(),
+        None,
     )
     .await
     .expect("a prompt starts a turn");
@@ -467,6 +468,7 @@ async fn every_frame_a_window_receives_after_its_snapshot_is_in_the_snapshot_or_
         wired.ipc(),
         opened.session_id.clone(),
         "hello".to_string(),
+        None,
     )
     .await
     .expect("prompt");
@@ -514,6 +516,7 @@ async fn no_frame_a_runtime_publishes_carries_the_sequence_that_means_no_frame()
         wired.ipc(),
         opened.session_id.clone(),
         "hello".to_string(),
+        None,
     )
     .await
     .expect("prompt");
@@ -552,6 +555,7 @@ async fn the_engines_own_options_reach_both_the_caller_and_the_window() {
         wired.ipc(),
         opened.session_id.clone(),
         "hello".to_string(),
+        None,
     )
     .await
     .expect("a turn");
@@ -608,6 +612,7 @@ async fn a_config_change_during_a_turn_belongs_to_the_session_not_the_turn() {
         wired.ipc(),
         opened.session_id.clone(),
         "hello".to_string(),
+        None,
     )
     .await
     .expect("a turn");

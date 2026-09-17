@@ -84,6 +84,16 @@ pub enum SessionError {
     LoadInFlight {
         session_id: String,
     },
+    /// A turn carried a block the engine's own handshake does not license.
+    ///
+    /// Its own variant rather than a transport failure, because nothing was sent: the host refused
+    /// before the frame was built, and the condition is the engine's report rather than anything
+    /// that happened on the wire. The window gates the same control on the same report, so this arm
+    /// is the race — a runtime replaced between the report being read and the turn being sent —
+    /// answered as a refusal instead of as a frame the engine never said it would read.
+    AttachmentRefused {
+        detail: String,
+    },
 }
 
 impl SessionError {
@@ -105,6 +115,7 @@ impl SessionError {
             // "this call does not fit what the session is doing right now".
             SessionError::AlreadyOpen { .. } => AgentFailureCode::BufferConflict,
             SessionError::LoadInFlight { .. } => AgentFailureCode::BufferConflict,
+            SessionError::AttachmentRefused { .. } => AgentFailureCode::AttachmentUnsupported,
         }
     }
 
@@ -124,6 +135,9 @@ impl SessionError {
             SessionError::LoadInFlight { session_id } => {
                 format!("session {session_id} is still being reopened; wait for it to finish")
             }
+            // The refusal's own sentence, built where the report it reads lives
+            // (`super::attachments::AttachmentRefusal`) — this arm only carries it.
+            SessionError::AttachmentRefused { detail } => detail.clone(),
         }
     }
 }

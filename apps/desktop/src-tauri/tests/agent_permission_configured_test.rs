@@ -327,7 +327,7 @@ async fn run_turn(engine: &mut Engine, session: &str, name: &str, answer: &Answe
     // grant a permission this run means to withhold.
     engine
         .runtime
-        .prompt(session, &prompt)
+        .prompt(session, &prompt, &[])
         .expect("the session accepts a prompt");
 
     loop {

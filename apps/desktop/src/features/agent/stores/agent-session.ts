@@ -44,6 +44,7 @@ import type {
   AgentEvent,
   AgentGateway,
   AgentIdentity,
+  AgentPromptAttachment,
   AgentSession,
   AgentSessionState,
 } from '../../../platform/gateways/agent-contracts'
@@ -336,6 +337,14 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
    * the engine — §6.2 allows one active generation per session, and quietly calling the
    * same session twice is exactly what it forbids.
    *
+   * `attachments` is what the message carries beside its words — the composer's own reading, taken
+   * at the moment the reader pressed send. It goes out unchanged and is *not* inspected here:
+   * whether each block may travel is the engine's own report, the host reads that report at send
+   * time, and a turn holding a block it does not licence comes back as a rejected `prompt` with
+   * `attachment-unsupported` — the ordinary failure path below, which keeps the text. A refusal is
+   * therefore reported by the host rather than pre-empted here, and there is one authority about it
+   * rather than two.
+   *
    * `targets` are the notes this request is about, as the editor holds them *now* — the
    * caller's lookup, by path, and never "whatever is open" (§7.1 forbids resolving the active
    * note at any later moment). They are plain data rather than a lookup function for the same
@@ -347,6 +356,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
   async function send(
     key: string,
     text: string,
+    attachments: readonly AgentPromptAttachment[] = [],
     targets: readonly AgentLiveNote[] = [],
   ): Promise<AgentSendOutcome> {
     const live = subscriptionFor(key)
@@ -364,7 +374,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     // goes. A *refused* send above leaves the draft exactly where it was.
     record.draft = ''
     try {
-      await live.gateway.prompt(live.session, text)
+      await live.gateway.prompt(live.session, text, attachments)
     } catch (error) {
       const failure = describeFailure(error)
       record.view = failAgentRun(record.view, failure.code, failure.message)

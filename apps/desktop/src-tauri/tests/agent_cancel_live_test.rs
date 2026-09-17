@@ -266,7 +266,7 @@ async fn stopping_a_streaming_turn_ends_it_and_leaves_the_session_usable() {
 
     // ---- 1. a turn, stopped while it is streaming ----------------------------------------------
     let run_id = runtime
-        .prompt(&session.session_id, LONG_PROMPT)
+        .prompt(&session.session_id, LONG_PROMPT, &[])
         .expect("the session accepts a prompt");
     eprintln!("turn {run_id}: {LONG_PROMPT:?}");
 
@@ -365,7 +365,7 @@ async fn stopping_a_streaming_turn_ends_it_and_leaves_the_session_usable() {
     // prompt because the host considers the run over; if the engine had not stopped generating,
     // this is where it shows — as an error, or as no ending inside RUN_PATIENCE.
     let second = runtime
-        .prompt(&session.session_id, SHORT_PROMPT)
+        .prompt(&session.session_id, SHORT_PROMPT, &[])
         .expect("the session accepts a prompt after a stop");
     eprintln!("turn {second}: {SHORT_PROMPT:?}");
     let collected = collect_run(&mut events, &second).await;

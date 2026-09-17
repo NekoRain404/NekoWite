@@ -45,8 +45,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{
-    RequestPermissionOutcome, RequestPermissionResponse, SelectedPermissionOutcome, SessionId,
-    SessionUpdate,
+    ContentBlock, RequestPermissionOutcome, RequestPermissionResponse, SelectedPermissionOutcome,
+    SessionId, SessionUpdate, TextContent,
 };
 use nekowite_lib::agent_runtime::events::normalize_update;
 use nekowite_lib::agent_runtime::{
@@ -373,7 +373,15 @@ async fn take_one_turn(
     let asking = {
         let connection = Arc::clone(&live.connection);
         let prompt = prompt.to_string();
-        tokio::spawn(async move { connection.prompt(session, &prompt, RUN_PATIENCE).await })
+        tokio::spawn(async move {
+            connection
+                .prompt(
+                    session,
+                    vec![ContentBlock::Text(TextContent::new(prompt))],
+                    RUN_PATIENCE,
+                )
+                .await
+        })
     };
 
     let (frames, counts) = collect(&mut live.updates, RUN_PATIENCE).await;

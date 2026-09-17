@@ -44,21 +44,22 @@ export interface AgentComposerSelection {
  * Zed's composer puts an "Add Context" menu at the left of its bottom row
  * (`zed-main/crates/agent_ui/src/conversation_view/thread_view.rs:5505`'s `render_add_context_button`,
  * menu built at `:5538`), and what a row does there is insert a *mention* into the message text
- * (`thread_view.rs:5583`). This is that control with the kinds of context this app can deliver
- * today: the message is the only channel a turn has (`AgentGateway.prompt(session, text)`), so a
- * chosen file becomes its vault-relative path and a chosen passage becomes its own words, and
- * nothing more is claimed — the engine's own tools read the file or do not.
- * `services/agent-context-references.ts` owns what a row may name and what a chosen row becomes.
+ * (`thread_view.rs:5583`). This is that control with the kinds of context this app can deliver:
+ * the files of the folder the engine works in, and the passage the reader has selected.
+ *
+ * **It names what was picked and decides nothing about it.** A chosen file leaves here as a path
+ * and a chosen passage as its own words; whether that path becomes an attachment the engine reads
+ * or stays text in the message is `AgentComposer.vue`'s call, because it is a fact about the
+ * engine's own handshake and this component holds no report. That split is also why there is no
+ * capability gate here: this list offers things a *person* may point at, and what may be *sent* is
+ * a different question asked one layer up.
  *
  * Four things it deliberately does not do:
  *
- *  - **It does not offer an attachment.** The host builds one `ContentBlock::Text` per prompt
- *    (`src-tauri/src/agent_runtime/acp_transport/calls.rs:177`, `EngineConnection::prompt`), whatever
- *    the engine's `promptCapabilities.image` says, so an "attach an image" row would promise a model
- *    something this app cannot send. For the same reason no capability gates the rows below: a path
- *    or a passage in the message is text on every engine, and a row that needed a capability would
- *    be claiming the file itself travels. `agent-context-references.ts`'s header carries the
- *    measurement.
+ *  - **It does not offer an attachment row.** Rows here are the folder's entries and the reader's
+ *    selection; a file's contents are offered by pressing the same file row, and the composer
+ *    decides which of the two it becomes. A second row per file for the same file would be two rows
+ *    the reader cannot tell apart.
  *  - **It reads the selection once, when it opens** — §7.1 「发送前固定…选区」. The row that appears
  *    and the text that is inserted are one reading, so the list on screen and what the message gets
  *    cannot disagree; and nothing can change the reading while the list is up, because a pointer
@@ -109,8 +110,18 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  /** The reader picked this file. The text is vault-relative and `/`-separated. */
-  insert: [path: string]
+  /** The reader picked the Selection row: this text goes into the message at the caret. */
+  insert: [text: string]
+  /**
+   * The reader picked a file.
+   *
+   * A **path, and not a decision** — which is why this is a second event rather than a variant of
+   * `insert`. Whether a chosen file travels as its contents (a block the engine reads) or as a
+   * path in the message is a fact about the engine's own report, and this component has no report
+   * and asks no surface what one says. `AgentComposer.vue` has both, so it makes the call; a menu
+   * that decided here would be a second opinion about the same fact.
+   */
+  pick: [path: string]
 }>()
 
 const labels = computed((): AgentComposerContextLabels => ({
@@ -286,16 +297,16 @@ function onSelect(id: string): void {
   }
   const entry = held.entries.find((row) => idOf(row) === id)
   if (entry === undefined) return
-  const text = referenceText(entry)
-  // A folder in the list is walked into, never inserted: `referenceText` answers null for one and
+  const path = referenceText(entry)
+  // A folder in the list is walked into, never picked: `referenceText` answers null for one and
   // this is the branch that follows it. The list stays up, because the reader asked to see what is
   // inside rather than to put the control away.
-  if (text === null) {
+  if (path === null) {
     void load(entry.path)
     return
   }
   dismiss()
-  emit('insert', text)
+  emit('pick', path)
 }
 </script>
 

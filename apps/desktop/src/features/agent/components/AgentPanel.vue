@@ -94,8 +94,10 @@ export interface AgentPanelLabels {
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type {
+  AgentCapabilityReport,
   AgentCommand,
   AgentGateway,
+  AgentPromptAttachment,
   AgentSession,
   AgentToolStatus,
 } from '../../../platform/gateways/agent-contracts'
@@ -466,10 +468,10 @@ function onComposition(phase: 'start' | 'end'): void {
   else commands.onCompositionEnd()
 }
 
-function onSend(text: string): void {
+function onSend(text: string, attachments: readonly AgentPromptAttachment[]): void {
   // A refusal is the store's to report and it keeps the text itself (§5.1: an error does not
   // clear the draft); there is nothing for the panel to do with the outcome here.
-  void send(text)
+  void send(text, attachments)
 }
 
 /**
@@ -487,12 +489,34 @@ function onSend(text: string): void {
 const historyOffered = ref(false)
 const closeOffered = ref(false)
 
+/**
+ * The whole report, kept as it arrived, for the surfaces that need a fact this panel does not read
+ * itself.
+ *
+ * Two rows of it decide this panel's own controls (`historyOffered`, `closeOffered`), and two more
+ * decide the composer's — whether a message may carry an image, and whether a file's contents may
+ * travel. The composer is handed the *report* rather than two more booleans, because a boolean
+ * cannot carry the third state: `unavailable` and `unverified` are different facts about an engine,
+ * and a surface that showed them alike would be telling a reader their engine refuses something
+ * nobody ever asked it.
+ *
+ * The report belongs to the runtime the session belongs to and is read once, on mount, for the
+ * reason above it: a panel is mounted per session, and a runtime the host has replaced has no
+ * answer left to give.
+ */
+const capabilityReports = ref<readonly AgentCapabilityReport[] | null>(null)
+
 onMounted(async () => {
   try {
     const reports = await props.gateway.capabilities(props.session)
+    capabilityReports.value = reports
     historyOffered.value = capabilityAvailable(reports, 'session-list')
     closeOffered.value = capabilityAvailable(reports, 'session-close')
   } catch {
+    // Nothing arrived, so nothing is offered — and the composer is left with `null` rather than
+    // with an empty report. The two are different states: one is an engine that answered nothing,
+    // the other an engine that answered "no".
+    capabilityReports.value = null
     historyOffered.value = false
     closeOffered.value = false
   }
@@ -809,6 +833,7 @@ function onHistoryPick(sessionId: string): void {
         :config="config"
         :config-busy="configBusy"
         :config-failure="configFailure"
+        :capabilities="capabilityReports"
         :labels="labels.composer"
         @send="onSend"
         @stop="stop"
