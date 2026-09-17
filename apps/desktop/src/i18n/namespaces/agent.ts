@@ -282,6 +282,11 @@ export const agent = {
            live conversation off the screen — so this sentence is the only place the refusal can be
            read, and it carries the engine's own reason rather than a summary of it. */
         resumeFailed: 'The session could not be reopened: {reason}',
+        /* And the same for a session that never existed: the engine would not open one while it
+           was already serving another. Nothing was taken away by the attempt — the session the
+           reader was in is still open and still on screen — so this sentence is the only place
+           the refusal can be read. */
+        newSessionFailed: 'A new session could not be opened: {reason}',
       },
       permission: {
         argumentsPending: 'The engine has not sent the arguments yet',
@@ -1207,6 +1212,7 @@ export const agent = {
         unknownFailure: '请求被拒绝，且没有给出本应用能读到的原因。',
         stopFailed: '智能体引擎未能停止：{reason}',
         resumeFailed: '未能重新打开该会话：{reason}',
+        newSessionFailed: '未能打开新会话：{reason}',
       },
       permission: {
         argumentsPending: '引擎还没有发送参数',

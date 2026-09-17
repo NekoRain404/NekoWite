@@ -123,6 +123,7 @@ const {
   composition: agentComposition,
   retry: retryAgentRail,
   resume: resumeAgentSession,
+  newSession: newAgentSession,
 } = attachAgentRail({
   enabled: () => settings.agentPanel,
   vaultPath: () => props.vaultPath,
@@ -139,6 +140,11 @@ const {
   // for this failure to live in, and the shell is the only layer that can say it.
   onResumeFailed: (error) =>
     notifyError(t('agent.rail.resumeFailed', { reason: failureSentence(error) })),
+  // And the same again for a session that never existed: the engine would not open one while it
+  // was already serving another, which leaves the reader exactly where they were — so the
+  // sentence is the only place the refusal can be read.
+  onNewSessionFailed: (error) =>
+    notifyError(t('agent.rail.newSessionFailed', { reason: failureSentence(error) })),
 })
 const agentOn = computed<boolean>(() => settings.agentPanel)
 
@@ -337,6 +343,7 @@ const shellStyle = computed<Record<string, string>>(() => ({
                 :vault-open="vaultPath !== null"
                 @retry="retryAgentRail()"
                 @resume="resumeAgentSession($event)"
+                @new-session="newAgentSession()"
                 @use-chat="settings.agentPanel = false"
               />
             </template>

@@ -124,6 +124,19 @@ const emit = defineEmits<{
   /** A session the reader picked out of the engine's history. The reopen itself belongs to the
    *  rail (`agent-rail.ts`'s `resume`), which is the layer that owns the vault it is made for. */
   (e: 'resume', sessionId: string): void
+  /**
+   * The reader asked for a new session on the runtime that is up. `agent-rail.ts`'s `newSession`
+   * is what opens one — the panel cannot, because the session it is mounted on is the rail's to
+   * replace.
+   *
+   * Declared here and handled by the shell, and the one hop between them is the panel's: the entry
+   * that asks for this is drawn by the list the panel mounts, so `AgentPanel` is where the gesture
+   * crosses from the popup to this component (it forwards `AgentSessionHistoryMenu`'s `open` as
+   * `new-session`). Until that forwarding exists, nothing emits this and the shell's handler is
+   * inert — see the entry's own gate in `AgentSessionHistoryMenu.vue`, which draws nothing when
+   * nobody has said the call can be made.
+   */
+  (e: 'new-session'): void
 }>()
 
 /** The engine's own name, and only while a session is live — the one arm that mounts the panel. */

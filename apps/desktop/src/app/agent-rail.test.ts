@@ -483,6 +483,110 @@ describe('the agent rail — reopening a session the engine holds', () => {
   })
 })
 
+/**
+ * The other move this rail makes *within* one runtime: a session that has never existed before.
+ *
+ * It is `resume`'s sibling and deliberately not a restart. Restarting the runtime to get a new
+ * session would cancel whatever the open one was running — a "New session" that silently stopped
+ * the answer the reader was reading — so what a new session is here is one more `session/new` on
+ * the engine that is already up, with the one it was serving left open on it.
+ */
+describe('the agent rail — a new session on the runtime that is up', () => {
+  async function oneRuntime(options: { onNewSessionFailed?: (error: unknown) => void } = {}) {
+    const gateway = createMemoryAgentGateway({ agentId: 'opencode', profileId: 'default' })
+    const fake = fakeComposition({ gateway })
+    const rail = createAgentRail({
+      compose: () => fake.composition,
+      ...(options.onNewSessionFailed ? { onNewSessionFailed: options.onNewSessionFailed } : {}),
+    })
+    await rail.open('vault-a', '/notes/a')
+    const first = rail.state.value
+    if (first.kind !== 'live') throw new Error('unreachable')
+    return { gateway, fake, rail, first }
+  }
+
+  it('opens one more session on the engine that is up, and puts it on screen', async () => {
+    const { rail, fake, first } = await oneRuntime()
+    // Forget the `session/new` that brought the runtime up: this case is about the one this
+    // gesture makes.
+    fake.opened.length = 0
+
+    await rail.newSession()
+
+    // The engine was asked for one session, for the vault and folder this runtime was started
+    // for — a new session is a move inside a runtime, so its vault does not change.
+    expect(fake.opened).toEqual([{ vaultId: 'vault-a', cwd: '/notes/a' }])
+    const after = rail.state.value
+    if (after.kind !== 'live') throw new Error('unreachable')
+    expect(after.session.sessionId).not.toBe(first.session.sessionId)
+    expect(after.vaultId).toBe('vault-a')
+    expect(after.cwd).toBe('/notes/a')
+    // A session change is a remount: the panel is keyed by epoch and session id.
+    expect(after.key).toBe(railKey(after.session))
+    expect(after.key).not.toBe(first.key)
+    // And nothing was torn down: the runtime, and with it the session that was open, is the same
+    // one throughout — which is what makes this a new conversation rather than a lost one.
+    expect(fake.stop).not.toHaveBeenCalled()
+    expect(after.gateway).toBe(first.gateway)
+  })
+
+  it('does nothing at all when no runtime is up', async () => {
+    // A new session is a move *within* a runtime: with nothing up there is nothing to open one on,
+    // and starting a runtime is `open`'s job (the shell calls it for the folder it has).
+    const fake = fakeComposition()
+    const rail = createAgentRail({ compose: () => fake.composition })
+
+    await rail.newSession()
+
+    expect(rail.state.value).toEqual({ kind: 'idle' })
+    expect(fake.opened).toEqual([])
+    expect(fake.start).not.toHaveBeenCalled()
+  })
+
+  it('reports a refusal and keeps the session that was open', async () => {
+    const onNewSessionFailed = vi.fn()
+    const { rail, fake, first } = await oneRuntime({ onNewSessionFailed })
+    // The runtime is up and the engine will not open another session on it — a provider whose
+    // credential went stale, a workspace it refuses. The reader stays where they are: the session
+    // on screen is not the one at fault, and this rail has no arm for "live, with a notice", so
+    // the sentence is the caller's to draw (exactly as `onResumeFailed`'s is).
+    const failure = new AgentFailure('refused', 'the engine would not open a session')
+    fake.composition.openSession = async () => {
+      throw failure
+    }
+
+    await rail.newSession()
+
+    expect(onNewSessionFailed).toHaveBeenCalledWith(failure)
+    expect(rail.state.value).toBe(first)
+  })
+
+  it('a close during a new session wins: the session never becomes the state', async () => {
+    const { rail, gateway } = await oneRuntime()
+    let release: (() => void) | null = null
+    const open = gateway.openSession.bind(gateway)
+    gateway.openSession = async (request) => {
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return open(request)
+    }
+
+    const starting = rail.newSession()
+    // Parked inside `session/new`, which is the moment the switch can go off or the vault change.
+    await until(() => release !== null)
+    const closing = rail.close()
+    release!()
+    await starting
+    await closing
+    await nextTick()
+
+    // The same latch as `open` and `resume`, because it is the same question: an answer that
+    // arrives after the runtime was taken down must not become the state.
+    expect(rail.state.value).toEqual({ kind: 'idle' })
+  })
+})
+
 describe('failureSentence', () => {
   it('passes the backend’s own sentence through, unchanged', () => {
     // The Rust commands answer `Result<_, String>`, and every refusal is written for the reader:

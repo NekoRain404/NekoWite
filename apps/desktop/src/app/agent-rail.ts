@@ -91,6 +91,15 @@ export interface AgentRailDeps {
    * to the caller, which is where the user is looking.
    */
   onResumeFailed?: (error: unknown) => void
+  /**
+   * A `session/new` that failed — the engine would not open another session on a runtime that is
+   * already serving one.
+   *
+   * The same shape as {@link onResumeFailed}, for the same reason: the session on screen is not
+   * the one at fault and the reader is looking at a list rather than at a broken panel, so a live
+   * conversation must not be taken off the screen because a *new* one could not be opened.
+   */
+  onNewSessionFailed?: (error: unknown) => void
 }
 
 export interface AgentRail {
@@ -131,6 +140,23 @@ export interface AgentRail {
    * for the session already on screen, which is the row a list is most likely to be asked about.
    */
   resume(sessionId: string): Promise<void>
+  /**
+   * Open a session that has never existed before, on the runtime that is already up, and put it on
+   * screen — a *new* conversation rather than an old one.
+   *
+   * `resume`'s sibling and deliberately not a restart. A new session is one more `session/new` on
+   * the engine that is serving this one, so the session the reader was in is left open on it and
+   * the run it may be in the middle of is untouched: a "New session" that quietly cancelled the
+   * answer being read would be the one thing a reader pressing it does not expect. The vault and
+   * the folder do not change — a session is a move *within* a runtime, and the runtime is started
+   * for a folder the user opened.
+   *
+   * Resolves when the attempt has settled and never rejects, like the rest of this file: nothing
+   * happens for a rail that is not `live` (there is no runtime to open one on), and a refusal is
+   * reported through {@link AgentRailDeps.onNewSessionFailed} with the session that was open left
+   * exactly where it was.
+   */
+  newSession(): Promise<void>
   /** Ask again after a refusal: a fresh composition, which is a fresh `runtimeEpoch`. */
   retry(): Promise<void>
   /** Take the runtime down and go back to `idle`. */
@@ -155,6 +181,7 @@ export interface AgentRailInputs {
   compose?: (vaultId: string) => AgentComposition
   onStopFailed?: (error: unknown) => void
   onResumeFailed?: (error: unknown) => void
+  onNewSessionFailed?: (error: unknown) => void
 }
 
 export interface AttachedAgentRail {
@@ -177,6 +204,12 @@ export interface AttachedAgentRail {
    * the shell is what holds both the rail and the folder the session was opened for.
    */
   resume(sessionId: string): Promise<void>
+  /**
+   * A third: a conversation that has never existed, on the same runtime — what the list's own
+   * "new session" entry leads to. Here for the same reason `resume` is: the gesture arrives from
+   * the panel, and the shell is the layer that holds both the rail and the folder.
+   */
+  newSession(): Promise<void>
 }
 
 /**
@@ -206,6 +239,7 @@ export function attachAgentRail(inputs: AgentRailInputs): AttachedAgentRail {
     ...(inputs.compose ? { compose: inputs.compose } : {}),
     ...(inputs.onStopFailed ? { onStopFailed: inputs.onStopFailed } : {}),
     ...(inputs.onResumeFailed ? { onResumeFailed: inputs.onResumeFailed } : {}),
+    ...(inputs.onNewSessionFailed ? { onNewSessionFailed: inputs.onNewSessionFailed } : {}),
   })
 
   /** Start one, if there is a folder to work in, a switch asking for one and a rail to draw it
@@ -239,6 +273,7 @@ export function attachAgentRail(inputs: AgentRailInputs): AttachedAgentRail {
     composition: rail.composition,
     retry: () => rail.retry(),
     resume: (sessionId) => rail.resume(sessionId),
+    newSession: () => rail.newSession(),
   }
 }
 
@@ -304,6 +339,11 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
     deps.onResumeFailed ??
     ((error: unknown) => {
       console.error('[NekoWite] the agent session could not be reopened', error)
+    })
+  const onNewSessionFailed =
+    deps.onNewSessionFailed ??
+    ((error: unknown) => {
+      console.error('[NekoWite] a new agent session could not be opened', error)
     })
 
   // `shallowRef`, not `ref`: the state is replaced wholesale and never mutated, and a deep
@@ -458,6 +498,61 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
     })
   }
 
+  /**
+   * Open a session that has never existed — `resume`'s sibling, one call apart.
+   *
+   * The same `enqueue` and the same generation latch, because the races are the same ones: the
+   * switch going off, or the vault changing, while `session/new` is in flight must not let the new
+   * session arrive as the current one, and it must not overlap a start or a stop (the backend is
+   * being asked for a session on a runtime that may be on its way out). On success it publishes the
+   * same `live` arm, so the change is a remount under a new {@link railKey}.
+   *
+   * Three things it does *not* do, each of them a decision:
+   *
+   *  - **No runtime, no call.** A new session is a move *within* a runtime, so a rail that is not
+   *    `live` has nothing to open one on; starting a runtime for a folder the user has not opened
+   *    is `open`'s job, and the shell calls it for the vault it holds.
+   *  - **Nothing is torn down.** The engine keeps serving the session the reader was in, and a run
+   *    it is in the middle of goes on (§5.1 任务可以在面板收起后继续). The reader gets a second
+   *    conversation, not a cancelled one — which is the whole difference between this and `retry`.
+   *  - **A failure does not become a state.** See {@link AgentRailDeps.onNewSessionFailed}.
+   */
+  function newSession(): Promise<void> {
+    const now = state.value
+    if (now.kind !== 'live') return Promise.resolve()
+    // The pair an `AgentOpenRequest` needs, read from the runtime that is up rather than from
+    // `asked`: those are the same values, and the state is the one that is true *now*.
+    const target = { vaultId: now.vaultId, cwd: now.cwd }
+    const mine = ++generation
+    return enqueue(async () => {
+      if (mine !== generation) return
+      const held = live
+      if (held === null) return
+      try {
+        const session = await held.composition.openSession(target)
+        if (mine !== generation) return
+        // The engine's name is read again, exactly as the resume path reads it: it is the same
+        // engine, and a name cached from the previous session would be this file answering for a
+        // registration it has not read.
+        const engineName = await engineNameFor(held.composition, session.agentId)
+        if (mine !== generation) return
+        state.value = {
+          kind: 'live',
+          vaultId: target.vaultId,
+          cwd: target.cwd,
+          key: railKey(session),
+          gateway: held.composition.gateway,
+          session,
+          engineName,
+        }
+        composition.value = held.composition
+      } catch (error) {
+        if (mine !== generation) return
+        onNewSessionFailed(error)
+      }
+    })
+  }
+
   return {
     state,
     composition,
@@ -465,6 +560,7 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
       return request(vaultId, cwd, false)
     },
     resume,
+    newSession,
     retry() {
       const last = asked
       if (last === null) return Promise.resolve()
