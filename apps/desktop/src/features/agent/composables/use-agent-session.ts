@@ -51,7 +51,22 @@ export interface AgentSessionBinding {
   /** The half-written message. Reading and writing it goes through here so the component does
    *  not have to know that drafts are kept per session. */
   draft: WritableComputedRef<string>
-  unread: ComputedRef<boolean>
+  /*
+   * The `unread` ref and the `markRead` function used to sit here, and neither is replaced by
+   * anything: the pair was exported and read by nobody — not `AgentPanel.vue`, not a template, not
+   * a test — which is worse than no field at all, because a reader of this interface sees a ref and
+   * concludes some component is drawing it.
+   *
+   * The flag itself is the *store's* and stays there: `stores/agent-session.ts` sets
+   * `record.unread` when a frame arrives for a session that is not on screen, and `focus` is what
+   * clears it. It cannot become true anywhere in production today, and that argument is not
+   * repeated here because there is already one copy — `AgentPanel.vue`'s note on `unread` carries
+   * the two facts (this composable's own mount is `attach`'s only production caller, and it focuses
+   * in the same breath) and what would make the marker reachable (a session kept subscribed across
+   * a switch, which needs a session list this panel does not have). Nothing in this file made the
+   * flag unreachable and nothing in it can make the flag reachable; a second telling here would be
+   * a second spelling of one fact, agreeing until someone edits one of them.
+   */
   /** §6.2's one active generation: false while a run is in flight, so the composer offers
    *  stop instead of send. */
   canSend: ComputedRef<boolean>
@@ -63,7 +78,6 @@ export interface AgentSessionBinding {
   answer(requestId: string, optionId: string): Promise<AgentAnswerOutcome>
   /** Re-establish the state from a fresh snapshot, keeping the timeline. */
   resync(): Promise<void>
-  markRead(): void
   setScroll(scrollTop: number): void
   /** The events that were refused for this session, and the last reason: a window that is
    *  dropping frames should be able to say so rather than look merely quiet. */
@@ -105,13 +119,11 @@ export function useAgentSession(options: UseAgentSessionOptions): AgentSessionBi
     permissions: computed(() => view.value?.permissions ?? []),
     gap: computed(() => view.value?.gap ?? null),
     draft,
-    unread: computed(() => record.value?.unread ?? false),
     canSend: computed(() => view.value !== null && !isRunLive(view.value)),
     send: (text: string, targets: readonly AgentLiveNote[] = []) => store.send(text, targets),
     stop: () => store.cancel(key),
     answer: (requestId: string, optionId: string) => store.answer(requestId, optionId),
     resync: () => store.resync(key),
-    markRead: () => store.markRead(key),
     setScroll: (scrollTop: number) => store.setScroll(key, scrollTop),
     dropped: computed(() => record.value?.dropped ?? 0),
     lastDrop: computed(() => record.value?.lastDrop ?? null),

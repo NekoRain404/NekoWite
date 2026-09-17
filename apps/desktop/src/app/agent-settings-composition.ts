@@ -18,15 +18,22 @@
  *
  * ## Which pages this unlocks, and which it deliberately does not
  *
- * Six of the nine sections have a backend this build really answers: the registry
+ * Seven of the nine sections have a backend this build really answers: the registry
  * (`agent_registry_read` / `_add` / `_set_enabled`), the profile (`agent_profile_read` / `_write`),
  * the permission pair (`agent_permission_grants` / `_revoke`), the engine's own configuration
- * (`agent_config_document` / `_edit`), the ACP catalogue (`agent_catalogue_read`) and the skills
- * page (`agent_skills_read` / `_preview` / `_import` / `_set_enabled`). All of them are registered
- * in `R/src/lib.rs`, and every one of their clients is built here. The other three have no client
- * in this object, because there is nothing for one to call — the section states each absence rather
- * than mounting a page that could only fail, and a client added here for an unregistered command
- * would be that failure with a longer name.
+ * (`agent_config_document` / `_edit`), the ACP catalogue (`agent_catalogue_read`), the skills page
+ * (`agent_skills_read` / `_preview` / `_import` / `_set_enabled`) and the runtime
+ * (`agent_runtime_read`). All of them are registered in `R/src/lib.rs`, and every one of their
+ * clients is built here. The other two have no client in this object, because there is nothing for
+ * one to call — the section states each absence rather than mounting a page that could only fail,
+ * and a client added here for an unregistered command would be that failure with a longer name.
+ *
+ * The runtime's read is the one that arrived last, and the reason it is a command of its own rather
+ * than a fifth method on the capability one is worth keeping in view: `agent_session_capabilities`
+ * answers about a session this host opened and refuses an id it did not, and the settings dialog
+ * has no session at all. What it does have is the *incarnation*, and ACP makes `initialize` a
+ * connection's first request — so the negotiated half of the capability report belongs to the
+ * connection and not to any session, and this client is how a page with no session reaches it.
  *
  * ## No double, and no fallback
  *
@@ -65,6 +72,10 @@ import {
   createTauriAgentCredentialCommands,
   type AgentCredentialCommands,
 } from '../platform/gateways/tauri-agent/credentials'
+import {
+  createTauriAgentRuntimeCommands,
+  type AgentRuntimeCommands,
+} from '../platform/gateways/tauri-agent/runtime'
 import { createAgentRegistryClient } from '../features/agent-settings/services/agent-registry-ipc'
 import type { AgentRegistryClient } from '../features/agent-settings/services/agent-registry-policy'
 import { createAgentProviderClient } from '../features/agent-settings/services/agent-profile-ipc'
@@ -83,6 +94,8 @@ import { createAgentSkillsClient } from '../features/agent-settings/services/age
 import type { AgentSkillsClient } from '../features/agent-settings/components/AgentSkillsSettings.vue'
 import { createAgentCredentialClient } from '../features/agent-settings/services/agent-credential-ipc'
 import type { AgentCredentialClient } from '../features/agent-settings/services/agent-credential-ipc'
+import { createAgentRuntimeClient } from '../features/agent-settings/services/agent-runtime-ipc'
+import type { AgentRuntimeClient } from '../features/agent-settings/components/AgentRuntimeSettings.vue'
 
 /**
  * What the settings tree calls.
@@ -146,6 +159,21 @@ export interface AgentSettingsClients {
    * here would be a second opinion about which document a pair has.
    */
   readonly credentials: (agentId: string, profileId: string) => AgentCredentialClient
+  /**
+   * The runtime page's client: what this app's engine connection is, for a caller with no session.
+   *
+   * A value rather than a builder, like {@link AgentSettingsClients.catalogue}, and for a reason of
+   * its own: this page is about **the engine this app starts** — the registry's own default — and
+   * about the instance slot, both of which are app state rather than a pair. A builder would take
+   * an argument it has no use for, and a page that could be asked about another engine would be a
+   * page describing a runtime nothing here has.
+   *
+   * It is the one client in this object that answers a *live* fact: the negotiated protocol version
+   * and the capability report come off the running incarnation's handshake, so this page says
+   * something the registry pages cannot — and says nothing at all when there is nothing running,
+   * which is what its `not-read` arm is for.
+   */
+  readonly runtime: AgentRuntimeClient
 }
 
 /**
@@ -160,6 +188,7 @@ export interface AgentSettingsDeps {
   catalogueCommands?: AgentCatalogueCommands
   skillsCommands?: AgentSkillsCommands
   credentialCommands?: AgentCredentialCommands
+  runtimeCommands?: AgentRuntimeCommands
 }
 
 /** Build the settings tree's clients over the window's own commands. */
@@ -205,5 +234,10 @@ export function createAgentSettingsClients(deps: AgentSettingsDeps = {}): AgentS
         agentId,
         profileId,
       }),
+    // No builder and no pair, like the catalogue above: this page reads the engine this app starts
+    // and the process it has running, and neither is chosen by the page that draws it.
+    runtime: createAgentRuntimeClient(
+      deps.runtimeCommands ?? createTauriAgentRuntimeCommands(),
+    ),
   }
 }

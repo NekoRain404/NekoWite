@@ -21,51 +21,73 @@ export interface AgentComposerContextLabels {
   empty: string
   /** The row that walks one level up. */
   up: string
+  /** The row that adds the passage the reader has selected in the editor. */
+  selection: string
+}
+
+/**
+ * The editor's live selection, as this control reads it.
+ *
+ * One field, and the editor's own type is deliberately not imported for it: `getTextSelection()`
+ * satisfies this shape structurally, and naming a type here would make the composer depend on the
+ * editor feature for a string.
+ */
+export interface AgentComposerSelection {
+  readonly text: string
 }
 </script>
 
 <script setup lang="ts">
 /**
- * The composer's `+`: the files of the folder the agent works in, inserted into the message.
+ * The composer's `+`: the things the message can be given, put into the message at the caret.
  *
  * Zed's composer puts an "Add Context" menu at the left of its bottom row
  * (`zed-main/crates/agent_ui/src/conversation_view/thread_view.rs:5505`'s `render_add_context_button`,
  * menu built at `:5538`), and what a row does there is insert a *mention* into the message text
- * (`thread_view.rs:5578`). This is that control with the one kind of context this app can deliver
+ * (`thread_view.rs:5583`). This is that control with the kinds of context this app can deliver
  * today: the message is the only channel a turn has (`AgentGateway.prompt(session, text)`), so a
- * chosen file becomes its vault-relative path in the draft and nothing more is claimed — the
- * engine's own tools read it or do not. `services/agent-context-references.ts` owns what a row may
- * name and what a chosen row becomes.
+ * chosen file becomes its vault-relative path and a chosen passage becomes its own words, and
+ * nothing more is claimed — the engine's own tools read the file or do not.
+ * `services/agent-context-references.ts` owns what a row may name and what a chosen row becomes.
  *
- * Three things it deliberately does not do:
+ * Four things it deliberately does not do:
  *
  *  - **It does not offer an attachment.** The host builds one `ContentBlock::Text` per prompt
- *    (`src-tauri/src/agent_runtime/acp_transport/calls.rs`, `EngineConnection::prompt`), whatever
+ *    (`src-tauri/src/agent_runtime/acp_transport/calls.rs:177`, `EngineConnection::prompt`), whatever
  *    the engine's `promptCapabilities.image` says, so an "attach an image" row would promise a model
- *    something this app cannot send. For the same reason the capability report governs nothing here:
- *    a path in the message is text on every engine, and a row that needed a capability would be
- *    claiming the file itself travels.
+ *    something this app cannot send. For the same reason no capability gates the rows below: a path
+ *    or a passage in the message is text on every engine, and a row that needed a capability would
+ *    be claiming the file itself travels. `agent-context-references.ts`'s header carries the
+ *    measurement.
+ *  - **It reads the selection once, when it opens** — §7.1 「发送前固定…选区」. The row that appears
+ *    and the text that is inserted are one reading, so the list on screen and what the message gets
+ *    cannot disagree; and nothing can change the reading while the list is up, because a pointer
+ *    anywhere outside it closes the list, so the editor cannot be re-entered underneath.
  *  - **It does not read the session's own state.** Only the vault, and only to list it: the rows are
  *    the folder's, the draft is the composer's, and no frame, run or permission is touched. The vault
  *    comes from the store's active record because this component cannot be given it any other way —
  *    `AgentPanel.vue` is the one file that could pass `session.identity.vaultId` down and it belongs
  *    to the right-hand group's work; the active record IS the session the composer beside it sends
- *    to, so the folder listed is that session's own rather than whatever the window last opened.
+ *    to, so the folder listed is that session's own rather than whatever the window last opened. The
+ *    selection arrives as a prop for the same reason and with the opposite outcome: a test can supply
+ *    it, and nothing here reaches into the editor.
  *  - **It does not stay open across a vault switch.** The vault that was listed is captured before
  *    the await and the answer is dropped when it no longer matches — §7.1's rule that an async gap
  *    may not re-read what is current and serve it under the name of what was asked for.
  *
  * The list itself is `AgentReferenceMenu.vue`; what is here is the button, which folder is being
- * read, and the state that says whether the list is up.
+ * read, which passage was captured, and the state that says whether the list is up.
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { CornerLeftUp, FileText, Folder, FolderOpen, Loader, Plus } from 'lucide-vue-next'
+import { CornerLeftUp, FileText, Folder, FolderOpen, Loader, Plus, TextSelect } from 'lucide-vue-next'
 import { fsService } from '../../../platform/gateways/fs'
 import { notifyError } from '../../../services/errors'
+import { getTextSelection } from '../../../services/editor-text-selection'
 import { t } from '../../../i18n'
 import { useAgentSessionStore } from '../stores/agent-session'
 import {
   referenceText,
+  selectedPassage,
   toFolder,
   type AgentFileReference,
   type AgentReferenceFolder,
@@ -75,6 +97,15 @@ import AgentReferenceMenu, { type AgentReferenceRow } from './AgentReferenceMenu
 const props = defineProps<{
   /** Overrides for the default copy; see {@link AgentComposerContextLabels}. */
   labels?: Partial<AgentComposerContextLabels>
+  /**
+   * The editor's live selection, or `null` when nothing is selected.
+   *
+   * Defaults to the app's own read (`services/editor-text-selection.ts`, which asks whichever pane
+   * owns the document — the rendered one or the source one). It is injectable so that the component
+   * under test does not have to mount an editor to have a selection, the same seam `labels` gives
+   * the copy, and so that nothing in this file has to know which pane is in front.
+   */
+  selection?: () => AgentComposerSelection | null
 }>()
 
 const emit = defineEmits<{
@@ -89,6 +120,7 @@ const labels = computed((): AgentComposerContextLabels => ({
   reading: t('agent.panel.composer.context.reading'),
   empty: t('agent.panel.composer.context.empty'),
   up: t('agent.panel.composer.context.up'),
+  selection: t('agent.panel.composer.context.selection'),
   ...props.labels,
 }))
 
@@ -105,11 +137,20 @@ const open = ref(false)
 const directory = ref('')
 /** The listing, or null while it is being read. */
 const folder = ref<AgentReferenceFolder | null>(null)
+/**
+ * The passage read when the list was opened, or null because there was nothing selected.
+ *
+ * Held rather than re-read on the pick, so the row the reader saw and the text the message gets are
+ * one reading (§7.1 「发送前固定…选区」). Cleared with the list, so a second opening cannot offer a
+ * passage the editor has since stopped holding.
+ */
+const passage = ref<string | null>(null)
 
-/** The menu's own three rows. Prefixed so that an entry's path can never be one of them. */
+/** The menu's own rows. Prefixed so that an entry's path can never be one of them. */
 const UP = '#up'
 const READING = '#reading'
 const EMPTY = '#empty'
+const SELECTION = '#selection'
 
 /** The rows' ids: kind and path, so the row that was picked and the reference it names cannot be
  *  confused with each other — and so no file's name can collide with a row of the menu's own. */
@@ -118,11 +159,19 @@ function idOf(entry: AgentFileReference): string {
 }
 
 const rows = computed((): AgentReferenceRow[] => {
+  const list: AgentReferenceRow[] = []
+  // First, and only when there is something to add: this row is the one that is not about the
+  // folder, and a reader who has just selected a passage is pressing this control for it. Nothing
+  // is drawn when nothing is selected — a row whose only content would be "you have no selection"
+  // is a standing nag, and the control's own tooltip is where the row is learned about.
+  if (passage.value !== null) {
+    list.push({ id: SELECTION, label: labels.value.selection, icon: TextSelect })
+  }
   const held = folder.value
   if (held === null) {
-    return [{ id: READING, label: labels.value.reading, icon: Loader, disabled: true }]
+    list.push({ id: READING, label: labels.value.reading, icon: Loader, disabled: true })
+    return list
   }
-  const list: AgentReferenceRow[] = []
   if (held.parent !== null) {
     list.push({ id: UP, label: labels.value.up, icon: CornerLeftUp })
   }
@@ -166,18 +215,21 @@ async function load(dir: string): Promise<void> {
 }
 
 /**
- * Close the list.
+ * Close the list, and forget what it had captured.
  *
  * `restoreFocus` is the difference between the two ways out, and it is `ui/ContextMenu.vue`'s rule
  * rather than this component's invention: a **keyboard** dismissal puts focus back on the control
  * the reader opened (they have nowhere else to be, and the row they were on is about to stop
- * existing), while a click somewhere else leaves focus to the click. Choosing a row does not come
- * through here at all — the composer takes focus into the message, which is where the next word
- * goes.
+ * existing), while a click somewhere else leaves focus to the click. Choosing a row comes through
+ * here too, and takes the default: the composer is about to put focus into the message, which is
+ * where the reader's next word goes, so pulling it back to the control would take it away again.
+ *
+ * Forgetting the passage with the list is what keeps the two openings independent — see `passage`.
  */
 function dismiss(restoreFocus = false): void {
   open.value = false
   folder.value = null
+  passage.value = null
   if (restoreFocus) trigger.value?.focus()
 }
 
@@ -187,7 +239,12 @@ function toggle(): void {
     return
   }
   open.value = true
-  // At the root every time: the control adds a file, and reopening it in whatever directory the
+  // The selection is read here and nowhere else. §7.1 「发送前固定…选区」: what the row offers and
+  // what the message receives are one reading, taken before the folder is even asked for, and the
+  // pick below inserts this value rather than asking the editor again — a second read is the
+  // async-phase re-read of "what is current" that clause exists to forbid.
+  passage.value = selectedPassage((props.selection ?? getTextSelection)())
+  // At the root every time: the control adds something, and reopening it in whatever directory the
   // last visit ended in made the second click look like a different button.
   void load('')
 }
@@ -210,6 +267,16 @@ onBeforeUnmount(() => {
 })
 
 function onSelect(id: string): void {
+  // Handled before the listing is consulted, and it has to be: this row is offered while the
+  // folder is still being read (`rows` above), so a pick here arrives with no listing to look in.
+  // The value is the one captured at `toggle`; nothing re-reads the editor.
+  if (id === SELECTION) {
+    const text = passage.value
+    if (text === null) return
+    dismiss()
+    emit('insert', text)
+    return
+  }
   const held = folder.value
   if (held === null) return
   if (id === UP) {
@@ -227,8 +294,7 @@ function onSelect(id: string): void {
     void load(entry.path)
     return
   }
-  open.value = false
-  folder.value = null
+  dismiss()
   emit('insert', text)
 }
 </script>

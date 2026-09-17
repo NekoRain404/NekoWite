@@ -164,22 +164,29 @@ export const agent = {
              bar has no sentence because its left side carries attachment and search controls,
              which this app does not have - so the space holds what this app can honestly say
              instead of being emptied to look like a layout it cannot fill. The one control this
-             app does have at that end is the `+` (`context` below), and it adds a path to the
-             message rather than an attachment to the turn. */
+             app does have at that end is the `+` (`context` below), and it puts a path or the
+             reader's own selected words in the message rather than an attachment in the turn. */
           hint: 'Enter sends. The engine works inside the folder you opened.',
           hintBusy: 'Enter cannot send while this turn is running — the text stays here.',
-          /* The `+` at the left of the bar: the files of the folder the engine works in, inserted
-             into the message as vault-relative paths. Nothing here may say the model was SHOWN a
-             file - a prompt is text, so a path is all a turn can carry, and the engine's own tools
-             decide what to do with it. A folder cannot be inserted, only walked into, which is why
-             there is no sentence for choosing one. */
+          /* The `+` at the left of the bar: what the message can be given, inserted into the
+             message at the caret. Two kinds are offered — the files of the folder the engine works
+             in, as vault-relative paths, and the passage the reader has selected in the editor, as
+             its own words. Nothing here may say the model was SHOWN a file: a prompt is text, so a
+             path is all a turn can carry, and the engine's own tools decide what to do with it. A
+             folder cannot be inserted, only walked into, which is why there is no sentence for
+             choosing one. */
           context: {
-            add: 'Add a file from this folder to the message',
+            add: 'Add a file from this folder, or the text you have selected, to the message',
             noFolder: 'No folder is open for the agent to read',
             list: 'Files in this folder',
             reading: 'Reading the folder…',
             empty: 'Nothing in this folder',
             up: 'Up one folder',
+            /* Drawn only when the editor really holds a selection, and first in the list when it
+               is: the reader who has just highlighted a passage is the one pressing this control.
+               The wording names what the reader can see in front of them rather than "context", so
+               that what the row will add is never in doubt. */
+            selection: 'Add the text you have selected',
             unreadable: 'The folder could not be read: {detail}',
           },
           /* The bar's right-hand group: the options the session's engine reported, one control
@@ -408,30 +415,53 @@ export const agent = {
             managed: 'Installed by NekoWite',
             external: 'Your own installation',
           },
+          /* The two states a read of the instance slot can be taken in. `starting` and `failed`
+             are deliberately absent: the slot is filled only after a start has returned, so a start
+             in flight is not a state anything can be read in, and a failed start answers its caller
+             rather than leaving a state behind. Copy for an arm nothing can produce is a field the
+             page would be asserting, which is the defect this page was rebuilt to remove. */
           process: {
             label: 'Process',
             stopped: 'Not running',
-            starting: 'Starting',
             ready: 'Running',
-            failed: 'Failed to start',
           },
-          authorization: {
-            label: 'Authorization',
-            unknown: 'Nothing has been reported about credentials',
-            required: 'The engine has no credentials for any provider yet',
-            configured: 'The engine reports credentials for a provider',
-            notAModel: 'A running process is a running process. It is not a model: nothing here means a prompt would be answered.',
-          },
+          /* §3.1.4's own clause, and it needs no data: it exists to stop the process line above it
+             being read as "a model will answer". It used to sit under `authorization`, beside a
+             state nothing could answer — the sentence was the true half of that pair. */
+          notAModel: 'A running process is a running process. It is not a model: nothing here means a prompt would be answered.',
+          /* Drawn only when the handshake answered, which is the only time either sentence is
+             true. The old pair drew `Not negotiated in this runtime` from a readout that had no
+             handshake in it at all — a claim about the engine made without asking one. */
           protocol: {
             label: 'Protocol',
             version: 'Version',
-            none: 'not negotiated',
             negotiated: 'Negotiated with the engine in this runtime',
-            notNegotiated: 'Not negotiated in this runtime',
+          },
+          /* What stands in for the protocol line and the capability list when there is no
+             handshake. Two sentences for the backend's two ids, because they send a user to
+             different places — an app that has not started an engine, and an engine running before
+             its first session — and because the page could not tell them apart on its own: both
+             read `Running` on the process line above. */
+          notNegotiated: {
+            noEngine: 'No engine is running, so nothing has been negotiated with one. The protocol version and the list below are both read off the handshake, and starting an engine for a folder is what performs it.',
+            notYet: 'This engine is running and has not been asked yet. This app performs the handshake when it opens a session, and no session has been opened in this runtime.',
+          },
+          /* The engine's own advertisement, reported and not acted on. ACP has no
+             "is-authenticated" field, and this app never calls `authenticate` — so a page that drew
+             an authorization *state* would be inventing one, and a page that drew these methods as
+             buttons would be offering a login nothing here can perform. The note under the list is
+             what keeps the second from happening. */
+          authorization: {
+            label: 'Authentication the engine advertises',
+            none: 'This engine advertised no authentication method in its handshake.',
+            reportedNotUsed: 'Reported by the engine, and not acted on: this app never authenticates with an engine. The ways it can be authenticated are the engine’s own, and a credential for it lives in its profile rather than here.',
+          },
+          engineReport: {
+            label: 'The engine’s own report',
           },
           capabilities: {
-            title: 'What has been measured',
-            hint: 'The install declaration is only a start-time hint. Each line below is what the handshake reported, or that nothing was measured - which is not the same answer as "not supported".',
+            title: 'What this engine reported',
+            hint: 'The install declaration is only a start-time hint. Each line below is what this runtime’s handshake reported, or that nothing has been measured - which is not the same answer as "not supported". Three of the eleven are facts about a session response, so a page with no session reads them as not measured rather than as absent.',
             advertised: 'Advertised by this engine version',
             notAdvertised: 'This engine version does not advertise it',
             unverified: 'Not measured for this engine',
@@ -786,10 +816,15 @@ export const agent = {
           gaps: {
             title: 'Not connected in this build',
             intro: 'Each of these would be a page of its own. The half it needs is missing, and a control that can only fail is not drawn:',
-            runtime: 'Runtime — the process state, the authorization and the protocol version. The registry above answers which program, from where, and what it reported about itself; the state of a running engine is answered nowhere, and a settings page has no session to ask about one.',
+            /* `runtime` and `capabilities` were rows here, and both were removed by the same
+               change that mounted §3.1.4's page. They said the state of a running engine was
+               answered nowhere and that a capability report needed a session — and both halves
+               stopped being true when `agent_runtime_read` landed: ACP makes `initialize` a
+               connection's first request, so the negotiated half belongs to the incarnation, and a
+               settings dialog has the incarnation without ever having a session. A gap sentence has
+               a shelf life of about one commit; these two reached it. */
             commands: 'Commands — the list an engine publishes for a session. It reaches the agent panel as it arrives and belongs to that one session, and there is no read of it a settings page can make.',
             mcp: 'MCP servers — the list, the configuration and the transports. Nothing was built for MCP in this build at all.',
-            capabilities: 'What a model takes and what a session may do. A capability report belongs to one running session — the installation’s claim joined with what that runtime negotiated — so a settings page is not a place it can be shown: it has no session, and the answer would stop being true the moment the runtime changed.',
             engine: 'Choosing the engine a new session starts on. Engines can be added and switched off above, but a session always starts on the default one: the backend’s start call takes a folder and nothing else, so nothing in this window opens a session on another engine yet.',
             other: 'This section needs a host half this build does not have.',
           },
@@ -925,12 +960,13 @@ export const agent = {
           hint: '回车发送。引擎在你打开的文件夹内工作。',
           hintBusy: '本轮运行期间回车不会发送——文字会留在这里。',
           context: {
-            add: '把这个文件夹里的文件加进消息',
+            add: '把这个文件夹里的文件、或你选中的文字加进消息',
             noFolder: '还没有打开可供智能体读取的文件夹',
             list: '这个文件夹里的文件',
             reading: '正在读取文件夹……',
             empty: '这个文件夹里没有内容',
             up: '上一级文件夹',
+            selection: '加入你选中的文字',
             unreadable: '无法读取该文件夹：{detail}',
           },
           config: {
@@ -1120,27 +1156,29 @@ export const agent = {
           process: {
             label: '进程',
             stopped: '未运行',
-            starting: '正在启动',
             ready: '运行中',
-            failed: '启动失败',
           },
-          authorization: {
-            label: '授权',
-            unknown: '尚未收到任何关于凭据的报告',
-            required: '该引擎还没有任何供应商的凭据',
-            configured: '该引擎报告已有某供应商的凭据',
-            notAModel: '进程在跑就是进程在跑。它不等于模型可用：这里没有任何一条意味着提问会被回答。',
-          },
+          notAModel: '进程在跑就是进程在跑。它不等于模型可用：这里没有任何一条意味着提问会被回答。',
           protocol: {
             label: '协议',
             version: '版本',
-            none: '未协商',
             negotiated: '本次运行时已与引擎完成协商',
-            notNegotiated: '本次运行时尚未协商',
+          },
+          notNegotiated: {
+            noEngine: '当前没有引擎在运行，因此还没有和任何引擎协商过。协议版本与下面这份列表都是从握手里读出来的，而为某个文件夹启动引擎正是做这次握手的地方。',
+            notYet: '该引擎正在运行，但还没有被问过。本应用会在打开会话时做这次握手，而本次运行时还没有打开过会话。',
+          },
+          authorization: {
+            label: '该引擎声明的认证方式',
+            none: '该引擎在握手里没有声明任何认证方式。',
+            reportedNotUsed: '这是引擎自己报告的，本应用不会据此做任何事：本应用从不与引擎做认证。能怎么认证是引擎自己的事，它的凭据在它的配置档里，而不在这里。',
+          },
+          engineReport: {
+            label: '引擎自己的报告',
           },
           capabilities: {
-            title: '已经实测到的',
-            hint: '安装声明只是启动前的提示。下面每一行都是握手时报告的结果，或者是「什么都没测过」——后者和「不支持」不是同一个答案。',
+            title: '该引擎报告了什么',
+            hint: '安装声明只是启动前的提示。下面每一行都是本次运行时握手报告的结果，或者是「尚未实测」——后者和「不支持」不是同一个答案。十一项里有三项要等会话响应才能回答，所以没有会话的页面会把它们读作尚未实测，而不是读作没有。',
             advertised: '该引擎版本声明支持',
             notAdvertised: '该引擎版本未声明支持',
             unverified: '尚未对该引擎实测',
@@ -1472,10 +1510,8 @@ export const agent = {
           gaps: {
             title: '当前构建尚未接通的部分',
             intro: '下面每一条本来都会是独立的一页设置。它们需要的那一半还不存在，而一个只能失败的控件不会被画出来：',
-            runtime: '运行时——进程状态、授权与协议版本。上面的注册表页面回答了哪个程序、来自哪里、它自称了什么；而运行中引擎的状态没有任何地方回答，设置页也没有可以询问的会话。',
             commands: '命令——引擎为某个会话发布的列表。它随发布到达智能体面板，且只属于那一个会话，设置页没有可以调用的读取。',
             mcp: 'MCP 服务器——列表、配置与传输方式。当前构建里完全没有为 MCP 实现任何东西。',
-            capabilities: '模型接受什么、一个会话能做哪些事。能力报告属于某一个运行中的会话——安装声明与那次运行时协商出的结果合并而成——因此设置页不是显示它的地方：设置页没有会话，而那个答案在运行时变化的一刻就不再成立。',
             engine: '选择新会话使用哪个引擎。上面已经可以添加引擎、停用引擎，但会话总是启动在默认引擎上：后端的启动调用只接收一个文件夹，因此这个窗口目前无法在另一个引擎上打开会话。',
             other: '这一节需要的后端一半，当前构建还没有。',
           },

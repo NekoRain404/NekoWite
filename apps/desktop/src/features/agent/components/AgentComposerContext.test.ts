@@ -93,10 +93,15 @@ const field = (): HTMLTextAreaElement => {
   return el
 }
 
-function mountComposer(): void {
+function mountComposer(selection?: () => { readonly text: string } | null): void {
   host = document.createElement('div')
   document.body.appendChild(host)
-  const app = createApp(AgentComposer, { running: false, canSend: true, labels: LABELS })
+  const app = createApp(AgentComposer, {
+    running: false,
+    canSend: true,
+    labels: LABELS,
+    ...(selection === undefined ? {} : { selection }),
+  })
   app.use(pinia)
   app.mount(host)
   mounted.push(app)
@@ -303,5 +308,109 @@ describe('with a session in a folder', () => {
 
     expect(field().value).toBe('summarise welcome.md please')
     expect(field().selectionStart).toBe(20)
+  })
+})
+
+describe('the passage selected in the editor', () => {
+  it('is the first row when the editor holds one, and goes into the message as its own words', async () => {
+    listMock.mockResolvedValue([entry('notes', true), entry('welcome.md')])
+    const read = (): { text: string } => ({ text: '\nthe quick brown fox\n' })
+    mountComposer(read)
+    await withSession()
+    host.querySelector<HTMLButtonElement>('[data-action="context"]')?.click()
+    await settle()
+
+    // Ahead of the folder, because the reader who has just highlighted a passage is the one who
+    // pressed this control — and the listing is the second thing they might have wanted.
+    expect(rows().map((row) => row.label)).toEqual([
+      t('agent.panel.composer.context.selection'),
+      'notes',
+      'welcome.md',
+    ])
+
+    await clickRow(t('agent.panel.composer.context.selection'))
+    // Trimmed at the ends: the newline a drag across two paragraphs picks up is not part of what
+    // the reader meant to point at.
+    expect(field().value).toBe('the quick brown fox ')
+    expect(rows()).toEqual([])
+  })
+
+  it('is offered while the folder is still being read, since it does not come from the folder', async () => {
+    let release: (entries: FileEntry[]) => void = () => {}
+    listMock.mockImplementation(
+      () =>
+        new Promise<FileEntry[]>((resolve) => {
+          release = resolve
+        }),
+    )
+    mountComposer(() => ({ text: 'a passage' }))
+    await withSession()
+    host.querySelector<HTMLButtonElement>('[data-action="context"]')?.click()
+    await settle()
+
+    // The listing has not answered yet, so the menu is showing its reading row — and the passage
+    // is already pickable, because nothing about it was waiting on the folder.
+    expect(rows().map((row) => row.label)).toEqual([
+      t('agent.panel.composer.context.selection'),
+      t('agent.panel.composer.context.reading'),
+    ])
+
+    await clickRow(t('agent.panel.composer.context.selection'))
+    expect(field().value).toBe('a passage ')
+    release([])
+    await settle()
+  })
+
+  it('is not offered at all when the editor holds nothing, rather than shown unusable', async () => {
+    listMock.mockResolvedValue([entry('welcome.md')])
+    mountComposer(() => null)
+    await withSession()
+    host.querySelector<HTMLButtonElement>('[data-action="context"]')?.click()
+    await settle()
+
+    // Not a disabled row: this menu's disabled rows are things the folder is doing (a listing on
+    // its way, an empty folder), and a standing "you have nothing selected" would be a nag on
+    // every opening for a reader who came here for a file.
+    expect(rows().map((row) => row.label)).toEqual(['welcome.md'])
+  })
+
+  it('is read once, when the list opens, so the row and the message cannot disagree', async () => {
+    listMock.mockResolvedValue([entry('welcome.md')])
+    let reads = 0
+    // The second call is what a re-read at the pick would see: by then the reader has moved the
+    // caret, which is exactly the silent failure §7.1 「发送前固定…选区」 exists to prevent.
+    const read = (): { text: string } => {
+      reads += 1
+      return { text: reads === 1 ? 'the first passage' : 'somewhere else entirely' }
+    }
+    mountComposer(read)
+    await withSession()
+    host.querySelector<HTMLButtonElement>('[data-action="context"]')?.click()
+    await settle()
+    await clickRow(t('agent.panel.composer.context.selection'))
+
+    expect(reads).toBe(1)
+    expect(field().value).toBe('the first passage ')
+  })
+
+  it('is not carried into the next opening: a closed list forgets what it had captured', async () => {
+    listMock.mockResolvedValue([entry('welcome.md')])
+    let held: { text: string } | null = { text: 'a passage' }
+    mountComposer(() => held)
+    await withSession()
+
+    const button = host.querySelector<HTMLButtonElement>('[data-action="context"]')
+    button?.click()
+    await settle()
+    expect(rows().map((row) => row.label)).toContain(t('agent.panel.composer.context.selection'))
+
+    // Dismissed, then the reader collapses the selection and comes back for a file.
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    await settle()
+    held = null
+    button?.click()
+    await settle()
+
+    expect(rows().map((row) => row.label)).toEqual(['welcome.md'])
   })
 })

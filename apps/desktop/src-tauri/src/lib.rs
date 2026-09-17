@@ -301,6 +301,13 @@ pub fn run() {
             commands::agent_registry::agent_registry_read,
             commands::agent_registry::agent_registry_add,
             commands::agent_registry::agent_registry_set_enabled,
+            // The runtime page (§3.1.4): what this app's engine connection is — the negotiated
+            // protocol version, the engine's own name for itself, the authentication it advertises,
+            // and the capability report — for a caller with **no session**. Its own file rather
+            // than a fifth method on `agent_capabilities.rs`, because the two are different
+            // subjects: that one answers about a session this host opened (and refuses an id it did
+            // not), and this one about the incarnation the settings dialog can see without one.
+            commands::agent_runtime::agent_runtime_read,
             // The ACP catalogue: what the public registry publishes, which other clients support
             // many engines from. A *read* and nothing else — it parses and describes, and the
             // §3.3 checks a download would owe travel with it so the page can say why it offers no

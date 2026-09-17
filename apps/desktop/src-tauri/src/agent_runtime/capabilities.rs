@@ -36,21 +36,47 @@
 //! substituting something).
 
 use agent_client_protocol::schema::v1::{
-    InitializeResponse, LoadSessionResponse, NewSessionResponse, PromptCapabilities,
-    SessionCapabilities as WireSessionCapabilities, SessionConfigOption,
+    AuthMethod, Implementation, InitializeResponse, LoadSessionResponse, NewSessionResponse,
+    PromptCapabilities, SessionCapabilities as WireSessionCapabilities, SessionConfigOption,
 };
 use serde::Serialize;
 
 use super::adapters::{Capability, HostFeature};
 
-/// The handshake's answer, as far as capabilities are concerned.
+/// The handshake's answer: everything `InitializeResponse` said that a caller may act on or draw.
 ///
 /// One of the two negotiations §3.4 names, distilled out of `InitializeResponse` so the session
 /// layer can keep it without keeping the whole response. Nothing here is inferred: `load_session`
 /// is the wire's `agentCapabilities.loadSession`, and `prompt` is its `promptCapabilities` as it
 /// arrived — ACP v1 defaults each missing field to `false`, which is the engine saying no.
+///
+/// **The four fields that are not capabilities are here for the same reason the rest are: the
+/// response is consumed once and thrown away.** `initialize` happens per connection, so this value
+/// *is* the record of it, and anything not kept here is gone — which is what had happened to the
+/// negotiated protocol version, the engine's own `agentInfo` and its `authMethods`. Dropping them
+/// was invisible while the only reader was a capability predicate; it stopped being invisible when
+/// §3.1.4's runtime page needed the 「协议状态」 the settings surface is required to state, because
+/// re-asking was never an option — a second `initialize` on one connection is the protocol's own
+/// forbidden call, and a second process would be a different engine.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Handshake {
+    /// `protocolVersion`: the version the engine answered with, which is the version this
+    /// connection now speaks. Read as it arrived rather than compared against a constant: the host
+    /// has no policy to apply here (the SDK owns version negotiation) and a page has a state to
+    /// draw, so folding it into a pass/fail check would lose the only copy.
+    pub protocol_version: u16,
+    /// `agentInfo`: what the engine calls itself and the version it reports. Optional on the wire —
+    /// the schema says as much and adds that it becomes required later — so `None` here is an
+    /// engine that sent none, which is a fact about that engine and not a failure.
+    pub agent: Option<Implementation>,
+    /// `authMethods`: the ways the engine says it *can* be authenticated.
+    ///
+    /// Kept because the engine said it, and kept **as an advertisement**: ACP has no
+    /// "is-authenticated" field, and this host never calls `authenticate`, so nothing anywhere may
+    /// turn this list into an authorization *state*. Zed keeps the same list
+    /// (`agent_servers/src/acp.rs:403`) and has the call that acts on it; we have the list and not
+    /// the call, which is why it is reported and acted on by nothing.
+    pub auth_methods: Vec<AuthMethod>,
     /// `agentCapabilities.loadSession`: the engine's own report that it serves `session/load`
     /// (§6.2's resume) — advertised rather than measured (P0 §4 lists `session/load` as never
     /// exercised).
@@ -112,8 +138,15 @@ impl SessionManagement {
 
 impl Handshake {
     /// Read the handshake out of the engine's answer.
+    ///
+    /// Total over the response on purpose: this is the one moment `InitializeResponse` is in hand,
+    /// so every field a caller may later need is read here rather than re-derived from a connection
+    /// that can no longer be asked.
     pub fn of(response: &InitializeResponse) -> Self {
         Self {
+            protocol_version: response.protocol_version.as_u16(),
+            agent: response.agent_info.clone(),
+            auth_methods: response.auth_methods.clone(),
             load_session: response.agent_capabilities.load_session,
             prompt: response.agent_capabilities.prompt_capabilities.clone(),
             session: SessionManagement::of(&response.agent_capabilities.session_capabilities),
@@ -496,13 +529,22 @@ fn unverified(detail: &str) -> Finding {
 mod tests {
     use super::*;
     use agent_client_protocol::schema::v1::{
-        NewSessionResponse, SessionConfigOption, SessionConfigSelectOption,
+        AuthMethodAgent, NewSessionResponse, SessionConfigOption, SessionConfigSelectOption,
     };
 
     /// A handshake that says the three prompt capabilities and resume, spelled the way the wire
     /// spells them — the values P0 §2.1 measured the pinned OpenCode answering with.
     fn measured_handshake() -> Handshake {
         Handshake {
+            // The fixture's own values, read off the same line as the group below: `"protocolVersion":1`,
+            // `"authMethods":[{"id":"fake-login","name":"Fake login"}]`,
+            // `"agentInfo":{"name":"FakeAgent","version":"0.0.1"}`.
+            protocol_version: 1,
+            agent: Some(Implementation::new("FakeAgent", "0.0.1")),
+            auth_methods: vec![AuthMethod::Agent(AuthMethodAgent::new(
+                "fake-login",
+                "Fake login",
+            ))],
             load_session: true,
             prompt: PromptCapabilities::new()
                 .image(true)

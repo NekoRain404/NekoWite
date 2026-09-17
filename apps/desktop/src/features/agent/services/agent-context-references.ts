@@ -1,16 +1,16 @@
 /**
- * The composer's file references: which rows the `+` offers, and what one of them becomes.
+ * The `+`'s rows: which ones the composer offers, and what a chosen one puts in the message.
  *
  * Zed's composer carries an "Add Context" menu whose rows insert a *mention* of the chosen thing
  * into the message text (`conversation_view/thread_view.rs:5538`'s `build_add_context_menu` calling
  * `message_editor.update(|editor, cx| editor.insert_context_type("file", window, cx))`). That is the
  * only shape this app can copy honestly, because **the message text is the only channel a turn
  * has**: `AgentGateway.prompt(session, text)` takes a string, and the host builds one `ContentBlock::
- * Text` from it (`src-tauri/src/agent_runtime/acp_transport/calls.rs`, `EngineConnection::prompt`).
- * There is no content slot for an attachment, so nothing here may promise that a model was *shown* a
- * file — a row names a path, and the engine's own tools decide what to do with it.
+ * Text` from it (`src-tauri/src/agent_runtime/acp_transport/calls.rs:177`, `EngineConnection::
+ * prompt`). There is no content slot for an attachment, so nothing here may promise that a model was
+ * *shown* a file — a row names a path, and the engine's own tools decide what to do with it.
  *
- * Two rules follow from that, and both are structural rather than careful:
+ * Three rules follow from that, and all three are structural rather than careful:
  *
  *  - **Every reference is inside the vault.** The engine runs with the vault as its working
  *    directory, so a vault-relative path is the one spelling it can resolve; a path that is not
@@ -22,6 +22,25 @@
  *    panel's copy is that `prompt()` takes no context slot and nothing in the composer triggers
  *    `@`, and a syntax the engine does not parse would be a promise made by punctuation. The
  *    inserted text is what a user would type to point the agent at a file.
+ *  - **A selection is added as its own words.** {@link selectedPassage} is the one kind of row that
+ *    is not a path, and the reason is that a range has no path to name: the reader cannot type one
+ *    and the engine cannot look one up. What a reader would otherwise do by hand — copy the passage
+ *    and paste it into the message — is what the row does for them, in the same channel as
+ *    everything else here.
+ *
+ * **Why there is no attachment row, and why no capability gates the rows above.** Zed's menu has an
+ * Image entry, `.disabled(!supports_images)`, and ours has no counterpart — not because this app
+ * has not read the capability, but because reading it would licence the wrong thing. The engine's
+ * answer (`promptCapabilities.image`; the pinned OpenCode advertises it, `adapters/opencode.rs:117`)
+ * is about content *blocks* in a prompt, and this host cannot put one there: `prompt` builds a
+ * single `ContentBlock::Text` from one string, which is why `AgentModelCapabilities`'
+ * `acceptedAttachmentKinds` (`agent-context-snapshot.ts`) has no production reader — a gate keyed
+ * to it would draw a row that looks available at exactly the engine whose capability is `true`, and
+ * the file would not travel. That is the defect the capability rule names, arriving from the
+ * direction the rule does not usually come from. A path or a passage in the message needs no
+ * capability at all: it is text on every engine, and the one thing it must not do — claim the file
+ * itself was sent — no capability can make true. Sending what Zed's menu gates is a host change
+ * (one `prompt` call carrying more than one block), not a UI change.
  */
 
 import { isPathWithinVault } from '../../attachments'
@@ -108,14 +127,45 @@ export function referenceText(reference: AgentFileReference): string | null {
 }
 
 /**
- * The message with a reference put in at `at`, and where the caret goes.
+ * The passage the editor has selected, as the `+`'s Selection row offers it — or `null` when there
+ * is nothing to add.
  *
- * A space separates the path from a word on either side, and one is added only where the neighbour
- * is not already whitespace — a path joined to the word before it names a different path. The space
- * *after* is added even at the end of the message, where there is no neighbour to separate from: the
- * reader's next word would otherwise fuse with the path, and Zed's own mention insertion appends one
- * for the same reason (`completion_provider.rs:566`, `format!("{} ", uri.as_link())`). The caret
- * lands after everything inserted, so typing on starts a word rather than extending the path.
+ * Zed's add-context menu carries this row (`conversation_view/thread_view.rs:5648-5652`, enabled by
+ * the `has_selection` check it makes before building the menu, `:5551-5569`), and §7.1 names 选区 among
+ * the things a context fixes before a send. What it adds is the selected *text*, which is what makes
+ * it a rule of its own rather than a fourth arm of {@link referenceText}: a file is added by naming
+ * a path the engine resolves itself, and a selection has no path to name.
+ *
+ * `null` is a refusal, not an empty insertion, and the two arms are different refusals that both
+ * have to hold. No range at all is the editor saying nothing is selected. A range that is only
+ * whitespace IS a selection the editor reports — selecting a blank line is an ordinary thing to do
+ * — and it would still put nothing in the message, so it is refused for the reason
+ * {@link referenceText}'s folder arm is: a row that looks like it did something and did not.
+ *
+ * The argument is structural (`{ text }`, the shape `ai-prompt.ts`'s `PrefixView` uses for the same
+ * reason) so that the editor's types are not dragged in here; `getTextSelection()` satisfies it.
+ *
+ * The emptiness rule is the one the AI selection commands already apply before they act on a
+ * selection (`services/ai-edit.ts`, `d.readSelection()` followed by a trim test) — the same
+ * predicate on the same read, written out here rather than imported because that module's refusal
+ * is about a rewrite it is about to make rather than about a row it is about to offer.
+ */
+export function selectedPassage(selection: { readonly text: string } | null): string | null {
+  if (selection === null) return null
+  const text = selection.text.trim()
+  return text === '' ? null : text
+}
+
+/**
+ * The message with a row's text put in at `at`, and where the caret goes.
+ *
+ * A space separates what is inserted from a word on either side, and one is added only where the
+ * neighbour is not already whitespace — a path joined to the word before it names a different path,
+ * and a passage joined to one loses its first word. The space *after* is added even at the end of
+ * the message, where there is no neighbour to separate from: the reader's next word would otherwise
+ * fuse with what was just added, and Zed's own mention insertion appends one for the same reason
+ * (`completion_provider.rs:566`, `format!("{} ", uri.as_link())`). The caret lands after everything
+ * inserted, so typing on starts a word rather than extending the path.
  *
  * `at` is clamped rather than trusted: the composer reads it from a textarea, and a caller holding a
  * stale offset would otherwise slice past the end and lose the tail of the message.

@@ -189,6 +189,18 @@ async fn agent_skills_set_enabled() -> Result<Value, String> {
     Ok(json!({ "reached": "agent_skills_set_enabled" }))
 }
 
+/// The runtime page's one read, as a stand-in.
+///
+/// Registered for the reason the four above are: a refusal proves something about the ACL only
+/// when the command would have answered. It is the read that says what this app's engine
+/// connection *is* — the negotiated protocol version, the engine's own name for itself, the
+/// authentication it advertises, and the capability report — so a decoration that could call it
+/// would be reading the state of an engine it does not own.
+#[tauri::command]
+async fn agent_runtime_read() -> Result<Value, String> {
+    Ok(json!({ "reached": "agent_runtime_read" }))
+}
+
 /// The pet's five granted commands, each answering whether it was reached.
 #[tauri::command]
 async fn desktop_pet_state() -> Result<Value, String> {
@@ -287,6 +299,7 @@ fn app() -> App {
             agent_skills_preview,
             agent_skills_import,
             agent_skills_set_enabled,
+            agent_runtime_read,
             desktop_pet_state,
             desktop_pet_set_visible,
             desktop_pet_close_own,
@@ -422,6 +435,12 @@ fn a_pet_window_cannot_stop_or_start_the_users_agent() {
         "agent_profile_read",
         "agent_config_document",
         "agent_config_edit",
+        // The runtime readout: the protocol version this app negotiated with the engine, the
+        // engine's own name for itself, the authentication it advertises and the eleven capability
+        // rows. Nothing on it is a credential and nothing on it moves a file, which is why the
+        // boundary has to be the ACL rather than taste — it describes the user's engine, and the
+        // pet is a decoration.
+        "agent_runtime_read",
         // The grant surface. A decoration that could revoke the user's own answers would be
         // acting on the consent record itself rather than on the work it decorates.
         "agent_permission_grants",

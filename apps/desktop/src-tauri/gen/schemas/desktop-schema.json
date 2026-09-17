@@ -285,6 +285,12 @@
           "markdownDescription": "Enables the agent_registry_set_enabled command without any pre-configured scope."
         },
         {
+          "description": "Enables the agent_runtime_read command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-runtime-read",
+          "markdownDescription": "Enables the agent_runtime_read command without any pre-configured scope."
+        },
+        {
           "description": "Enables the agent_session_capabilities command without any pre-configured scope.",
           "type": "string",
           "const": "allow-agent-session-capabilities",
@@ -757,6 +763,12 @@
           "type": "string",
           "const": "deny-agent-registry-set-enabled",
           "markdownDescription": "Denies the agent_registry_set_enabled command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_runtime_read command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-runtime-read",
+          "markdownDescription": "Denies the agent_runtime_read command without any pre-configured scope."
         },
         {
           "description": "Denies the agent_session_capabilities command without any pre-configured scope.",

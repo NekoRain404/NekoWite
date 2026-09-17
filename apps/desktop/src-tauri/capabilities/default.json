@@ -63,6 +63,7 @@
     "allow-agent-registry-read",
     "allow-agent-registry-add",
     "allow-agent-registry-set-enabled",
+    "allow-agent-runtime-read",
     "allow-agent-catalogue-read",
     "allow-agent-profile-read",
     "allow-agent-profile-write",

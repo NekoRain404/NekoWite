@@ -438,6 +438,22 @@ impl AgentRuntime {
         Ok(response)
     }
 
+    /// The handshake this incarnation read, if it has read one.
+    ///
+    /// **Per incarnation, not per session**, which is the fact a caller with no session needs:
+    /// ACP makes `initialize` a connection's first request, so one process answers it once and
+    /// every session on that process shares the answer. [`Self::capabilities`] reads the same
+    /// value, one session at a time, because a session's *other* facts (its option list, its
+    /// published command list) are per session; this accessor is for the half that is not.
+    ///
+    /// A clone rather than a reference: the caller is the settings IPC, which runs on another task
+    /// and must not hold a lock on this runtime while it renders. The value is bounded by the same
+    /// rule §3.4 gives the capability report — it belongs to a live incarnation — and a caller that
+    /// has the instance is the caller that has the incarnation.
+    pub fn handshake(&self) -> Option<Handshake> {
+        self.handshake.lock().unwrap().clone()
+    }
+
     /// The handshake, once per incarnation, before the first session.
     ///
     /// ACP's own rule, and the SDK's agent side enforces it in as many words: a connection's first

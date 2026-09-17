@@ -20,15 +20,27 @@
 #                  (plan §3.2), and the comparison below is the evidence that it worked rather than a
 #                  claim that it does.
 #
-# Cost: four prompts per run — one for `agent_live_test`'s end-to-end turn, two for
+# Cost: six prompts per run — one for `agent_live_test`'s end-to-end turn, two for
 # `agent_cancel_live_test` (a turn that is still streaming when the stop is pressed, and a second
-# turn on the same session to show the engine really let go of the first), and one for
-# `agent_session_replay_live_test`'s replay measurement. Roughly 9–14k tokens of input each (P0 §3).
-# It is not a test to put on a loop.
+# turn on the same session to show the engine really let go of the first), one for
+# `agent_session_replay_live_test`'s replay measurement, and two for `agent_wire_frames_live_test`
+# (a read-and-summarise turn, and a search turn on a tree worth searching). Roughly 9–14k tokens of
+# input each (P0 §3). It is not a test to put on a loop.
 #
 # The fourth was added when `session/load`'s history replay was measured; before that this runner
 # spent three. Its test target's *second* case is free, so the prompt count is the whole of the
 # increase.
+#
+# The fifth and sixth were added when the frames the audit could never settle were measured — `plan`,
+# `session_info_update`, `current_mode_update`, `usage_update`, a tool call's `_meta` and
+# `elicitation/create` had all been absent for the one reason that nothing had ever recorded them.
+# That target records every JSON-RPC line in **both** directions, which is the only place
+# engine→client requests are visible at all, and it asserts the absences it measured — so a pin
+# change that starts sending one turns this run red with the row to move in
+# `agent-ui-gap-audit-remeasure.md` named in the failure. Its *third* case is free (a wrapper
+# rehearsal that spends no prompt and needs no credential), so again the prompt count is the whole
+# of the increase; dropping the search turn is one entry out of `TARGETS`, at the cost of reading
+# row 26 off one turn instead of two.
 #
 # `agent_session_lifecycle_test.rs` is deliberately **not** here: it spends no prompt (`session/new`
 # needs no credentials and none of the calls it makes reaches a provider) and so needs none of the
@@ -109,8 +121,14 @@ say "profile before: $REAL_CONFIG and $REAL_DATA recorded"
 # carried the agent's answers back while dropping the user's turns is exactly the failure the
 # second pattern is here to catch (it was the real state of this host until the user-half assertion
 # was added — the frames arrived and the mapping discarded them).
-TARGETS=(agent_live_test agent_cancel_live_test agent_session_replay_live_test)
-MARKERS=('reply in ' 'the turn after the stop answered' '--- replayed assistant text:|--- replayed user text:')
+# The fifth spends the two prompts that close what the audit's §10 could not settle. Its first
+# marker is printed once per paid turn, so a run where only one of the two turns happened is caught;
+# the second is the frame count read off the transcript rather than off a variant count, because
+# row 26's question is about a *member* of a tool-call frame. The third is the free rehearsal's own
+# line, which is what says the wrapper recorded anything before the paid turn's absent frames are
+# read as absences.
+TARGETS=(agent_live_test agent_cancel_live_test agent_session_replay_live_test agent_wire_frames_live_test)
+MARKERS=('reply in ' 'the turn after the stop answered' '--- replayed assistant text:|--- replayed user text:' '--- variant counts:|tool-call frame(s) in the transcript,|--- after session/new:')
 STATUSES=()
 
 # One log per target, and a combined one: the per-target file is what the checks below read, so one

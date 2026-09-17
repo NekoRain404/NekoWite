@@ -1,11 +1,11 @@
 /**
- * The `+` menu's path rules: what a row may name, what a chosen row becomes, and where the text
+ * The `+` menu's row rules: what a row may name, what a chosen row becomes, and where the text
  * lands in the message.
  *
- * Three of these are the ones a passing exit code would not show on its own — an entry outside the
- * vault, a folder that is inserted instead of walked into, and a reference fused to the word it was
- * dropped against — so each is asserted as the value that would be wrong rather than as "it
- * returned something".
+ * Four of these are the ones a passing exit code would not show on its own — an entry outside the
+ * vault, a folder that is inserted instead of walked into, a selection that is only whitespace, and
+ * a reference fused to the word it was dropped against — so each is asserted as the value that
+ * would be wrong rather than as "it returned something".
  */
 import { describe, expect, it } from 'vitest'
 import type { FileEntry } from '../../../platform/gateways/contracts'
@@ -13,6 +13,7 @@ import {
   insertReferenceText,
   parentDirectory,
   referenceText,
+  selectedPassage,
   toFolder,
   toReference,
 } from './agent-context-references'
@@ -80,6 +81,24 @@ describe('what a chosen row becomes', () => {
 
   it('is nothing for a folder: selecting one walks into it', () => {
     expect(referenceText({ path: 'notes', name: 'notes', isDirectory: true })).toBeNull()
+  })
+})
+
+describe('what the editor’s selection becomes', () => {
+  it('is the selected words themselves, without the blank space around the range', () => {
+    // A selection dragged across two paragraphs usually carries the newline on either side of the
+    // text the reader meant. Inserted raw, the message would open with a line break.
+    expect(selectedPassage({ text: '\nthe quick brown fox\n' })).toBe('the quick brown fox')
+  })
+
+  it('is nothing when the editor holds no selection at all', () => {
+    expect(selectedPassage(null)).toBeNull()
+  })
+
+  it('is nothing when the selection is only whitespace, which the editor still reports', () => {
+    // Selecting a blank line is an ordinary thing to do, and the range is not empty. A row that
+    // offered it would put a space in the message and look like it had added a passage.
+    expect(selectedPassage({ text: '\n   \n' })).toBeNull()
   })
 })
 

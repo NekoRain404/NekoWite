@@ -51,7 +51,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { Send, Square } from 'lucide-vue-next'
 import type { AgentConfigControl } from '../services/agent-config-options'
 import { insertReferenceText } from '../services/agent-context-references'
-import AgentComposerContext from './AgentComposerContext.vue'
+import AgentComposerContext, { type AgentComposerSelection } from './AgentComposerContext.vue'
 import AgentConfigRow from './AgentConfigRow.vue'
 
 const props = defineProps<{
@@ -88,6 +88,14 @@ const props = defineProps<{
    *  keeps showing the engine's value either way, because a set that did not happen leaves it
    *  in force. */
   configFailure?: { key: string; message: string } | null
+  /**
+   * The editor's live selection, for the `+`'s Selection row — see `AgentComposerContext.vue`,
+   * which owns the row and what a pick puts in the message.
+   *
+   * Forwarded rather than read here because the row is not this component's, and left optional so
+   * that the default (the app's own read) applies when nobody supplies one.
+   */
+  selection?: () => AgentComposerSelection | null
   labels: AgentComposerLabels
 }>()
 
@@ -247,7 +255,10 @@ defineExpose({ focus })
            the right-hand end adds keep their places in it. The control carries the auto margin
            that keeps the hint beside it instead of letting `space-between` float the hint into
            the middle of the row. -->
-      <AgentComposerContext @insert="insertReference" />
+      <AgentComposerContext
+        :selection="selection"
+        @insert="insertReference"
+      />
       <p class="agent-composer-hint">
         <span>{{ running ? labels.hintBusy : labels.hint }}</span>
       </p>

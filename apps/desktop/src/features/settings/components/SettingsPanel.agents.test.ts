@@ -14,9 +14,13 @@
  *    through a mocked IPC layer — the same shape `SettingsPanel.pet.test.ts` uses. The commands
  *    asked for on open are asserted as an exact set, so a page that starts calling something
  *    nobody backs fails here rather than in a user's face.
- *  - **The pages with no backend are stated, not drawn.** Runtime, commands and MCP have no client
- *    in this build, and Skills has a library with no command in front of it. The gaps are text: a
- *    list item, and no control of this page's own but the switch.
+ *  - **The pages with no backend are stated, not drawn.** Commands and MCP have no client in this
+ *    build, and Skills has a library with no command in front of it. The gaps are text: a list
+ *    item, and no control of this page's own but the switch. Runtime used to be the third row here
+ *    and is now the seventh mounted page: `agent_runtime_read` answers it, and it is the one mount
+ *    in this file that reads a *live* fact — the negotiated protocol version and the capability
+ *    report come off the running incarnation's handshake, so the test drives the arm where there is
+ *    a handshake and the arm where there is none.
  *  - **The engine switch is not offered where nothing can carry it out.** The dialog has no gateway
  *    and `agent_start` takes a folder and nothing else, so the registry page is told
  *    `can-start-session="false"` and draws no select and no button.
@@ -198,6 +202,45 @@ function skillsReadout(): unknown {
   }
 }
 
+/**
+ * The runtime's answer, as `agent_runtime_read` serializes it (`commands/agent_runtime.rs`).
+ *
+ * The **read** arm, with a handshake: an engine this app has running and has negotiated with. Two of
+ * the eleven capability rows are the three that need a *session response* — they are `unverified`
+ * with the runtime's own reason, which is the honest arm for a page that has no session and the one
+ * this fixture has to carry so the page is not being tested against a shape it will never see.
+ */
+function runtimeReadout(): unknown {
+  return {
+    agentId: 'bundled-engine',
+    displayName: 'Bundled Engine',
+    source: 'bundled',
+    program: '/opt/nekowite/engine',
+    reportedVersion: null,
+    adapterId: 'opencode',
+    process: 'ready',
+    updatePolicy: 'host-managed',
+    handshake: {
+      status: 'read',
+      protocolVersion: 1,
+      agentName: 'OpenCode',
+      agentVersion: '1.18.29',
+      authMethods: [{ id: 'opencode-login', name: 'Sign in to OpenCode' }],
+    },
+    capabilities: [
+      { feature: 'session-list', declared: 'advertised', finding: { status: 'available' } },
+      {
+        feature: 'model-selection',
+        declared: 'advertised',
+        finding: {
+          status: 'unverified',
+          detail: 'no session response has been read: the engine has not yet been asked what it offers here',
+        },
+      },
+    ],
+  }
+}
+
 /** Every command the window asked for, in the order it asked. */
 const asked: string[] = []
 /** The record's revision, as the backend would advance it: a write is what moves it. */
@@ -235,6 +278,8 @@ beforeEach(() => {
         return skillsReadout()
       case 'agent_catalogue_read':
         return catalogueReadout()
+      case 'agent_runtime_read':
+        return runtimeReadout()
       case 'agent_profile_write': {
         // The backend's own behaviour, in three lines: the write is applied at the revision the
         // form read, and applying it moves the revision — which is what makes a stale form's next
@@ -399,6 +444,31 @@ describe('the agents section in the settings dialog', () => {
       'OPENCODE_DISABLE_EXTERNAL_SKILLS',
     )
 
+    // And the runtime page, §3.1.4's, which is the one mounted page that reads a live fact: the
+    // protocol version and the capability rows come off the running incarnation's handshake, so
+    // what is asserted below is that the backend's numbers reached the screen rather than that a
+    // section rendered. Every one of them is the fixture's.
+    await untilDom(() => el('runtime-protocol') !== null, 'the runtime page')
+    expect(el('runtime-protocol')?.textContent).toContain('1')
+    expect(el('runtime-engine-report')?.textContent).toContain('OpenCode')
+    expect(el('runtime-engine-report')?.textContent).toContain('1.18.29')
+    // The engine's advertised authentication, drawn as a report with the sentence saying this app
+    // does not act on it — and no control anywhere in it, which is what keeps a list of ways to log
+    // in from reading as a login this app can perform.
+    expect(el('runtime-auth-methods')?.textContent).toContain('Sign in to OpenCode')
+    expect(el('runtime-auth-not-acted-on')).not.toBeNull()
+    expect(el('runtime-auth-methods')?.querySelector('button')).toBeNull()
+    // Two capability rows from this fixture, one answered and one not measured — with the runtime's
+    // own reason on the second, because "not measured" without a reason reads as "no".
+    const listed = el('runtime-capability-session-list')
+    expect(listed?.querySelector('[data-standing="advertised"]')).not.toBeNull()
+    const unmeasured = el('runtime-capability-model-selection')
+    expect(unmeasured?.querySelector('[data-standing="unverified"]')).not.toBeNull()
+    expect(unmeasured?.textContent).toContain('no session response has been read')
+    // The handshake was read, so the page draws the negotiation and *not* the sentence standing in
+    // for its absence: the two are different states and a page showing both would be lying twice.
+    expect(el('runtime-not-negotiated')).toBeNull()
+
     // The exact set, so a page that starts asking for a command nobody registered fails here.
     expect([...new Set(asked)].sort()).toEqual([
       'agent_catalogue_read',
@@ -406,8 +476,44 @@ describe('the agents section in the settings dialog', () => {
       'agent_permission_grants',
       'agent_profile_read',
       'agent_registry_read',
+      'agent_runtime_read',
       'agent_skills_read',
     ])
+  })
+
+  it('draws no protocol and no capability list when no engine has been negotiated with', async () => {
+    // The other arm of the same wire, and the whole reason the readout's handshake is a union: with
+    // no handshake there is no protocol version and no capability row to draw — and the page says
+    // so in the backend's words rather than drawing either of them empty. The old page drew
+    // `{version: null, negotiated: false}` here, which is a claim about an engine nothing had asked.
+    invokeMock.mockImplementation(async (command: string) => {
+      asked.push(command)
+      if (command === 'agent_registry_read') return registryReadout()
+      if (command === 'agent_runtime_read') {
+        return {
+          ...(runtimeReadout() as Record<string, unknown>),
+          process: 'stopped',
+          handshake: { status: 'not-read', reason: 'no-engine' },
+          capabilities: [],
+        }
+      }
+      return undefined
+    })
+    await openAgents()
+    await untilDom(() => el('runtime-not-negotiated') !== null, 'the runtime absence')
+
+    expect(el('runtime-not-negotiated')?.textContent).toContain('No engine is running')
+    // Nothing asserted about a negotiation, because none happened: not a version, not the engine's
+    // name, not one capability row — and not the empty list either, which would read as "this
+    // engine can do nothing".
+    expect(el('runtime-protocol')).toBeNull()
+    expect(el('runtime-engine-report')).toBeNull()
+    expect(el('runtime-capability-session-list')).toBeNull()
+    expect(el('runtime-auth-methods')).toBeNull()
+    // What is a fact about this app rather than about an engine is still drawn: the process is
+    // stopped, and the update policy is the provenance's.
+    expect(el('runtime-process')?.textContent).toContain('Not running')
+    expect(el('runtime-update')).not.toBeNull()
   })
 
   it('states the merges it does not close, one named surface per row', async () => {
@@ -472,12 +578,13 @@ describe('the agents section in the settings dialog', () => {
   it('states the absences as text, one per section it does not mount, and draws nothing else', async () => {
     await openAgents()
     const gaps = [...section().querySelectorAll<HTMLElement>('.agent-gap')]
-    // Three sections without a client, plus the two rows that are not sections: the capability
-    // join and the engine switch. Derived from `AGENT_SETTINGS_SECTIONS` in the section, so this
-    // count moves when a page is mounted — or when one is added to the tree. It moved from four
-    // when the skills page was mounted, and the sentence that was here is gone with it: the claim
-    // it made ("nothing builds a library from it and no command exposes one") stopped being true.
-    expect(gaps).toHaveLength(3 + 2)
+    // Two sections without a client — commands and MCP — plus the one row that is not a section:
+    // the engine switch. Derived from `AGENT_SETTINGS_SECTIONS` in the section, so this count moves
+    // when a page is mounted — or when one is added to the tree. It moved from four when the skills
+    // page was mounted and from three-plus-two when the runtime page was, and each time the sentence
+    // that was here went with it, because the claim it made had stopped being true: the runtime's
+    // said the state of a running engine was answered nowhere, and `agent_runtime_read` answers it.
+    expect(gaps).toHaveLength(2 + 1)
     for (const gap of gaps) expect(gap.textContent?.trim().length ?? 0).toBeGreaterThan(0)
     // The Skills row is *not* here, and the assertion is that the page replaced it rather than
     // that the sentence was deleted: a stale gap sentence would be a claim about a mount point

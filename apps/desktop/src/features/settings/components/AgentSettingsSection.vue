@@ -1,17 +1,18 @@
 <script setup lang="ts">
 /**
- * The agents section: the one control that reaches the shell, the six pages whose host half this
+ * The agents section: the one control that reaches the shell, the seven pages whose host half this
  * build really has, and the statements for everything in this tree that is still absent.
  *
- * ## What is mounted, and why these six
+ * ## What is mounted, and why these seven
  *
  * §10.2's T16 row and §8 give an agent settings tree of pages, each delivered as a component that
- * takes its facts from an injected client. Six of those clients can be built against commands this
+ * takes its facts from an injected client. Seven of those clients can be built against commands this
  * build registers — the registry (`agent_registry_read` / `_add` / `_set_enabled`), the profile
  * (`agent_profile_read` / `_write`), the permission pair (`agent_permission_grants` / `_revoke`),
  * the engine's own configuration (`agent_config_document` / `agent_config_edit`), the ACP catalogue
- * (`agent_catalogue_read`) and the skills page (`agent_skills_read` / `_preview` / `_import` /
- * `_set_enabled`) — so those six pages are mounted here and really read the backend. The clients
+ * (`agent_catalogue_read`), the skills page (`agent_skills_read` / `_preview` / `_import` /
+ * `_set_enabled`) and the runtime (`agent_runtime_read`) — so those seven pages are mounted here and
+ * really read the backend. The clients
  * arrive as a prop from the composition site (`app/agent-settings-composition.ts`), the way the
  * pet's section is handed its connection: this file never builds one, and never decides what a
  * page talks to.
@@ -53,6 +54,7 @@ import {
   AgentPermissionSettings,
   AgentProviderSettings,
   AgentRegistrySettings,
+  AgentRuntimeSettings,
   AgentSkillsSettings,
 } from '../../agent-settings'
 import { defaultEngineIdentity } from '../../agent-settings/services/agent-registry-policy'
@@ -108,6 +110,7 @@ const showing = computed(() =>
  * the test that reads this file's rendering is what keeps the two in step.
  */
 const MOUNTED = new Set([
+  'runtime',
   'registry',
   'provider',
   'permission',
@@ -191,7 +194,6 @@ const cataloguePrefill = ref<CataloguePrefill | null>(null)
  * section, and the row for an unlisted one falls back to `gaps.other` rather than vanishing.
  */
 const SENTENCES: Readonly<Record<string, string>> = {
-  runtime: t('agent.settings.agents.gaps.runtime'),
   commands: t('agent.settings.agents.gaps.commands'),
   mcp: t('agent.settings.agents.gaps.mcp'),
 }
@@ -204,14 +206,14 @@ const SENTENCES: Readonly<Record<string, string>> = {
  * of them are mounted is worse than one that says nothing. Deriving the rows means a page whose
  * client lands drops out of here by being named in {@link MOUNTED} — the same edit that mounts it.
  *
- * The last two rows are not sections: the capability join is a fact about what *any* page can say,
- * and the engine switch is about the registry page that *is* mounted.
+ * The last row is not a section: the engine switch is about the registry page that *is* mounted.
+ * The capability row was here too, and it is gone for the same reason the runtime's sentence is —
+ * the join it described as belonging to one running session is what the runtime page now draws.
  */
 const gaps = [
   ...AGENT_SETTINGS_SECTIONS.filter((section) => !MOUNTED.has(section.id)).map(
     (section) => SENTENCES[section.id] ?? t('agent.settings.agents.gaps.other'),
   ),
-  t('agent.settings.agents.gaps.capabilities'),
   t('agent.settings.agents.gaps.engine'),
 ]
 </script>
@@ -251,6 +253,14 @@ const gaps = [
       class="agents-pages"
       data-test="agents-pages"
     >
+      <!-- §3.1.4's page, and the one this section mounted last. It takes no pair and sits behind no
+           gate, because its subject is not a profile: it reads the engine this app starts — the
+           registry's own default, which is the engine a new session uses — and the runtime instance
+           the app has running. That is why it is mounted above the identity sentence's consumers
+           rather than below them, and why it is the one page here that answers a *live* fact: the
+           negotiated protocol version, the engine's own name for itself, the authentication it
+           advertises, and the eleven capability rows, all read off the incarnation's handshake. -->
+      <AgentRuntimeSettings :client="props.clients.runtime" />
       <AgentRegistrySettings
         :client="props.clients.registry"
         :profile-id="identity?.profileId ?? ''"
