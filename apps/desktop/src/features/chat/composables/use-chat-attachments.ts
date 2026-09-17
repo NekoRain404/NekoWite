@@ -17,6 +17,7 @@ import { ref, type Ref } from 'vue'
 import { notifyError } from '../../../services/errors'
 import {
   collectClipboardImages,
+  describeAttachmentRejections,
   formatAttachmentBytes,
   isImageFile,
   MAX_ATTACHMENT_BYTES,
@@ -119,8 +120,12 @@ export function useChatAttachments(): ChatAttachmentsModel {
   }
 
   function onPaste(e: ClipboardEvent): void {
-    const files = collectClipboardImages(e.clipboardData ?? null)
-    if (files.length) addFiles(files)
+    // The refusals come back with the survivors so this surface says what the intake dropped; the
+    // sentence is the intake's own, and the showing of it is this surface's — which is the split
+    // the intake now keeps for all three of its callers.
+    const { accepted, rejected } = collectClipboardImages(e.clipboardData ?? null)
+    if (rejected.length) notifyError(describeAttachmentRejections(rejected))
+    if (accepted.length) addFiles(accepted)
   }
 
   function onDrop(e: DragEvent): void {

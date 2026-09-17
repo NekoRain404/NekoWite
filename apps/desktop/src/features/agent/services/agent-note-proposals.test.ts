@@ -128,7 +128,14 @@ describe('a proposal for the note the editor has open', () => {
 
   it('reads past the rows that are not tool calls, and past tool calls that carry no diff', () => {
     const entries = [
-      { kind: 'user' as const, id: 1, runId: 'run-1', text: 'rewrite this', origin: 'host' as const },
+      {
+        kind: 'user' as const,
+        id: 1,
+        runId: 'run-1',
+        text: 'rewrite this',
+        origin: 'host' as const,
+        attachments: [],
+      },
       toolCall({ id: 2, toolCallId: 'call-read', toolKind: 'read', content: [] }),
       diffCall({ id: 3 }),
     ]

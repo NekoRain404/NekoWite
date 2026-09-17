@@ -362,7 +362,10 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     const live = subscriptionFor(key)
     const record = recordFor(key)
     if (live === null || record === null) return { accepted: false, reason: 'no-session' }
-    const started = startAgentRun(record.view, text)
+    // The attachments go to the row as well as to the wire, and this is the only moment both exist:
+    // the composer clears its strip with the draft, so a row that did not record them would leave a
+    // conversation with no trace that the model was shown a file.
+    const started = startAgentRun(record.view, text, attachments)
     if (!started.accepted) {
       record.draft = text
       return { accepted: false, reason: 'run-in-flight' }

@@ -69,6 +69,7 @@ export function agentPanelLabels(engineName: string): AgentPanelLabels {
     timeline: {
       aria: t('agent.panel.timeline.aria'),
       you: t('agent.panel.timeline.you'),
+      attached: t('agent.panel.timeline.attached'),
       thoughtOpen: t('agent.panel.timeline.thoughtOpen'),
       thoughtClosed: t('agent.panel.timeline.thoughtClosed'),
       controls: {

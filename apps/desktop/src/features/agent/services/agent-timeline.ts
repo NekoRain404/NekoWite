@@ -22,12 +22,39 @@
 
 import type {
   AgentPayloads,
+  AgentPromptAttachment,
   AgentToolContent,
   AgentToolInput,
   AgentToolKind,
   AgentToolStatus,
 } from '../../../platform/gateways/agent-contracts'
+import { promptAttachmentLabel } from '../../../platform/gateways/agent-contracts'
 import type { AgentSessionView } from './agent-session-view'
+
+/**
+ * What a turn carried beside its words, as the transcript remembers it.
+ *
+ * A name and which of the two arms it was — **not the attachment**. An image's `data` is base64
+ * of up to ten megabytes and this view keeps every row of the session, so a row holding blocks
+ * would hold the conversation's image bytes for as long as the tab is open. What the row has to be
+ * able to say is *that* something went with this message and *which* file it was; the bytes were
+ * for the engine.
+ */
+export interface AgentUserAttachment {
+  readonly kind: AgentPromptAttachment['kind']
+  /** The label the reader saw on the chip — a resource's path, an image's name. */
+  readonly name: string
+}
+
+/** The attachments of one send, as the row records them. */
+export function userAttachments(
+  attachments: readonly AgentPromptAttachment[],
+): AgentUserAttachment[] {
+  return attachments.map((attachment) => ({
+    kind: attachment.kind,
+    name: promptAttachmentLabel(attachment),
+  }))
+}
 
 export interface AgentUserEntry {
   kind: 'user'
@@ -41,6 +68,16 @@ export interface AgentUserEntry {
    *  would show the user's words twice in one row or invent a message neither side
    *  sent. */
   origin: 'host' | 'engine'
+  /**
+   * What went with this message, in the order the reader attached it.
+   *
+   * Empty on the engine's own copy of the user's half, which says nothing about attachments, and
+   * on a row written by a build that predates this field — never absent, so a reader of the row
+   * cannot mistake "this turn carried nothing" for "this row does not know". Only the host's row
+   * is written where the answer exists: the composer's strip is cleared with the draft, so this is
+   * the one record a reader can go back to.
+   */
+  attachments: readonly AgentUserAttachment[]
 }
 
 export interface AgentTextEntry {

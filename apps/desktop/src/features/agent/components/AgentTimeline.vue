@@ -12,6 +12,9 @@ export interface AgentTimelineLabels {
   /** Marks the reader's own turn. §5.3 keeps the user's paragraph visibly theirs, and a
    *  screen reader gets the same information from this word. */
   you: string
+  /** Names the list of files a turn carried. The names themselves are the files' own — a path or
+   *  an image's name — so this is what tells a reader what the list *is*. */
+  attached: string
   /** The disclosure on the engine's own reasoning channel. */
   thoughtOpen: string
   thoughtClosed: string
@@ -45,7 +48,7 @@ export interface AgentTimelineLabels {
  * the token, and the panel's status line is where they are announced.
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { ChevronDown, ChevronRight } from 'lucide-vue-next'
+import { ChevronDown, ChevronRight, FileText, Image as ImageIcon } from 'lucide-vue-next'
 import AgentToolActivity from './AgentToolActivity.vue'
 import AgentTimelineControls from './AgentTimelineControls.vue'
 import { useAgentScroll } from '../composables/use-agent-scroll'
@@ -166,6 +169,36 @@ if (typeof ResizeObserver !== 'undefined') {
         >
           <span class="agent-row-who">{{ labels.you }}</span>
           <span class="agent-row-text">{{ row.text }}</span>
+          <!-- What went with this message. The composer's strip is cleared with the draft, so
+               this is the only place left that says the model was given a file — and the names
+               are the files' own, because a reader looking for the diagram they sent needs to
+               see that it is the one that arrived. Not drawn when there is nothing to show: an
+               empty frame is a surface with nothing in it. -->
+          <ul
+            v-if="row.attachments.length > 0"
+            class="agent-row-files"
+            :aria-label="labels.attached"
+            :data-row-files="row.id"
+          >
+            <li
+              v-for="file in row.attachments"
+              :key="`${file.kind}:${file.name}`"
+              class="agent-row-file"
+              :data-kind="file.kind"
+            >
+              <span
+                class="agent-row-file-icon"
+                aria-hidden="true"
+              >
+                <component
+                  :is="file.kind === 'image' ? ImageIcon : FileText"
+                  :size="11"
+                  :stroke-width="1.8"
+                />
+              </span>
+              <span class="agent-row-file-name">{{ file.name }}</span>
+            </li>
+          </ul>
         </p>
         <p
           v-else-if="row.kind === 'text'"
@@ -284,6 +317,41 @@ if (typeof ResizeObserver !== 'undefined') {
 }
 .agent-row-user .agent-row-text {
   color: var(--app-text);
+}
+/* The files a turn carried, under the reader's own words. Wraps rather than scrolling: a turn can
+   carry several, and the panel is narrow (§5.3 — nothing here may widen it). */
+.agent-row-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  /* 6px, not the list's default: this sits inside the reader's own padded paragraph, so the
+     separation from the words above is the paragraph's job and only the gap is this list's. */
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.agent-row-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--app-border) 70%, transparent);
+  border-radius: var(--app-radius-sm);
+  background: color-mix(in srgb, var(--app-panel) 60%, transparent);
+  color: var(--app-muted);
+  font-size: 11px;
+}
+.agent-row-file-icon {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+.agent-row-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .agent-row-reply {
   color: var(--app-text);

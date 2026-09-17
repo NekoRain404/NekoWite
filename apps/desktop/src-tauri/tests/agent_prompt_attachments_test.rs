@@ -133,6 +133,32 @@ fn an_image() -> PromptAttachment {
     }
 }
 
+/// The IPC payload the window sends for an image chosen in the `+` or dragged onto the field,
+/// spelled exactly as `use-agent-composer-attachments.ts` hands it to the gateway: `{ kind, name,
+/// mediaType, data }`, base64 with no `data:` prefix.
+///
+/// A literal rather than a built value, because the hop this spelling covers is the one a built
+/// value skips: the tests below deserialize it, so a `PromptAttachment` whose serde shape stopped
+/// matching the window's would fail here rather than silently accepting every attachment and
+/// sending none. `agent-contracts-parity.test.ts` holds this enum's `kind` spellings to the
+/// TypeScript union's, so the two sides of that literal cannot drift apart unnoticed either.
+const PICKED_IMAGE_FROM_IPC: &str =
+    r#"{"kind":"image","name":"knowledge-base-diagram.png","mediaType":"image/png","data":"QUJD"}"#;
+
+/// The workspace file's payload, spelled the same way (`resourceAttachment`, same module).
+const PICKED_FILE_FROM_IPC: &str =
+    r##"{"kind":"resource","path":"notes/a.md","text":"# a","mediaType":"text/markdown"}"##;
+
+/// Drain events until the run this turn started is over, so the capture below holds the whole turn.
+async fn drain_run(events: &mut AgentRuntimeEvents) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while let Ok(Some(event)) = tokio::time::timeout_at(deadline, events.next_event()).await {
+        if event.kind == nekowite_lib::agent_runtime::AgentEventKind::RunFinished {
+            break;
+        }
+    }
+}
+
 #[tokio::test]
 async fn the_engine_is_sent_the_blocks_a_turn_is_made_of() {
     let capture = capture_path("blocks");
@@ -236,4 +262,74 @@ async fn a_refused_turn_leaves_the_session_exactly_as_it_was() {
         .prompt(&session, "just words", &[])
         .expect("the refused turn left no run behind");
     runtime.shutdown();
+}
+
+/// The claim the whole feature rests on, measured on the frame rather than on our own value: what a
+/// reader attaches in the window is what the engine is sent.
+///
+/// The input is the window's own IPC spelling rather than a `PromptAttachment` built here, and the
+/// assertion is on the captured `session/prompt` line rather than on `blocks()`'s return — because
+/// the failure this guards against is not a wrong value, it is a *dropped* one. A host that built
+/// the right block and then sent only the text would satisfy every assertion about its own struct
+/// and fail this one.
+#[tokio::test]
+async fn what_the_window_attaches_is_what_the_engine_is_sent() {
+    let capture = capture_path("picked");
+    let (runtime, mut events) = start("good", &capture).await;
+    let session = open(&runtime, &mut events).await;
+
+    let picked: Vec<PromptAttachment> = [PICKED_FILE_FROM_IPC, PICKED_IMAGE_FROM_IPC]
+        .iter()
+        .map(|json| {
+            serde_json::from_str(json).unwrap_or_else(|e| panic!("the window's own spelling: {e}"))
+        })
+        .collect();
+
+    runtime
+        .prompt(&session, "what is this?", &picked)
+        .expect("the fixture's handshake reports both prompt capabilities");
+    drain_run(&mut events).await;
+    runtime.shutdown();
+
+    let lines = prompts(&capture);
+    assert_eq!(lines.len(), 1, "one turn, one prompt frame: {lines:?}");
+    let frame = &lines[0];
+    assert!(
+        frame.contains(r#""type":"resource""#),
+        "the picked file must go out as a resource block: {frame}"
+    );
+    assert!(
+        frame.contains(r#""uri":"file:///vault/notes/a.md""#),
+        "the resource must name the file the engine resolves: {frame}"
+    );
+    assert!(
+        frame.contains(r#""type":"image","data":"QUJD","mimeType":"image/png""#),
+        "the picked image must go out as an image block carrying its bytes: {frame}"
+    );
+}
+
+/// The same pick against an engine that reported no image support, asserted the same way.
+///
+/// Two conditions have to hold together and only one of them is about this host: the turn is
+/// refused, *and* nothing reached the wire. The second is the one a reader would believe was fine —
+/// a silently dropped block leaves a model that was never shown the picture and a reader who was
+/// never told.
+#[tokio::test]
+async fn the_same_pick_is_not_sent_to_an_engine_that_reads_no_images() {
+    let capture = capture_path("picked-refused");
+    let (runtime, mut events) = start("modest-handshake", &capture).await;
+    let session = open(&runtime, &mut events).await;
+
+    let image: PromptAttachment =
+        serde_json::from_str(PICKED_IMAGE_FROM_IPC).expect("the window's own spelling");
+    runtime
+        .prompt(&session, "what is this?", &[image])
+        .expect_err("the fixture's handshake reports `promptCapabilities: {}`");
+    runtime.shutdown();
+
+    assert!(
+        prompts(&capture).is_empty(),
+        "a turn holding an image the engine does not read must not reach it: {:?}",
+        prompts(&capture)
+    );
 }

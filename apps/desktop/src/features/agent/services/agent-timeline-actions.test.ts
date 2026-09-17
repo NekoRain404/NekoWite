@@ -16,6 +16,7 @@ const user = (id: number, text: string, origin: 'host' | 'engine' = 'host'): Age
   runId: 'run-1',
   text,
   origin,
+  attachments: [],
 })
 
 const reply = (id: number, text: string): AgentTimelineEntry => ({

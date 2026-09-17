@@ -3,14 +3,25 @@
 // is a leaf (it imports only the session's types), so reading it directly is the
 // one edge that does not close the loop.
 import { MAX_IMAGES_PER_MESSAGE } from '../../chat/services/chat-image-budget'
-import { notifyError } from '../../../services/errors'
 import { isImageFile } from './attachment-paths'
 
 /**
  * Attachment intake: the frontend limits enforced BEFORE any base64 encode or
  * IPC, the classification/planning that decides what a paste, drop or pick may
  * bring into the vault, the clipboard extraction that feeds them, and the
- * message the user gets about whatever was refused.
+ * sentence that describes whatever was refused.
+ *
+ * **Nothing here reports anything, and nothing here reaches for a surface.**
+ * Every function returns what it refused, as data ({@link AttachmentLimitResult}),
+ * and the sentence about it is built by {@link describeAttachmentRejections} —
+ * still pure, still here, because three surfaces show it and three copies of one
+ * sentence is how they come to disagree. What is NOT here is the notification:
+ * this module is called by the editor's paste, the chat panel's paste and the
+ * agent composer's, and those three tell a reader in three different ways, one of
+ * which (the agent composer) draws its own rows and needs the refusals as values
+ * rather than as a toast it never asked for. A service that called `notifyError`
+ * here was answering for all three and telling the one that draws its own rows
+ * nothing it could use.
  *
  * Nothing here reads image bytes or touches the filesystem — the media reads
  * live in `attachment-library.ts` and the path/name grammar in
@@ -198,7 +209,18 @@ export function classifyAttachmentFiles(files: File[]): AttachmentLimitResult {
   return { accepted, rejected }
 }
 
-function describeAttachmentRejections(rejected: AttachmentRejection[]): string {
+/**
+ * One sentence for everything the limits refused.
+ *
+ * Exported because the wording did not move out with the notification: a surface that has the
+ * refusals in hand asks here for the sentence rather than inventing a second one, so the editor,
+ * the chat panel and the agent composer cannot come to describe the same refusal three ways. Not
+ * translated, because what it names — how many, and against which cap — is the same in every
+ * language this app speaks; a surface that wants a translated one has the reasons themselves.
+ */
+export function describeAttachmentRejections(
+  rejected: readonly AttachmentRejection[],
+): string {
   const tooLarge = rejected.filter((r) => r.reason === 'too-large').length
   const tooMany = rejected.filter((r) => r.reason === 'too-many').length
   const sessionFull = rejected.filter((r) => r.reason === 'session-full').length
@@ -236,10 +258,10 @@ function describeAttachmentRejections(rejected: AttachmentRejection[]): string {
 }
 
 /**
- * Filter `files` through the limits, notifying the user about any rejections,
- * and return only the survivors. The paste/drop/rename pipeline keeps working
- * on the accepted files while the user is told why the rest were dropped
- * (rather than silently discarding or risking a memory blowup).
+ * Filter `files` through the limits and return **both halves** — the survivors and the reasons the
+ * rest were dropped, so nothing is silently discarded and nothing is reported on the caller's
+ * behalf. A pipeline keeps working on `accepted`; a surface that owes the reader a sentence asks
+ * {@link describeAttachmentRejections} for it.
  *
  * The paste path calls this WITHOUT a context (a clipboard image has no
  * filesystem path, so there is nothing to stat), so the guarantees there are:
@@ -248,15 +270,15 @@ function describeAttachmentRejections(rejected: AttachmentRejection[]): string {
  * applied by `planAttachmentImport` when a context is supplied — no production
  * caller does that today, so treat those two as unenforced.
  */
-export function applyAttachmentLimits(files: File[], context?: AttachmentImportContext): File[] {
+export function applyAttachmentLimits(
+  files: File[],
+  context?: AttachmentImportContext,
+): AttachmentLimitResult {
   if (context) {
     const plan = planAttachmentImport(files, context)
-    if (plan.rejected.length) notifyError(describeAttachmentRejections(plan.rejected))
-    return plan.accepted
+    return { accepted: plan.accepted, rejected: plan.rejected }
   }
-  const { accepted, rejected } = classifyAttachmentFiles(files)
-  if (rejected.length) notifyError(describeAttachmentRejections(rejected))
-  return accepted
+  return classifyAttachmentFiles(files)
 }
 
 /** True when `file` is large enough that it should be written out via the
@@ -338,8 +360,8 @@ export function planAttachmentImport(
   }
 }
 
-export function collectClipboardImages(data: DataTransfer | null): File[] {
-  if (!data) return []
+export function collectClipboardImages(data: DataTransfer | null): AttachmentLimitResult {
+  if (!data) return { accepted: [], rejected: [] }
   const fromItems: File[] = []
   for (const item of Array.from(data.items ?? [])) {
     if (item.kind !== 'file' && !item.type.startsWith('image/')) continue

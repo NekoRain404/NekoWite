@@ -33,12 +33,16 @@ import { sessionKey } from '../services/agent-session-view'
 
 const listMock = vi.hoisted(() => vi.fn())
 const readMock = vi.hoisted(() => vi.fn())
+const statMock = vi.hoisted(() => vi.fn())
+const resolveMediaPathMock = vi.hoisted(() => vi.fn())
 const indexGetMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../../../platform/gateways/fs', () => ({
   fsService: {
     list: listMock,
     read: readMock,
+    stat: statMock,
+    resolveMediaPath: resolveMediaPathMock,
   },
 }))
 
@@ -156,11 +160,32 @@ function paste(image: File): { clipboardData: DataTransfer } {
 const png = (name: string, bytes = 8): File =>
   new File([new Uint8Array(bytes)], name, { type: 'image/png' })
 
+/** The media channel as it answers a pick: the host resolves the path, the window fetches it. */
+function servedImage(bytes: number[]): void {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      blob: async () => new Blob([new Uint8Array(bytes)], { type: 'image/png' }),
+    })),
+  )
+}
+
+/** The `+`, pressed: the list is read and drawn. */
+async function openMenu(): Promise<void> {
+  host.querySelector<HTMLButtonElement>('[data-action="context"]')?.click()
+  await settle()
+}
+
 beforeEach(async () => {
   pinia = createPinia()
   setActivePinia(pinia)
   listMock.mockReset()
   readMock.mockReset()
+  statMock.mockReset()
+  resolveMediaPathMock.mockReset()
+  resolveMediaPathMock.mockResolvedValue('asset://localhost/home/user/vault/attachments/a.png')
   indexGetMock.mockReset()
   indexGetMock.mockResolvedValue([])
   notices = []
@@ -236,6 +261,67 @@ describe('a file picked in the `+`', () => {
 
     expect(chips()).toEqual([])
     expect(notices).toEqual([t('agent.panel.composer.attach.unreadable', { name: 'gone.md' })])
+  })
+})
+
+describe('an image picked in the `+`', () => {
+  // The click path this suite exists for: press the `+`, press the image's row. Until this worked,
+  // the only ways to get an image into a turn were the clipboard and a file manager drag, and the
+  // list the app itself draws could only ever produce a text block.
+  it('becomes a chip, read as bytes, when the engine reported it reads images', async () => {
+    listMock.mockResolvedValue([entry('diagram.png')])
+    statMock.mockResolvedValue({ size: 3, mtime: 0 })
+    // The text reader refuses every image — the host's is `read_to_string` — so a pick that came
+    // back as a chip through this mock would be the bug, not the feature.
+    readMock.mockRejectedValue(new Error('stream did not contain valid UTF-8'))
+    servedImage([65, 66, 67])
+    mountComposer(report(['image-attachments']))
+    await withSession()
+
+    await openMenu()
+    await clickRow('diagram.png')
+
+    expect(chips()).toEqual(['diagram.png'])
+    expect(readMock).not.toHaveBeenCalled()
+    expect(resolveMediaPathMock).toHaveBeenCalledWith(VAULT, 'diagram.png')
+  })
+
+  it('falls back to its path in the message where the engine reads no images', async () => {
+    // The same fallback the `+`'s rows have always taken for a file the engine will not take
+    // whole, and for the same reason: a path is text on every engine, so the row still does the
+    // thing that has always worked rather than nothing. What must not happen is a read — the gate
+    // is answered before the bytes are, which is this module's own ordering.
+    listMock.mockResolvedValue([entry('diagram.png')])
+    statMock.mockResolvedValue({ size: 3, mtime: 0 })
+    servedImage([65])
+    mountComposer(report(['embedded-context'], { 'image-attachments': 'promptCapabilities.image is false' }))
+    await withSession()
+
+    await openMenu()
+    await clickRow('diagram.png')
+
+    expect(chips()).toEqual([])
+    expect(field().value).toBe('diagram.png ')
+    expect(resolveMediaPathMock).not.toHaveBeenCalled()
+    expect(statMock).not.toHaveBeenCalled()
+    expect(notices).toEqual([])
+  })
+
+  it('leaves a note on the text arm, exactly as it was', async () => {
+    // The routing added above is one predicate away from sending every note through the byte
+    // reader, so both arms are asserted from the same gesture.
+    listMock.mockResolvedValue([entry('welcome.md')])
+    readMock.mockResolvedValue('# welcome')
+    servedImage([65])
+    mountComposer(report(['embedded-context', 'image-attachments']))
+    await withSession()
+
+    await openMenu()
+    await clickRow('welcome.md')
+
+    expect(chips()).toEqual(['welcome.md'])
+    expect(resolveMediaPathMock).not.toHaveBeenCalled()
+    expect(readMock).toHaveBeenCalledWith(VAULT, 'welcome.md')
   })
 })
 

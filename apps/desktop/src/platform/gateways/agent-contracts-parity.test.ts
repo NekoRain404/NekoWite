@@ -141,4 +141,42 @@ describe('the agent contract’s hand-kept halves', () => {
     ).toBe(new Set(classified).size)
     expect([...classified].sort()).toEqual([...AGENT_STOP_REASONS].sort())
   })
+
+  it('tags an attachment with the same two `kind` spellings the contract names', () => {
+    // What a turn carries beside its words crosses the boundary as data, and it is the one part of
+    // this contract where a wrong spelling is *silent*: the host deserializes the window's payload
+    // into `PromptAttachment`, so a `kind` the two sides spell differently is not a frame that
+    // fails, it is an attachment that never arrives — every other assertion in both suites stays
+    // green while the reader's file quietly vanishes. The Rust side of that spelling is the serde
+    // attribute below, which is why this reads it rather than assuming it.
+    const attachments = rust('agent_runtime/attachments.rs')
+    expect(
+      attachments.includes('#[serde(tag = "kind", rename_all = "camelCase")]'),
+      '`PromptAttachment` must be internally tagged by `kind` and camelCase its variants',
+    ).toBe(true)
+
+    const start = attachments.indexOf('pub enum PromptAttachment {')
+    expect(start, 'pub enum PromptAttachment is not declared in attachments.rs').toBeGreaterThan(-1)
+    // Struct variants (`Resource { … }`) rather than unit ones, so `enumVariants` above would find
+    // none: these are the four-space-indented capitalised names that open a brace.
+    const variants = [
+      ...attachments.slice(start, attachments.indexOf('\n}', start)).matchAll(/^ {4}([A-Z]\w*)\s*\{/gm),
+    ].map(([, variant]) => variant)
+    expect(variants.length, 'PromptAttachment lists no variants').toBeGreaterThan(0)
+
+    // Scoped to the union's own declaration: `kind` is a field name several payloads share, and a
+    // scan of the whole file would compare this enum against somebody else's literals.
+    const union = typescript('agent-contracts/payloads.ts')
+    const from = union.indexOf('export type AgentPromptAttachment =')
+    expect(from, 'AgentPromptAttachment is not declared in payloads.ts').toBeGreaterThan(-1)
+    const declared = [
+      ...union.slice(from, union.indexOf('\n\n', from)).matchAll(/readonly kind: '([a-z-]+)'/g),
+    ].map(([, kind]) => kind)
+    expect(declared.length, 'AgentPromptAttachment declares no kinds').toBeGreaterThan(0)
+
+    // `rename_all = "camelCase"` lowercases the first letter and leaves the rest of the name alone.
+    expect(variants.map((variant) => variant.replace(/^[A-Z]/, (c) => c.toLowerCase()))).toEqual(
+      declared,
+    )
+  })
 })

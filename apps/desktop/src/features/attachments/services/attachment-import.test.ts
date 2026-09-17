@@ -4,12 +4,14 @@
 import { MAX_IMAGES_PER_MESSAGE } from '../../chat/services/chat-image-budget'
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
+import { onNotify } from '../../../services/errors'
 import { fileToBase64 } from './attachment-library'
 import {
   applyAttachmentLimits,
   attachmentSessionCount,
   classifyAttachmentFiles,
   collectClipboardImages,
+  describeAttachmentRejections,
   formatAttachmentBytes,
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS_PER_BATCH,
@@ -36,6 +38,77 @@ function dataTransfer(items: Partial<DataTransferItem>[], files: File[] = []): D
   } as unknown as DataTransfer
 }
 
+describe('what the intake refuses', () => {
+  // The rule this block exists for: **a service returns, a surface reports.** These two functions
+  // are called by the editor's paste, the chat panel's paste and the agent composer's — three
+  // surfaces with three different ways of telling a reader something was left out — and a service
+  // that reached for one shared notification would be answering for all three. The agent composer
+  // is the case that showed it: it draws its own rows and needs to know *which* file was refused,
+  // and a toast it never asked for carried that fact away where it could not read it.
+  let notices: string[]
+  let stopNotifying: () => void
+
+  beforeEach(() => {
+    notices = []
+    stopNotifying = onNotify((message) => notices.push(message))
+  })
+
+  afterEach(() => {
+    stopNotifying()
+    resetAttachmentSession()
+  })
+
+  function fileOfSize(name: string, size: number): File {
+    const file = new File(['x'], name, { type: 'image/png' })
+    Object.defineProperty(file, 'size', { value: size, configurable: true })
+    return file
+  }
+
+  it('is handed back by applyAttachmentLimits rather than reported from inside it', () => {
+    const big = fileOfSize('big.png', MAX_ATTACHMENT_BYTES + 1)
+    const result = applyAttachmentLimits([big])
+
+    expect(result.accepted).toEqual([])
+    expect(result.rejected).toEqual([{ file: big, reason: 'too-large' }])
+    expect(notices).toEqual([])
+  })
+
+  it('is handed back the same way when a vault context routes through the full policy', () => {
+    const big = fileOfSize('big.png', MAX_ATTACHMENT_BYTES + 1)
+    const result = applyAttachmentLimits([big], {
+      vaultTotalBytes: 0,
+      freeDiskBytes: 500 * 1024 * 1024,
+    })
+
+    expect(result.accepted).toEqual([])
+    expect(result.rejected.map((rejection) => rejection.reason)).toEqual(['too-large'])
+    expect(notices).toEqual([])
+  })
+
+  it('is handed back by collectClipboardImages, so a paste can say what it left out', () => {
+    const png = fileFrom('a.png', 'image/png')
+    const big = fileOfSize('big.png', MAX_ATTACHMENT_BYTES + 1)
+    const result = collectClipboardImages(
+      dataTransfer([
+        { kind: 'file', type: 'image/png', getAsFile: () => png },
+        { kind: 'file', type: 'image/png', getAsFile: () => big },
+      ]),
+    )
+
+    expect(result.accepted).toEqual([png])
+    expect(result.rejected.map((rejection) => rejection.reason)).toEqual(['too-large'])
+    expect(notices).toEqual([])
+  })
+
+  it('still builds the one sentence every surface shows, in the surface’s own language', () => {
+    // The wording did not move out with the notification: it is built here, pure, so three surfaces
+    // cannot come to describe the same refusal three different ways.
+    expect(
+      describeAttachmentRejections([{ file: fileOfSize('big.png', 1), reason: 'too-large' }]),
+    ).toContain('too large')
+  })
+})
+
 describe('collectClipboardImages', () => {
   it('collects image files from dataTransfer items', () => {
     const png = fileFrom('a.png', 'image/png')
@@ -44,17 +117,17 @@ describe('collectClipboardImages', () => {
       { kind: 'file', type: 'image/png', getAsFile: () => png },
       { kind: 'file', type: 'text/plain', getAsFile: () => txt },
     ]
-    expect(collectClipboardImages(dataTransfer(items))).toEqual([png])
+    expect(collectClipboardImages(dataTransfer(items))).toEqual({ accepted: [png], rejected: [] })
   })
 
   it('falls back to dataTransfer.files and dedupes', () => {
     const png = fileFrom('a.png', 'image/png')
     const dt = dataTransfer([], [png, png])
-    expect(collectClipboardImages(dt)).toEqual([png])
+    expect(collectClipboardImages(dt)).toEqual({ accepted: [png], rejected: [] })
   })
 
   it('returns nothing without a dataTransfer', () => {
-    expect(collectClipboardImages(null)).toEqual([])
+    expect(collectClipboardImages(null)).toEqual({ accepted: [], rejected: [] })
   })
 })
 
@@ -119,9 +192,9 @@ describe('attachment limits', () => {
       fileOfSize(`c${i}.png`, 1),
     )
     const items = accepted.map((f) => ({ kind: 'file', type: 'image/png', getAsFile: () => f }))
-    expect(collectClipboardImages(dataTransfer(items as Partial<DataTransferItem>[]))).toHaveLength(
-      MAX_ATTACHMENTS_PER_BATCH,
-    )
+    expect(
+      collectClipboardImages(dataTransfer(items as Partial<DataTransferItem>[])).accepted,
+    ).toHaveLength(MAX_ATTACHMENTS_PER_BATCH)
     expect(attachmentSessionCount()).toBe(MAX_ATTACHMENTS_PER_BATCH)
   })
 })
@@ -195,11 +268,12 @@ describe('streaming / file-path import policy (P1.4)', () => {
 
   it('applyAttachmentLimits with a vault context routes through the full policy', () => {
     const large = fileOfSize('large.png', STREAM_IMPORT_MIN_BYTES + 1)
-    const accepted = applyAttachmentLimits([large], { vaultTotalBytes: 0, freeDiskBytes: 500 * 1024 * 1024 })
-    expect(accepted).toEqual([large])
+    const planned = applyAttachmentLimits([large], { vaultTotalBytes: 0, freeDiskBytes: 500 * 1024 * 1024 })
+    expect(planned.accepted).toEqual([large])
+    expect(planned.rejected).toEqual([])
     // Without a context it reverts to the legacy count-based path (still accepts).
     const legacy = applyAttachmentLimits([large])
-    expect(legacy).toEqual([large])
+    expect(legacy.accepted).toEqual([large])
   })
 
   it('shouldStreamImport splits on the streaming threshold', () => {

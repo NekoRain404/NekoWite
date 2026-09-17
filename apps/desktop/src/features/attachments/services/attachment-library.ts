@@ -198,6 +198,41 @@ export interface ImageSrcResolverContext {
   getNotePath(): string | null
 }
 
+/**
+ * One image of the vault, as the bytes a caller can send.
+ *
+ * **This is the window's second reader, and the reason there is one at all.** `fs.read` answers a
+ * file as a *string* — the Rust command is `std::fs::read_to_string`, so a file that is not valid
+ * UTF-8 comes back as a refusal, which is every image. The bytes of an image are reachable by the
+ * other channel the app already owns: the host resolves the path and grants the `asset://`
+ * protocol exactly that one file (`commands/fs.rs`'s `resolve_media_path` → `allow_media_file`),
+ * and the window fetches it. That is the channel `createImageSrcResolver`'s `'data'` arm reads
+ * through, which is how a saved `.html` inlines its images, and this function is the same read
+ * without a document behind it.
+ *
+ * **No capability is widened for it.** The grant is per file and only for files on the app's own
+ * image allowlist — the host refuses anything else with "asset:// only serves media files" — so a
+ * vault's notes, configuration and metadata are as unreachable through this as they were before.
+ * A caller that hands this a path the host will not serve gets the host's refusal, not bytes.
+ *
+ * Refusals are thrown rather than returned, because every one of them means the same thing to a
+ * caller: there is nothing to send. Where the refusal is *shown* is the surface's business.
+ */
+export async function readVaultImageBase64(
+  fs: Pick<FsGateway, 'resolveMediaPath'>,
+  vault: string,
+  relPath: string,
+): Promise<string> {
+  const url = await fs.resolveMediaPath(vault, relPath)
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`attachment could not be read (${response.status})`)
+  }
+  // `fileToBase64` carries the size cap: a blob past `MAX_ATTACHMENT_BYTES` is refused before it
+  // is encoded, so an image this window may not send never becomes a string in the first place.
+  return await fileToBase64(await response.blob())
+}
+
 /** Build the display-URL resolver handed to the editor / export pipeline.
  *
  * Throws when the src cannot be turned into a display URL. That is deliberate:

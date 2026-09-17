@@ -11,6 +11,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENTS_PER_BATCH,
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENTS_PER_MESSAGE_BYTES,
 } from '../../attachments'
@@ -195,15 +196,44 @@ describe('what a paste or a drop carries', () => {
     ])
   })
 
-  it('leaves the per-file cap to the shared filter, which reports it itself', async () => {
-    // Asserted as an absence so the split is written down: this module must not report the same
-    // oversize file twice, once through its refusals and once through the filter's notification.
+  it('carries the shared filter’s own refusals in this module’s vocabulary', async () => {
+    // The concrete consequence of the split this module used to have to live with: the intake
+    // enforced the per-file cap and reported it through a toast, so an oversize image vanished from
+    // a caller that draws its own rows — this one — with nothing it could put in one. The cap is
+    // still the intake's; what changed is that it comes back as a *value*, named after the file.
     const result = await imagesFromDataTransfer(
       transfer([file('ok.png', 'image/png'), file('big.png', 'image/png', MAX_ATTACHMENT_BYTES + 1)]),
       [],
     )
     expect(result.accepted.map((a) => (a.kind === 'image' ? a.name : ''))).toEqual(['ok.png'])
-    expect(result.refused).toEqual([])
+    expect(result.refused).toEqual([
+      { reason: 'too-large', name: 'big.png', limit: MAX_ATTACHMENT_BYTES },
+    ])
+  })
+
+  it('carries a batch the intake would not take in one gesture, per file', async () => {
+    // The intake's other budgets — ten to a paste, a session running total, a batch byte cap — are
+    // not this message's own caps, so they do not borrow `too-many`'s sentence (which names how
+    // many THIS message may hold). They are one arm because one thing happened: the paste brought
+    // more than the app takes at once.
+    const many = Array.from({ length: MAX_ATTACHMENTS_PER_BATCH + 1 }, (_, i) =>
+      file(`p${i}.png`, 'image/png'),
+    )
+    const result = await imagesFromDataTransfer(transfer(many), [])
+
+    // One more than the intake takes in a single gesture, so the last file is the intake's refusal
+    // and the message's own cap then takes its own share of what survived. The two are told apart
+    // by their arms, which is the point: eleven images pasted at once hit two different limits, and
+    // one arm cannot say so.
+    expect(result.accepted).toHaveLength(MAX_ATTACHMENTS_PER_MESSAGE)
+    expect(result.refused[0]).toEqual({
+      reason: 'intake',
+      name: `p${MAX_ATTACHMENTS_PER_BATCH}.png`,
+    })
+    expect(result.refused.slice(1).every((refusal) => refusal.reason === 'too-many')).toBe(true)
+    expect(result.refused).toHaveLength(
+      1 + MAX_ATTACHMENTS_PER_BATCH - MAX_ATTACHMENTS_PER_MESSAGE,
+    )
   })
 
   it('says nothing when the clipboard carried nothing this app can send', async () => {

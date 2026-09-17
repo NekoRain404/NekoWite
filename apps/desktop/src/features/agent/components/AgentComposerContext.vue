@@ -49,10 +49,13 @@ export interface AgentComposerSelection {
  *
  * **It names what was picked and decides nothing about it.** A chosen file leaves here as a path
  * and a chosen passage as its own words; whether that path becomes an attachment the engine reads
- * or stays text in the message is `AgentComposer.vue`'s call, because it is a fact about the
- * engine's own handshake and this component holds no report. That split is also why there is no
- * capability gate here: this list offers things a *person* may point at, and what may be *sent* is
- * a different question asked one layer up.
+ * or stays text in the message is the composer's call, because it is a fact about the engine's own
+ * handshake and this component holds no report. That split is also why there is no capability gate
+ * here: this list offers things a *person* may point at, and what may be *sent* is a different
+ * question asked one layer up — and one layer further than it used to be, since *which* block a
+ * file becomes is a question about the file as well as about the report
+ * (`use-agent-composer-attachments.ts`'s `attachFile`). Nothing about that reached this list: its
+ * rows are still files, and pressing one still means the same thing for all of them.
  *
  * Four things it deliberately does not do:
  *

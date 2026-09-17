@@ -49,6 +49,7 @@ export {
   attachmentSessionCount,
   classifyAttachmentFiles,
   collectClipboardImages,
+  describeAttachmentRejections,
   formatAttachmentBytes,
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS_PER_BATCH,
@@ -81,5 +82,6 @@ export {
   formatRelativeTime,
   loadAttachmentLibrary,
   LOW_COPY_ENCODE_MIN_BYTES,
+  readVaultImageBase64,
 } from './services/attachment-library'
 export type { AttachmentItem, ImageSrcResolverContext } from './services/attachment-library'

@@ -23,11 +23,14 @@ import { promptAttachmentLabel } from '../../../platform/gateways/agent-contract
 import { notifyError } from '../../../services/errors'
 import { t } from '../../../i18n'
 import { fsService } from '../../../platform/gateways/fs'
-import { collectClipboardImages } from '../../attachments'
+import { collectClipboardImages, isImagePath, readVaultImageBase64 } from '../../attachments'
+import { baseName } from '../../../services/paths'
 import {
   attachmentKey,
   attachmentStanding,
+  imageAttachment,
   imagesFromDataTransfer,
+  mediaTypeOf,
   mergeAttachments,
   resourceAttachment,
   roomFor,
@@ -49,6 +52,25 @@ export interface UseAgentComposerAttachmentsOptions {
   vault: () => string | null
 }
 
+/**
+ * What became of a file the reader picked.
+ *
+ * Three outcomes and not two, because the third is the one the *caller* still has to act on: the
+ * composable owns the message's contents, and it does not own the composer's text, so "this file
+ * travels as its path in the message instead" is a decision only the field can carry out. Keeping
+ * it here is what stops the component from having to know which capability licenses which kind of
+ * file — the question the whole of `attachFile` exists to answer in one place.
+ */
+export type AgentPickOutcome =
+  /** It is in the message, as the block its kind and the engine's report agree on. */
+  | 'attached'
+  /** The engine's report does not license that block, so the file's *path* goes into the message
+   *  instead. Silent: the reader can see the path arrive, and this is what the `+`'s rows have
+   *  always done for a file the engine will not take whole. */
+  | 'path-in-message'
+  /** Nothing was added and the reader has been told why, named after the file. */
+  | 'refused'
+
 /** What a refusal is shown as: the catalogue's sentence, in the reader's language. */
 function reportRefusal(refusal: AgentAttachmentRefusal): void {
   const { key, params } = describeRefusal(refusal)
@@ -66,9 +88,10 @@ export interface AgentComposerAttachments {
   resourceStanding: ComputedRef<AgentAttachmentStanding>
   /** The two counts the strip's own sentence uses. */
   addFromTransfer(data: DataTransfer | null): Promise<void>
-  /** Attach a file of the workspace, reading it as text. Refused with the file's own name when it
-   *  cannot be read, because a `resource` block is built from text and there is nothing to build. */
-  attachFile(path: string): Promise<void>
+  /** Attach a file of the workspace. Which of the two blocks it becomes is decided by the file —
+   *  an image is read as bytes, anything else as text — and either way it is refused with the
+   *  file's own name when the workspace will not hand it over. */
+  attachFile(path: string): Promise<AgentPickOutcome>
   remove(key: string): void
   clear(): void
 }
@@ -133,7 +156,7 @@ export function useAgentComposerAttachments(
     // attachments had the encode happened; what is skipped is the encode.
     const standing = imageStanding.value
     if (standing.kind !== 'allowed') {
-      const carried = collectClipboardImages(data)
+      const carried = collectClipboardImages(data).accepted
       if (carried.length === 0) return
       for (const file of carried) {
         notifyError(
@@ -152,40 +175,89 @@ export function useAgentComposerAttachments(
     accept(accepted)
   }
 
-  async function attachFile(path: string): Promise<void> {
+  /**
+   * A file of the workspace, and the one question that decides everything else: **is it an image?**
+   *
+   * The window has two readers and neither can answer for the other's files. A note is read as a
+   * *string* (`fsService.read`, the host's `read_to_string`), which is what a `resource` block is
+   * built from and what refuses every image, because an image is not valid UTF-8. An image is read
+   * as *bytes* through the media channel (`readVaultImageBase64`), which is the host granting the
+   * `asset://` protocol exactly that file and the window fetching it — the same read the editor
+   * displays an attachment through and the export inlines one with.
+   *
+   * So the decision is taken from the path, by the app's own attachment predicate, and taken
+   * **before either read**: the gate that licenses the block is per attachment *kind*, and which
+   * gate applies is only knowable once the kind is. This is the module's stated ordering — the
+   * engine's answer before the bytes — one step earlier, and it is what keeps an engine that reads
+   * no images from making this window encode one to find out.
+   *
+   * The third kind of file is refused honestly: a `.pdf`, an archive, anything that is neither an
+   * image nor text fails the text read and is named as unreadable. That is not an oversight — the
+   * media channel serves only files on the app's own image allowlist, deliberately (see
+   * `readVaultImageBase64`), so there is no reader here for a binary and none is invented.
+   */
+  async function attachFile(path: string): Promise<AgentPickOutcome> {
     const vault = options.vault()
-    if (vault === null) return
+    if (vault === null) return 'refused'
+    return isImagePath(path) ? await attachImage(vault, path) : await attachText(vault, path)
+  }
+
+  async function attachImage(vault: string, path: string): Promise<AgentPickOutcome> {
     // The engine's answer first, and the read after it: a file this engine cannot be sent has no
     // reason to be read at all, and reading it would put its contents in memory for nothing.
-    const standing = standingFor('resource')
-    if (standing.kind !== 'allowed') {
-      const sentence =
-        standing.kind === 'refused'
-          ? t('agent.panel.composer.attach.refused', { name: path, detail: standing.detail })
-          : t('agent.panel.composer.attach.unreported', { name: path, detail: standing.detail })
-      notifyError(sentence)
-      return
+    if (standingFor('image').kind !== 'allowed') return 'path-in-message'
+    // The size is asked for before the bytes are, so an image the message cannot take is refused
+    // as too large rather than fetched, encoded and then thrown away. It is the file's raw byte
+    // size, the same quantity the paste path hands `roomFor` as `File.size`.
+    let size: number
+    try {
+      size = (await fsService.stat(vault, path)).size
+    } catch {
+      reportRefusal({ reason: 'unreadable', name: path })
+      return 'refused'
     }
+    const room = roomFor(held.value, size, path)
+    if (room !== null) {
+      reportRefusal(room)
+      return 'refused'
+    }
+    let data: string
+    try {
+      data = await readVaultImageBase64(fsService, vault, path)
+    } catch {
+      // The media channel refused it — a path outside the vault, a file the host will not serve,
+      // or bytes past the shared cap. Either way there is nothing to send.
+      reportRefusal({ reason: 'unreadable', name: path })
+      return 'refused'
+    }
+    // The media type comes from the extension and not from the response, so the `mimeType` the
+    // engine receives is this app's own answer about a file it just read, rather than whatever
+    // the protocol guessed when it served it.
+    accept([imageAttachment(baseName(path) || path, mediaTypeOf(path), data)])
+    return 'attached'
+  }
+
+  async function attachText(vault: string, path: string): Promise<AgentPickOutcome> {
+    if (standingFor('resource').kind !== 'allowed') return 'path-in-message'
     let text: string
     try {
       text = await fsService.read(vault, path)
     } catch {
-      // A file the workspace cannot serve as text — an image, a binary, a file that is gone. The
-      // read is where it is found out, and the refusal names the file rather than reporting the
-      // reader's own choice as a backend fault. An *image* picked here is the ordinary case: this
-      // arm builds a block out of text, and an image's bytes are not text — the paste and drop
-      // intakes are where an image is attached, because those are the gestures that carry bytes.
+      // A file the workspace cannot serve as text — a binary, a file that is gone. The read is
+      // where it is found out, and the refusal names the file rather than reporting the reader's
+      // own choice as a backend fault.
       reportRefusal({ reason: 'unreadable', name: path })
-      return
+      return 'refused'
     }
     // Measured against the text that will actually travel, not against a `File` this path never
     // had: the block's payload is the bytes of `text`.
     const room = roomFor(held.value, new TextEncoder().encode(text).length, path)
     if (room !== null) {
       reportRefusal(room)
-      return
+      return 'refused'
     }
     accept([resourceAttachment(path, text)])
+    return 'attached'
   }
 
   function remove(key: string): void {

@@ -77,7 +77,19 @@ export function applyAgentEvent(view: AgentSessionView, event: AgentEvent): Agen
       // The engine's copy of the user's half, which is what it sends when a session is
       // restored. Kept apart from the host's own row for the same message: they are two
       // statements about the conversation rather than two halves of one.
-      return writeText(view, { kind: 'user', runId: event.runId, text: event.payload.text, origin: 'engine' })
+      //
+      // Its attachment list is empty, and empty is the true answer rather than a placeholder: this
+      // frame carries text and nothing else, and a replay does not report what went with the
+      // message. Inventing one here would be this host claiming to know what a restored turn
+      // carried — exactly the claim the host's own row exists to make, from memory that was in
+      // hand at send time.
+      return writeText(view, {
+        kind: 'user',
+        runId: event.runId,
+        text: event.payload.text,
+        origin: 'engine',
+        attachments: [],
+      })
     case 'tool-update': {
       const call = event.payload
       const index = toolEntryIndex(view, call.toolCallId)

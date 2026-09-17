@@ -27,6 +27,7 @@ import type { AgentTimelineEntry } from '../services/agent-timeline'
 const LABELS: AgentTimelineLabels = {
   aria: 'Agent transcript',
   you: 'You',
+  attached: 'Files attached to this message',
   thoughtOpen: 'Hide reasoning',
   thoughtClosed: 'Reasoning',
   controls: {
@@ -61,7 +62,7 @@ const LABELS: AgentTimelineLabels = {
 /** Three kinds of row, so the container has both a plain row and a focusable one inside it:
  *  the disclosure on the tool row is what a Tab out of the container visits next. */
 const ROWS: readonly AgentTimelineEntry[] = [
-  { kind: 'user', id: 1, runId: null, text: 'Summarise the note', origin: 'host' },
+  { kind: 'user', id: 1, runId: null, text: 'Summarise the note', origin: 'host', attachments: [] },
   { kind: 'text', id: 2, runId: 'run-1', text: 'Reading it now.' },
   {
     kind: 'tool',
@@ -147,7 +148,7 @@ describe('the transcript and the keyboard', () => {
     // label as the host's own message — it *is* the user speaking — and `data-origin` is what
     // keeps the two statements apart in the DOM for anything that wants to tell them apart.
     const { host } = mountTimeline([
-      { kind: 'user', id: 1, runId: 'load-0', text: 'Reply with exactly: PONG', origin: 'engine' },
+      { kind: 'user', id: 1, runId: 'load-0', text: 'Reply with exactly: PONG', origin: 'engine', attachments: [] },
     ])
 
     const row = host.querySelector<HTMLElement>('.agent-row-user')
@@ -273,7 +274,9 @@ describe('the transcript’s copy control', () => {
   })
 
   it('is not drawn when there is no answer to copy yet', () => {
-    const { host } = mountTimeline([{ kind: 'user', id: 1, runId: null, text: 'hello', origin: 'host' }])
+    const { host } = mountTimeline([
+      { kind: 'user', id: 1, runId: null, text: 'hello', origin: 'host', attachments: [] },
+    ])
     expect(copyButton(host)).toBeNull()
   })
 })
@@ -285,5 +288,44 @@ describe('the transcript’s way to the reader’s own message', () => {
 
     const withUser = mountTimeline()
     expect(withUser.host.querySelector('[data-timeline-control="to-user"]')).not.toBeNull()
+  })
+})
+
+describe('what a turn carried', () => {
+  it('is drawn on the reader’s own row, named as the chip named it', () => {
+    // The composer's strip goes with the draft, so this row is the only place left that says the
+    // model was given a file. Drawn per name rather than as a count: "2 files" tells a reader who
+    // is looking for the diagram they sent nothing about whether it is the one that arrived.
+    const { host } = mountTimeline([
+      {
+        kind: 'user',
+        id: 1,
+        runId: null,
+        text: 'what is this?',
+        origin: 'host',
+        attachments: [
+          { kind: 'image', name: 'diagram.png' },
+          { kind: 'resource', name: 'notes/a.md' },
+        ],
+      },
+    ])
+
+    const list = host.querySelector('[data-row-files="1"]')
+    expect(list).not.toBeNull()
+    expect(list?.getAttribute('aria-label')).toBe(LABELS.attached)
+    expect([...(list?.querySelectorAll('li') ?? [])].map((li) => li.textContent?.trim())).toEqual([
+      'diagram.png',
+      'notes/a.md',
+    ])
+  })
+
+  it('is not drawn at all for a turn that carried nothing', () => {
+    // The same rule the composer's strip keeps: an empty frame is a surface with nothing to show,
+    // and every turn before this feature existed would draw one.
+    const { host } = mountTimeline([
+      { kind: 'user', id: 1, runId: null, text: 'hello', origin: 'host', attachments: [] },
+    ])
+
+    expect(host.querySelector('[data-row-files]')).toBeNull()
   })
 })

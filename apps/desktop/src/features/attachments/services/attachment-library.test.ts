@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryFsGateway } from '../../../platform/gateways/memory'
 import type { FileEntry, FsGateway } from '../../../platform/gateways/contracts'
 import { MAX_ATTACHMENT_BYTES } from './attachment-import'
@@ -10,6 +10,7 @@ import {
   formatRelativeTime,
   loadAttachmentLibrary,
   LOW_COPY_ENCODE_MIN_BYTES,
+  readVaultImageBase64,
 } from './attachment-library'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -234,6 +235,73 @@ describe('createImageSrcResolver', () => {
       { getVault: () => 'vault', getNotePath: () => 'a.md' },
     )
     await expect(failing('attachments/a.png')).rejects.toThrow('nope')
+  })
+})
+
+describe('readVaultImageBase64', () => {
+  /** The media channel, as the Tauri adapter answers it: the host resolves the path and the window
+   *  turns it into the `asset://` URL the protocol is scoped to serve. */
+  function channel(url = 'asset://localhost/vault/attachments/a.png'): {
+    resolveMediaPath: (vault: string, rel: string) => Promise<string>
+  } {
+    return { resolveMediaPath: vi.fn(async () => url) }
+  }
+
+  /** A served response carrying `bytes`. `ok` and `status` are the two fields the reader reads. */
+  function served(bytes: number[], ok = true, status = 200): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok,
+        status,
+        blob: async () => new Blob([new Uint8Array(bytes)], { type: 'image/png' }),
+      })),
+    )
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('reads the file through the media channel as base64 with no data: prefix', async () => {
+    // The same channel the editor displays an attachment through and the export inlines one with:
+    // the host grants the protocol exactly this file, and the window fetches it.
+    const fs = channel()
+    served([65, 66, 67])
+
+    await expect(readVaultImageBase64(fs, 'vault', 'attachments/a.png')).resolves.toBe('QUJD')
+    expect(fs.resolveMediaPath).toHaveBeenCalledWith('vault', 'attachments/a.png')
+  })
+
+  it('refuses when the host will not resolve the path', async () => {
+    // The boundary answering: a file the app is not allowed to serve, a path outside the vault, or
+    // a file that is gone. The reader has nothing to return and must not invent one.
+    const fs = { resolveMediaPath: vi.fn(async () => { throw new Error('refusing to serve it') }) }
+    served([65])
+
+    await expect(readVaultImageBase64(fs, 'vault', 'notes/secret.md')).rejects.toThrow(
+      'refusing to serve it',
+    )
+  })
+
+  it('refuses a response that did not succeed rather than encoding an error page', async () => {
+    served([60, 104, 116, 109, 108], false, 404)
+
+    await expect(readVaultImageBase64(channel(), 'vault', 'attachments/gone.png')).rejects.toThrow(
+      /404/,
+    )
+  })
+
+  it('refuses an oversize image before any encode', async () => {
+    // The shared cap's last line of defence: a blob past `MAX_ATTACHMENT_BYTES` must not be turned
+    // into a base64 string at all, whatever asked for it.
+    const oversize = new Blob([new Uint8Array([1])], { type: 'image/png' })
+    Object.defineProperty(oversize, 'size', { value: MAX_ATTACHMENT_BYTES + 1, configurable: true })
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, blob: async () => oversize })))
+
+    await expect(
+      readVaultImageBase64(channel(), 'vault', 'attachments/huge.png'),
+    ).rejects.toThrow(/exceeds/)
   })
 })
 

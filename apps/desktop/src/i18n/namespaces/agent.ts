@@ -173,6 +173,12 @@ export const agent = {
         timeline: {
           aria: 'Agent transcript',
           you: 'You',
+          /* Names the list of files under the reader's own turn. The names in it are the files'
+             own — a vault path or an image's name — so this is what says what the list IS: the
+             engine's replay of a restored session carries no attachments, and a host row written
+             before this feature existed records none, so the list appears only on a turn of this
+             run whose send really carried something. */
+          attached: 'Files attached to this message',
           thoughtOpen: 'Hide the reasoning',
           thoughtClosed: 'Show the reasoning',
           jump: 'Back to the end',
@@ -292,6 +298,12 @@ export const agent = {
             tooLarge: '{name} is larger than the {max} one attachment may be.',
             noRoom: 'This message already holds {max} of attachments; {name} did not fit.',
             unreadable: '{name} could not be read, so there is nothing to send in it.',
+            /* The one refusal that is not about this message: the shared intake's own budgets —
+               how many files a paste may bring, how many bytes it may weigh, the session's running
+               total — which are spent before the message is consulted at all. Said as the budget
+               being spent rather than as a number, because the three caps it covers carry three
+               different numbers and naming one of them would be wrong two times in three. */
+            intake: '{name} was not attached: the composer’s paste budget is already spent.',
             /* The `@` menu: the same folder the `+` walks, opened by typing a note's name. Its
                four "nothing to show" states are separate sentences for the reason the `/` menu's
                are: a list still being read, a vault with no notes, a word that matches none and an
@@ -1300,6 +1312,7 @@ export const agent = {
         timeline: {
           aria: '智能体记录',
           you: '你',
+          attached: '这条消息附带的文件',
           thoughtOpen: '收起思考过程',
           thoughtClosed: '展开思考过程',
           jump: '回到末尾',
@@ -1379,6 +1392,10 @@ export const agent = {
             tooLarge: '{name} 超过了单个附件允许的 {max}。',
             noRoom: '这条消息已持有 {max} 的附件，{name} 放不下。',
             unreadable: '无法读取 {name}，里面没有可发送的内容。',
+            /* 唯一一条不是在说这条消息的拒绝：共享入口自己的额度——一次粘贴能带几个文件、能有多
+               重、本次会话累计多少——在这些问题上根本还没轮到这条消息。写成额度已用尽而不是写成
+               一个数字，因为它覆盖的三个上限各自不同，写任何一个都会有三分之二是错的。 */
+            intake: '{name} 没有附加：输入框这一轮粘贴的额度已经用完了。',
             mention: {
               list: '这个文件夹里的笔记',
               noMatch: '这里没有匹配的笔记',

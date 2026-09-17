@@ -264,13 +264,16 @@ function focus(): void {
  * so the file's *path* goes into the message as text instead, which is what pressing the same row
  * has always done and is the one shape whose effect is known. Nothing is claimed about the model
  * having been shown the file, and the chip says which of the two happened.
+ *
+ * **Which of the two it is, is not decided here.** It cannot be: an image and a note are licensed
+ * by two different features of the report, so the answer depends on the *file*, and this component
+ * holds a path. `attachFile` makes the call and answers with which one it took; all that is left
+ * for this component is the half only it can do — putting the path into the field it owns.
  */
 function pickFile(path: string): void {
-  if (attachments.resourceStanding.value.kind === 'allowed') {
-    void attachments.attachFile(path)
-    return
-  }
-  insertReference(path)
+  void attachments.attachFile(path).then((outcome) => {
+    if (outcome === 'path-in-message') insertReference(path)
+  })
 }
 
 /**

@@ -8,11 +8,13 @@ import { assetsDirForNote, suggestRename } from '../../../services/rename-asset'
 import { insertMarkdownAtCursor } from '../../../services/editor-insert'
 import {
   collectClipboardImages,
+  describeAttachmentRejections,
   escapeMarkdownAlt,
   fileToBase64,
   markdownImageBlock,
   relativePathFromNoteVault,
 } from '../../attachments'
+import type { AttachmentLimitResult } from '../../attachments'
 
 interface RenamePrompt {
   initial: string
@@ -226,8 +228,21 @@ export function useImageIntake() {
     }
   }
 
+  /**
+   * Tell the reader about whatever the limits refused, then keep what survived.
+   *
+   * The sentence is the intake's own (`describeAttachmentRejections`), so this surface and the
+   * chat panel's and the agent composer's cannot describe the same refusal three ways. What is
+   * this surface's is the *showing* of it: the intake returns the refusals rather than reporting
+   * them itself, because it is called by three surfaces that tell a reader three different ways.
+   */
+  function accepted(result: AttachmentLimitResult): File[] {
+    if (result.rejected.length > 0) notifyError(describeAttachmentRejections(result.rejected))
+    return result.accepted
+  }
+
   function onPaste(e: ClipboardEvent): void {
-    const files = collectClipboardImages(e.clipboardData)
+    const files = accepted(collectClipboardImages(e.clipboardData))
     if (files.length === 0) return
     // Captured before ProseMirror/CodeMirror's own paste handling sees the
     // event, so an image file never lands as raw HTML or a path string.
@@ -237,7 +252,7 @@ export function useImageIntake() {
   }
 
   function onDrop(e: DragEvent): void {
-    const files = collectClipboardImages(e.dataTransfer)
+    const files = accepted(collectClipboardImages(e.dataTransfer))
     if (files.length === 0) return
     e.preventDefault()
     e.stopPropagation()

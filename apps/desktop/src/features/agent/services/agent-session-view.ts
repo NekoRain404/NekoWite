@@ -36,10 +36,11 @@ import type {
   AgentFailureCode,
   AgentIdentity,
   AgentPlanEntry,
+  AgentPromptAttachment,
   AgentRunResult,
   AgentSessionState,
 } from '../../../platform/gateways/agent-contracts'
-import type { AgentTimelineEntry, AgentUserEntry } from './agent-timeline'
+import { userAttachments, type AgentTimelineEntry, type AgentUserEntry } from './agent-timeline'
 
 /**
  * A hole in the stream: `expected` never arrived and `received` did.
@@ -312,6 +313,7 @@ export function endRun(
 export function startAgentRun(
   view: AgentSessionView,
   text: string,
+  attachments: readonly AgentPromptAttachment[] = [],
 ): { view: AgentSessionView; accepted: boolean } {
   if (isRunLive(view)) return { view, accepted: false }
   const row: AgentUserEntry = {
@@ -320,6 +322,10 @@ export function startAgentRun(
     runId: null,
     text,
     origin: 'host',
+    // Recorded here because here is the only place the answer exists: the composer drops its strip
+    // with the draft, and the engine's replay of the user's half carries none of this. Reduced to
+    // names on the way in — see `AgentUserAttachment`.
+    attachments: userAttachments(attachments),
   }
   return {
     view: {

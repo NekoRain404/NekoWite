@@ -73,6 +73,7 @@ const LABELS: AgentPanelLabels = {
   timeline: {
     aria: 'Agent transcript',
     you: 'You',
+    attached: 'Files attached to this message',
     thoughtOpen: 'Hide reasoning',
     thoughtClosed: 'Reasoning',
     controls: {
