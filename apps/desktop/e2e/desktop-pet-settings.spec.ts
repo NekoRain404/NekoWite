@@ -35,6 +35,8 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { openNote } from './support/editorHarness'
 import { LONG_PATH } from './support/petFixture'
+// The ball's ends and default as values: numbers this file spelled itself would pass after the schema moved.
+import { PET_NUMBER_RULES, PET_SETTINGS_DEFAULTS } from '/src/platform/gateways/pet-contracts'
 
 /** The four pages whose components are slot content, of §5.1's pages. `advanced` is added by a test. */
 const SLOT_PAGES = ['character', 'bubble', 'care', 'project'] as const
@@ -440,28 +442,91 @@ test('the rail offers a page only when a component is behind it', async ({ page 
 })
 
 // ---------------------------------------------------------------------------
-// The switch, the preview, and the pet's own window
+// The two window switches, the ball's size, and the preview
 // ---------------------------------------------------------------------------
 
-test('the master switch is written, is what the host reports, and drives the preview', async ({ page }) => {
+test('the two window switches are peers, and there is no master above them', async ({ page }) => {
   await openNote(page)
   await openPetSection(page)
 
-  const enable = page.locator('#e2e-pet-settings .settings-toggle input.checkbox').first()
-  await expect(enable).toBeChecked()
+  const ball = page.locator('#e2e-pet-settings [data-test="pet-general-ball"]')
+  const character = page.locator('#e2e-pet-settings [data-test="pet-general-character-window"]')
+  await expect(ball).toBeChecked()
+  await expect(character).toBeChecked()
   await expect(page.locator('#e2e-pet-settings .pet-preview__figure')).toBeVisible()
 
-  await enable.uncheck()
+  // 显示桌宠 is gone — asserted in both languages this build ships, spelled out because the catalogue
+  // entry went with the switch — and as a count, read *before* the comparison so that comparison cannot
+  // pass by reading nothing: the ball, the character window, and the gated window behaviour. No fourth.
+  const rows = await page.locator('#e2e-pet-settings .settings-toggle > span').allInnerTexts()
+  expect(rows).toHaveLength(3)
+  for (const master of ['显示桌宠', 'Show the desktop pet']) expect(rows).not.toContain(master)
 
-  // The write landed, and the host is what says so: the page's own state is not the evidence.
+  // Both off — 两只都关掉, the state the old page disabled this pair in, reached the way a user reaches
+  // it, with every switch still operable: the four combinations 「分别打开分别关闭」 names are all reachable.
+  await character.uncheck()
+  await ball.uncheck()
+  await expect.poll(async () => (await stored(page, 'general')).enabled, { timeout: 5000 }).toBe(false)
+  expect(await stored(page, 'general')).toMatchObject({ ball: false, characterWindow: false })
+  await expect(ball).toBeEnabled()
+  await expect(character).toBeEnabled()
+  // §5.1 keeps 启用 and 显示 apart: off is not hidden, and the preview shows the off notice.
   await expect.poll(() => featureState(page), { timeout: 5000 }).toEqual({ enabled: false, visible: false })
-  // §5.1 keeps 启用 and 显示 apart: off is not hidden, and the preview shows the off notice instead
-  // of a pet.
   await expect(page.locator('#e2e-pet-settings .pet-preview__notice')).toBeVisible()
 
-  await enable.check()
-  await expect.poll(() => featureState(page), { timeout: 5000 }).toEqual({ enabled: true, visible: true })
-  await expect(page.locator('#e2e-pet-settings .pet-preview__figure')).toBeVisible()
+  // The ball alone: the switch the user touched moved, and the one they did not stayed where it was.
+  await ball.check()
+  await expect.poll(async () => (await stored(page, 'general')).ball, { timeout: 5000 }).toBe(true)
+  expect(await stored(page, 'general')).toMatchObject({ ball: true, characterWindow: false })
+  await expect(character).not.toBeChecked()
+
+  // And the other way round, which is the direction a page whose switches answered to a master could not offer.
+  await ball.uncheck()
+  await character.check()
+  await expect.poll(async () => (await stored(page, 'general')).characterWindow, { timeout: 5000 }).toBe(true)
+  expect(await stored(page, 'general')).toMatchObject({ ball: false, characterWindow: true })
+  await expect(ball).not.toBeChecked()
+})
+
+test('the ball’s size is the schema’s rule, is written, and survives the page being reopened', async ({ page }) => {
+  // The ends and the default come from the contract. The value below is the rule's middle, asserted to
+  // be a change: were the default the middle, "moving it writes it" would pass without a write.
+  const rule = PET_NUMBER_RULES['general.ballSize']
+  const next = Math.round((rule.min + rule.max) / 2)
+  expect(next).not.toBe(PET_SETTINGS_DEFAULTS.general.ballSize)
+
+  await openNote(page)
+  await openPetSection(page)
+  const slider = page.locator('#e2e-pet-settings [data-test="pet-general-ball-size"]')
+  await expect(slider).toHaveAttribute('min', String(rule.min))
+  await expect(slider).toHaveAttribute('max', String(rule.max))
+  await expect(slider).toHaveValue(String(PET_SETTINGS_DEFAULTS.general.ballSize))
+
+  await slide(slider, next)
+  await expect.poll(async () => (await stored(page, 'general')).ballSize, { timeout: 5000 }).toBe(next)
+
+  await page.evaluate(() => window.__petSettings?.unmount())
+  await openPetSection(page)
+  await expect(page.locator('#e2e-pet-settings [data-test="pet-general-ball-size"]')).toHaveValue(String(next))
+})
+
+test('the derived master rides the write that turns a window on', async ({ page }) => {
+  await openNote(page)
+  await openPetSection(page)
+
+  const ball = page.locator('#e2e-pet-settings [data-test="pet-general-ball"]')
+  // Both off first, so the record's `enabled` is false — the value a page that wrote only the switch
+  // the user touched would send. `general.enabled` is derived (`characterWindow || ball`) and the store
+  // keeps the blob it is handed, so the record read back *is* what was sent.
+  await page.locator('#e2e-pet-settings [data-test="pet-general-character-window"]').uncheck()
+  await ball.uncheck()
+  await expect.poll(async () => (await stored(page, 'general')).enabled, { timeout: 5000 }).toBe(false)
+  await ball.check()
+  // The trio in one write: the switch that moved, the one that did not, and the master the two decide.
+  // A stale `enabled` would leave the store holding a master disagreeing with its own switches: the
+  // next read derives true, `dirty` never clears, and 「已修改，尚未保存」 sits over a save that landed.
+  await expect.poll(async () => (await stored(page, 'general')).enabled, { timeout: 5000 }).toBe(true)
+  expect(await stored(page, 'general')).toMatchObject({ enabled: true, ball: true, characterWindow: false })
 })
 
 test('the preview asks the host for settings and nothing else', async ({ page }) => {

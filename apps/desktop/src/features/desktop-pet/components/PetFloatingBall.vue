@@ -5,7 +5,9 @@
  * Ported from `references/desktop-pet/windows/src/floating-ball.{html,ts}` and the orb's rules in
  * `windows/src/styles.css` at commit `be171a01273a1ed92a27bcdf72f8a58768bac421`:
  *
- *   - the orb itself, 56 px inside an 80 px window with a 12 px margin (`styles.css:227-236`),
+ *   - the orb itself, 56 px by default inside an 80 px window with a 12 px margin
+ *     (`styles.css:227-236`; the size is `general.ballSize` now, and the window is the host's half
+ *     of the same number),
  *     drawn as upstream drew it — radial highlight, ring, inset bevel — with the press and drag
  *     states at `:291-298`
  *   - the three gestures: primary press and release (`floating-ball.ts:197-238`), which
@@ -137,7 +139,8 @@ const {
 } = usePetDrawingFailure({ imageUrl: computed(() => props.imageUrl ?? null), drawing })
 
 /**
- * Say it out loud to whoever can place it. The orb is 56px and has room for no sentence at all,
+ * Say it out loud to whoever can place it. The orb is a few dozen pixels across and has room for
+ * no sentence at all,
  * so the same division the gestures above use applies here: this component reports, and the
  * composition decides where a sentence goes. `immediate` because the first state is worth
  * stating — a host that only heard about changes would have to guess at the one it mounted with.
@@ -198,7 +201,7 @@ function pointerOf(event: PointerEvent): BallPointer {
 
 /**
  * Hand the pointer to this element for the rest of the press, so the move and the release arrive
- * even when the cursor leaves the 56 px orb. Upstream listened on `window` instead (`:208`, `:226`)
+ * even when the cursor leaves the orb. Upstream listened on `window` instead (`:208`, `:226`)
  * and had to remove those listeners again; a capture is released by the browser and cannot be
  * leaked. A desktop that refuses the capture costs the gesture its moves, not its correctness.
  */

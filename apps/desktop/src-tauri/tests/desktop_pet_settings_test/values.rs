@@ -65,7 +65,11 @@ fn an_unusable_stored_value_is_repaired_and_an_absent_one_is_not() {
         PetSettingsDomain::General,
         &json!({ "enabled": false, "new": 1 }),
     );
-    assert_eq!(unknown.values["enabled"], json!(false));
+    // `enabled` reads back as its two switches mean and not as the file spells it: it is derived
+    // (`derive_master`), and both switches default on. That is the whole point of the derivation —
+    // a stored master has no way to disagree with the pair — and it is deliberately *not* a repair:
+    // the value was usable, and the field is a restatement of two others.
+    assert_eq!(unknown.values["enabled"], json!(true));
     assert!(!unknown.values.contains_key("new"));
     assert!(unknown.repaired.is_empty());
 }

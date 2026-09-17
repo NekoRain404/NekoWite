@@ -13,16 +13,21 @@
 //! caller through the host's instance list, where the ball has never been. Nothing here changes
 //! that; this module is where the reason is now written down beside the window it is about.
 //!
-//! **The switch.** Upstream stores one of its own (`read_ball_visible`, on by default,
-//! `references/.../src-tauri/src/lib.rs:334-339`) and its settings page has had a 「Show floating
-//! ball」 row all along; this build's `general` domain had no such field, so the ball followed the
-//! master switch and a user who wanted the character but not the ball could not say so. It is
-//! `general.ball` now, and the rule is upstream's: the ball exists when this switch is on, and
-//! nothing about the character window decides it — a ball on its own, with no character window at
-//! all, is the state the pair of switches exists for (「只开悬浮球」). The one gate above it is
-//! `general.enabled`, §5.1's master switch and §4's rollback, which takes *every* pet window down
-//! and is not a window's own switch: a ball with the feature switched off would be a surface the
-//! switch the user pulled does not govern.
+//! **The switch.** Upstream stores one of its own (`read_ball_visible`, on by default, on its own
+//! settings row, `references/.../src-tauri/src/lib.rs:334-339`); this build had no such field, so the
+//! ball followed the master switch and a user who wanted the character but not the ball could not say
+//! so. It is `general.ball` now, and the rule is upstream's: the ball exists when this switch is on,
+//! and nothing about the character window decides it — a ball on its own, with no character window at
+//! all, is the state the pair of switches exists for (「只开悬浮球」). There is **no gate above it**;
+//! `general.enabled` is derived *from* this switch and its peer, so a record can no longer say "no pet
+//! window at all" while a window's own switch is on.
+//!
+//! **And its size.** Upstream had a number for this (`BALL_W`/`BALL_H` and `--ball-size`), fixed, and
+//! so did this build until `general.ballSize` arrived: the orb's diameter is stored once and read by
+//! two processes — this host, which opens the window at [`ball_window_size`] of it, and the ball's own
+//! page, which draws the orb at it — so "the size of the ball" is one value rather than two that agree
+//! by luck (§9). [`BALL_MARGIN`] is the only constant left between them, and the cross-language test
+//! in `tests/desktop_pet_settings_test/geometry.rs` is what keeps it one constant.
 //!
 //! Ported from that file at commit `be171a01273a1ed92a27bcdf72f8a58768bac421` (MIT, `Copyright (c)
 //! 2026 Nguyễn Thành Đạt`): `BALL_W`/`BALL_H` and the 24/80 margins are its numbers, and the
@@ -48,15 +53,31 @@ pub const BALL_LABEL: &str = "pet-ball";
 /// not the character window's bundle.
 pub const DESKTOP_PET_BALL_PAGE: &str = "desktop-pet-ball.html";
 
-/// The ball window's size in logical px: upstream's `BALL_W`/`BALL_H` (`:312-314`) — an 80 px square
-/// for a 56 px orb, so the orb's shadow and its hover scale are not clipped by the window's own
-/// edges.
+/// The ball window's size in logical px for an orb of `size` CSS px: upstream's `BALL_W`/`BALL_H`
+/// (`:312-314`), which are an 80 px square for its 56 px orb — the orb plus [`BALL_MARGIN`] on each
+/// side, so the orb's shadow and its hover scale are not clipped by the window's own edges.
 ///
-/// The number is what the *host asks for*. What a compositor gives back is its own business:
-/// `ball-window.md` §5 measured WebKitGTK 4.1 handing back 200x200 for this request, because the
-/// engine's content minimum wins over `inner_size`, and the page draws its 80 px box at the
-/// window's top-left.
-pub const BALL_WINDOW_SIZE: (f64, f64) = (80.0, 80.0);
+/// **The one rule, and the number behind both readers of it.** `general.ballSize` is the *orb's*
+/// diameter and this is the window around it; the ball's page computes the same box from the same
+/// stored number (`PetFloatingBall.vue`'s `frameSize`, the orb plus this same margin), and
+/// `tests/desktop_pet_settings_test/geometry.rs` reads that file's constant and fails if the two
+/// drift. That is what keeps "the setting" one value rather than a window size and an orb size that
+/// happen to agree today (§9).
+pub fn ball_window_size(size: f64) -> (f64, f64) {
+    (size + BALL_MARGIN * 2.0, size + BALL_MARGIN * 2.0)
+}
+
+/// Upstream's margin between the orb and its window (`styles.css:236`), so hover and shadow fit.
+///
+/// Restated on the page (`PetFloatingBall.vue`'s `BALL_MARGIN`), which is the one thing about this
+/// window two languages both have to know — the host sizes the window, the page draws the orb inside
+/// it — and the cross-language test named above is what holds the two copies together.
+pub const BALL_MARGIN: f64 = 12.0;
+
+/// The orb's size when nothing says otherwise: upstream's `--ball-size` (`styles.css:235`), which is
+/// also `general.ballSize`'s own default, and the orb [`ball_window_size`] answers upstream's own
+/// 80 px window for.
+pub const BALL_DEFAULT_SIZE: f64 = 56.0;
 
 /// Where a ball with no readable screen is placed, and the margins upstream used for its default
 /// corner (`:357`: `(sw - BALL_W - 24, sh - BALL_H - 80)` — the wider bottom gap is where a taskbar
@@ -76,8 +97,12 @@ pub(super) struct Ball {
     /// `general.ball`'s own default (`settings/fields.rs`) — which is why the host is built with it
     /// on and the stored value replaces it at startup (`feature_switch::restore`).
     enabled: bool,
+    /// How big the orb is drawn, and therefore how big the window is ([`ball_window_size`]). The
+    /// schema's own default until a store says otherwise, which is the size this build's ball has
+    /// always been.
+    size: f64,
     /// Whether a window is on screen for it. Not the same fact as `enabled`: a ball can be wanted
-    /// and not open (the pet is switched off, or the compositor refused the window).
+    /// and not open (the compositor refused the window).
     open: bool,
 }
 
@@ -86,6 +111,7 @@ impl Ball {
         Self {
             label,
             enabled: true,
+            size: BALL_DEFAULT_SIZE,
             open: false,
         }
     }
@@ -100,6 +126,37 @@ impl Ball {
 
     pub(super) fn is_enabled(&self) -> bool {
         self.enabled
+    }
+
+    pub(super) fn size(&self) -> f64 {
+        self.size
+    }
+
+    /// Draw the orb at a new diameter, and resize the window that holds it.
+    ///
+    /// Recorded before the call and kept whether or not it succeeds, for the reason
+    /// [`Ball::set_enabled`] records its own: the value is the user's, and a compositor that refused
+    /// the resize has not made it any less theirs — the next window opens at it, and the page draws
+    /// the orb at it either way (the window is the box around the orb, and the orb's own size comes
+    /// from the same stored number through the appearance read).
+    ///
+    /// Nothing is moved. See `PetWindowHost::set_ball_size` for why that is a decision rather than an
+    /// omission, and what it costs.
+    pub(super) fn set_size(
+        &mut self,
+        surfaces: &mut dyn PetSurfaces,
+        size: f64,
+    ) -> Result<(), HostRefusal> {
+        self.size = size;
+        if !self.open {
+            return Ok(());
+        }
+        surfaces
+            .resize(&self.label, ball_window_size(size))
+            .map_err(|detail| HostRefusal::Window {
+                action: WindowAction::Resize,
+                detail,
+            })
     }
 
     /// Open the ball's window if the user wants one and the pet does not have one yet.
@@ -134,7 +191,7 @@ impl Ball {
                 &self.label,
                 DESKTOP_PET_BALL_PAGE,
                 at,
-                BALL_WINDOW_SIZE,
+                ball_window_size(self.size),
                 style,
                 visible,
             )
@@ -218,7 +275,7 @@ impl Ball {
     /// substituted with a guessed screen (§7.2): the ball goes to the margins and the compositor has
     /// the last word.
     fn position(&self, surfaces: &dyn PetSurfaces) -> Placement {
-        let (width, height) = BALL_WINDOW_SIZE;
+        let (width, height) = ball_window_size(self.size);
         let Some(area) = surfaces.work_area() else {
             return Placement {
                 x: BALL_MARGIN_X,

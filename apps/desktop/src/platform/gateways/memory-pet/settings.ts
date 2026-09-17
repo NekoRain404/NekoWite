@@ -116,8 +116,21 @@ export function createPetSettingsDouble(
       return { status: 'applied', record: recordFor(write.domain) }
     },
 
+    /**
+     * The general domain's master, **derived from the two window switches it is a statement
+     * about** — `characterWindow || ball`, the same rule the store recomputes on every read
+     * (`R/src/desktop_pet/settings/values.rs`'s `derive_master`) and the page normalizes its
+     * draft with (`pet-settings-values.ts`'s `readPetSettingsValues`).
+     *
+     * Read from the switches here rather than from the stored field, and that is the one place
+     * this double cannot simply echo what a caller wrote: `platform/` does not import from
+     * `features/`, so the normalizer is out of reach, and answering with a stored master that
+     * a hand-built write left disagreeing with its own switches would be the double reporting
+     * a state the product cannot have. A double exists to be the host a page meets, not a
+     * second opinion about it.
+     */
     enabled(): boolean {
-      return values.general.enabled
+      return values.general.characterWindow === true || values.general.ball === true
     },
   }
 }

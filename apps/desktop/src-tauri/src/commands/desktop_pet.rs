@@ -471,6 +471,10 @@ pub fn desktop_pet_appearance<R: tauri::Runtime>(
     // and a schema this build cannot read is not a reason to refuse the character too.
     let motion = crate::desktop_pet::character_view::stored_motion(&store);
     let bubble_opacity = crate::desktop_pet::character_view::stored_bubble_opacity(&store);
+    // The ball's size, for the one window that draws an orb rather than a whole character: the same
+    // arrangement as the two above, and the reason `general.ballSize` reaches a page at all — the pet
+    // windows hold no settings read (`capabilities/desktop-pet.json`).
+    let ball_size = crate::desktop_pet::stored_ball_size(&store);
     let record = match store.read(PetSettingsDomain::Character) {
         PetSettingsLoad::Current { record } | PetSettingsLoad::Migrated { record, .. } => record,
         // No record: a fresh install. Nothing is chosen, which is a state the window draws as a
@@ -482,6 +486,7 @@ pub fn desktop_pet_appearance<R: tauri::Runtime>(
             return Ok(crate::desktop_pet::PetAppearance::Unset {
                 motion,
                 bubble_opacity: bubble_opacity.value(),
+                ball_size,
             })
         }
         // There is a file and it is not a record this build can read. Reported rather than read as
@@ -507,8 +512,13 @@ pub fn desktop_pet_appearance<R: tauri::Runtime>(
         }
     };
     let library = app.try_state::<CharacterLibrary>();
-    let appearance =
-        crate::desktop_pet::appearance(&record, motion, bubble_opacity, library.as_deref());
+    let appearance = crate::desktop_pet::appearance(
+        &record,
+        motion,
+        bubble_opacity,
+        ball_size,
+        library.as_deref(),
+    );
     if let crate::desktop_pet::PetAppearance::Ready { sheet_path, .. } = &appearance {
         allow_character_sheet(&app, Path::new(sheet_path));
     }

@@ -429,10 +429,12 @@ export interface PetRowField {
  * §7.1 gives the window and its size to the host; a surface that asked for more than the host
  * grants would be asking for something no compositor can give it.
  *
- * The number is `window_host::CHARACTER_WINDOW_SIZE.0` (260.0), and that pairing is held by a
- * test rather than by this sentence: `desktop_pet_ipc_test`'s
- * `the_bubble_fits_the_window_it_is_drawn_in` reads this constant out of this file and fails if
- * either side moves without the other.
+ * The number is `window_host::CHARACTER_WINDOW_MIN_WIDTH` (260.0) — the floor the character
+ * window's *width* never goes below, whatever the character's size setting says — and that pairing
+ * is held by tests rather than by this sentence: `desktop_pet_ipc_test`'s
+ * `the_bubble_fits_the_window_it_is_drawn_in` reads this constant out of this file, and
+ * `desktop_pet_settings_test`'s `the_window_is_never_narrower_than_the_bubble_it_draws` reads it
+ * too and walks every size the slider offers. Either fails when the pair drifts.
  */
 export const PET_BUBBLE_MAX_WIDTH = 260
 
@@ -445,9 +447,9 @@ export const PET_BUBBLE_MAX_WIDTH = 260
  * number in pixels cannot be right here, because the window the bubble lands in is the host's and
  * its height follows the character's size setting (D13 swept 80, 160 and 320): `40vh` is the term
  * that tracks the window the bubble is actually in, and the 240px ceiling is what keeps a tall
- * window from turning a bubble into a panel. At the window the host builds today (260x320,
- * `window_host::CHARACTER_WINDOW_SIZE`) the box is 128px, and 128 + the 180px character is 308 of
- * its 320 — the surface's own 12px of padding is what takes that past the window, and the
+ * window from turning a bubble into a panel. At the window the host builds for the schema's
+ * default character (260x320, `window_host::character_window_size(160)`) the box is 128px, and
+ * 128 + the 180px character is 308 of its 320 — the surface's own 12px of padding is what takes that past the window, and the
  * arithmetic is written down because a host sizing a window to hold both surfaces is exactly the
  * caller this bound has to agree with.
  *

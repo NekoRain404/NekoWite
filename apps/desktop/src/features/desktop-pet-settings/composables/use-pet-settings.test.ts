@@ -176,6 +176,7 @@ describe('the draft, the debounce and the close path', () => {
       motion: 'reduced',
       ball: true,
       characterWindow: true,
+      ballSize: PET_SETTINGS_DEFAULTS.general.ballSize,
     })
     expect(stored.revision).toBe(3)
   })
@@ -198,6 +199,7 @@ describe('the draft, the debounce and the close path', () => {
       motion: 'reduced',
       ball: true,
       characterWindow: true,
+      ballSize: PET_SETTINGS_DEFAULTS.general.ballSize,
     })
     await tick()
     expect(session.status.value).toBe('saved')
@@ -206,6 +208,7 @@ describe('the draft, the debounce and the close path', () => {
       motion: 'reduced',
       ball: true,
       characterWindow: true,
+      ballSize: PET_SETTINGS_DEFAULTS.general.ballSize,
     })
   })
 })

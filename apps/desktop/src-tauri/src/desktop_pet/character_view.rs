@@ -100,6 +100,11 @@ pub enum PetAppearance {
         motion: Motion,
         #[serde(rename = "bubbleOpacity")]
         bubble_opacity: f64,
+        /// The floating ball's diameter (`general.ballSize`), which is not the character's either:
+        /// the ball is a window of its own and it is on the desktop with no character chosen at all.
+        /// On every arm for the reason [`Motion`] is.
+        #[serde(rename = "ballSize")]
+        ball_size: f64,
     },
     /// A character is chosen and cannot be produced, with the reason in the host's words.
     Missing {
@@ -109,6 +114,9 @@ pub enum PetAppearance {
         motion: Motion,
         #[serde(rename = "bubbleOpacity")]
         bubble_opacity: f64,
+        /// See [`PetAppearance::Unset`]'s own pair.
+        #[serde(rename = "ballSize")]
+        ball_size: f64,
     },
     /// Draw this.
     Ready {
@@ -140,6 +148,9 @@ pub enum PetAppearance {
         /// this window in all three of them, a fresh install included.
         #[serde(rename = "bubbleOpacity")]
         bubble_opacity: f64,
+        /// See [`PetAppearance::Unset`]'s own pair.
+        #[serde(rename = "ballSize")]
+        ball_size: f64,
     },
 }
 
@@ -258,6 +269,44 @@ pub fn stored_bubble_opacity(store: &PetSettingsStore) -> BubbleOpacity {
         .map_or(BubbleOpacity::DEFAULT, BubbleOpacity::of)
 }
 
+/// The floating ball's diameter in CSS pixels, from `general.ballSize` (§5.1's 悬浮球).
+///
+/// The fourth fact that rides this read and is not the character's, and it rides it for the reason
+/// [`Motion`] does: the ball is a pet window, `capabilities/desktop-pet.json` holds no settings read
+/// for it, and this number is *both* what the orb is drawn at and what the window around it is sized
+/// to (`window_host::stored_ball_size` reads the same field for the host's half). One stored number
+/// behind the orb and its window, which is the whole of §9's rule here: a page that measured its own
+/// window, or a host that guessed the page's size, would be the second answer.
+///
+/// It is not the character's even though the ball wears the character's face: the ball is on the
+/// desktop with no character chosen at all, and its size is not a property of what it wears.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct BallSize(f64);
+
+impl BallSize {
+    /// The member `settings::fields`' `GENERAL` declares — upstream's `--ball-size` — and therefore
+    /// the reading of every value this build cannot act on: an absent field on a record an older
+    /// build wrote, a value outside the rule, and a `general` record from a newer build, which §10.2
+    /// keeps this build from reading at all.
+    pub const DEFAULT: Self = Self(super::ball::BALL_DEFAULT_SIZE);
+
+    /// The diameter a `general` record holds.
+    ///
+    /// The store normalized this record on the way out of the file (`settings::values`), so what
+    /// reaches the second arm is a record this build did not write — and the schema's own default is
+    /// the size this build's ball has always been.
+    pub fn of(record: &PetSettingsRecord) -> Self {
+        match record.value("ballSize").and_then(serde_json::Value::as_f64) {
+            Some(value) => Self(value),
+            None => Self::DEFAULT,
+        }
+    }
+
+    pub fn value(self) -> f64 {
+        self.0
+    }
+}
+
 /// Every character the library holds, oldest install last.
 ///
 /// Sorted by install time, which is the order a page shows them in (D8's policy puts the newest
@@ -302,11 +351,14 @@ fn entry_of(entry: &LibraryEntry) -> PetCharacterEntry {
 /// why a window is handed it with its drawing facts instead of asking for it, and
 /// `commands::desktop_pet::desktop_pet_appearance` for the read that supplies it. `bubble` is the
 /// same arrangement one domain over: `message.opacity`, the bubble's background alpha, which the
-/// window draws with and may not read for itself.
+/// window draws with and may not read for itself. `ball_size` is a third of the same kind:
+/// `general.ballSize`, the ball's own diameter, which the ball's window draws its orb at and which
+/// its page may not read for itself either.
 pub fn appearance(
     record: &PetSettingsRecord,
     motion: Motion,
     bubble: BubbleOpacity,
+    ball_size: f64,
     library: Option<&CharacterLibrary>,
 ) -> PetAppearance {
     let bubble_opacity = bubble.value();
@@ -318,6 +370,7 @@ pub fn appearance(
         return PetAppearance::Unset {
             motion,
             bubble_opacity,
+            ball_size,
         };
     };
     let Some(library) = library else {
@@ -326,6 +379,7 @@ pub fn appearance(
             detail: "this build has no character library to read it from".to_string(),
             motion,
             bubble_opacity,
+            ball_size,
         };
     };
     let entry = match library.list() {
@@ -341,6 +395,7 @@ pub fn appearance(
                 ),
                 motion,
                 bubble_opacity,
+                ball_size,
             }
         }
     };
@@ -350,6 +405,7 @@ pub fn appearance(
             detail: "it is not installed in the character library".to_string(),
             motion,
             bubble_opacity,
+            ball_size,
         };
     };
     let unavailable = |detail: String| PetAppearance::Missing {
@@ -357,6 +413,7 @@ pub fn appearance(
         detail,
         motion,
         bubble_opacity,
+        ball_size,
     };
     if let EntryState::Incomplete { missing } = &entry.state {
         return unavailable(format!(
@@ -402,6 +459,7 @@ pub fn appearance(
         idle_interval_ms: drawing.idle_interval_ms,
         motion,
         bubble_opacity,
+        ball_size,
     }
 }
 
@@ -784,6 +842,7 @@ mod tests {
             &record(Some("喵喵"), 200),
             Motion::DEFAULT,
             BubbleOpacity::DEFAULT,
+            BallSize::DEFAULT.value(),
             Some(&library),
         );
 
@@ -860,11 +919,13 @@ mod tests {
                 &record(None, 200),
                 Motion::DEFAULT,
                 BubbleOpacity::DEFAULT,
+                BallSize::DEFAULT.value(),
                 Some(&library),
             ),
             PetAppearance::Unset {
                 motion: Motion::DEFAULT,
                 bubble_opacity: BubbleOpacity::DEFAULT.value(),
+                ball_size: BallSize::DEFAULT.value(),
             }
         );
     }
@@ -878,6 +939,7 @@ mod tests {
             &record(Some("kitty"), 200),
             Motion::DEFAULT,
             BubbleOpacity::DEFAULT,
+            BallSize::DEFAULT.value(),
             Some(&library),
         );
 
@@ -913,6 +975,7 @@ mod tests {
             &record(Some("ghost"), 200),
             Motion::DEFAULT,
             BubbleOpacity::DEFAULT,
+            BallSize::DEFAULT.value(),
             Some(&library),
         );
 
@@ -938,6 +1001,7 @@ mod tests {
             &record(Some("kitty"), 200),
             Motion::DEFAULT,
             BubbleOpacity::DEFAULT,
+            BallSize::DEFAULT.value(),
             Some(&library),
         );
 
@@ -965,6 +1029,7 @@ mod tests {
             &record(Some("kitty"), 200),
             Motion::DEFAULT,
             BubbleOpacity::DEFAULT,
+            BallSize::DEFAULT.value(),
             Some(&library),
         );
 
@@ -982,6 +1047,7 @@ mod tests {
                     &record(Some("kitty"), 200),
                     Motion::DEFAULT,
                     BubbleOpacity::DEFAULT,
+                    BallSize::DEFAULT.value(),
                     None
                 ),
                 PetAppearance::Missing { .. }
@@ -1054,7 +1120,7 @@ mod tests {
         // *not* `reduced` must never be read as it.
         assert_eq!(Motion::of(&general(Some("reduced"))), Motion::Reduced);
         assert_eq!(Motion::of(&general(Some("system"))), Motion::System);
-        assert_eq!(Motion::of(&general(None)), Motion::System);
+        assert_eq!(Motion::of(&general_with_ball_size(None)), Motion::System);
         assert_eq!(Motion::of(&general(Some("less"))), Motion::System);
         assert_eq!(Motion::of(&general(Some(""))), Motion::System);
     }
@@ -1069,7 +1135,13 @@ mod tests {
         // the surface this build has that moves, so a policy that only arrived with `Ready` would
         // leave exactly the state a new user is in unreduced.
         assert!(matches!(
-            appearance(&record(None, 200), reduced, BubbleOpacity::DEFAULT, Some(&library)),
+            appearance(
+                &record(None, 200),
+                reduced,
+                BubbleOpacity::DEFAULT,
+                BallSize::DEFAULT.value(),
+                Some(&library),
+            ),
             PetAppearance::Unset { motion, .. } if motion == reduced
         ));
         assert!(matches!(
@@ -1077,6 +1149,7 @@ mod tests {
                 &record(Some("ghost"), 200),
                 reduced,
                 BubbleOpacity::DEFAULT,
+                BallSize::DEFAULT.value(),
                 Some(&library)
             ),
             PetAppearance::Missing { motion, .. } if motion == reduced
@@ -1086,6 +1159,7 @@ mod tests {
                 &record(Some("kitty"), 200),
                 reduced,
                 BubbleOpacity::DEFAULT,
+                BallSize::DEFAULT.value(),
                 Some(&library)
             ),
             PetAppearance::Ready { motion, .. } if motion == reduced
@@ -1139,6 +1213,100 @@ mod tests {
         );
     }
 
+    /// A `general` record with one field chosen, and the ball size left out when the caller asks for
+    /// that — the same fixture `message` is, one domain over. Named apart from `general` above,
+    /// which is the motion policy's fixture and answers a different question.
+    fn general_with_ball_size(ball_size: Option<i64>) -> PetSettingsRecord {
+        let mut record = PetSettingsRecord::defaults(PetSettingsDomain::General);
+        match ball_size {
+            Some(size) => {
+                record
+                    .values
+                    .insert("ballSize".to_string(), serde_json::Value::from(size));
+            }
+            None => {
+                record.values.remove("ballSize");
+            }
+        }
+        record
+    }
+
+    /// The ball's size at both ends: a value the store read is a value the rule accepted, and a
+    /// record without the field — an older build's file — is the schema's own default rather than a
+    /// guess.
+    #[test]
+    fn a_ball_size_a_window_cannot_act_on_is_read_as_the_schemas_default() {
+        assert_eq!(
+            BallSize::of(&general_with_ball_size(Some(32))).value(),
+            32.0
+        );
+        assert_eq!(
+            BallSize::of(&general_with_ball_size(Some(128))).value(),
+            128.0,
+            "the rule's own ceiling"
+        );
+        assert_eq!(
+            BallSize::of(&general_with_ball_size(None)).value(),
+            BallSize::DEFAULT.value()
+        );
+        assert_eq!(
+            BallSize::DEFAULT.value(),
+            PetSettingsRecord::defaults(PetSettingsDomain::General)
+                .value("ballSize")
+                .and_then(serde_json::Value::as_f64)
+                .expect("the schema declares a default for it"),
+            "the constant is the schema's own default, not a second copy of the number"
+        );
+        assert_eq!(
+            BallSize::DEFAULT.value(),
+            super::super::ball::ball_window_size(super::super::ball::BALL_DEFAULT_SIZE).0 - 24.0,
+            "and it is the orb upstream's 80 px window was built around"
+        );
+    }
+
+    /// **The ball's size rides every arm**, for the reason the policy and the alpha do: the ball is
+    /// on the desktop whether or not a character is chosen, and its size is neither the character's
+    /// nor a fact that arrives with one. A window handed nothing would draw an orb at this build's
+    /// constant while the host had built its window around the user's number — the two answers §9
+    /// forbids, one field over.
+    #[test]
+    fn the_ball_size_rides_every_appearance_arm_because_the_ball_is_drawn_in_all_of_them() {
+        let (library, _data) = library("ball-size-arms");
+        install(&library, "kitty", "Kitty");
+        let size = BallSize::of(&general_with_ball_size(Some(96)));
+
+        assert!(matches!(
+            appearance(
+                &record(None, 200),
+                Motion::DEFAULT,
+                BubbleOpacity::DEFAULT,
+                size.value(),
+                Some(&library)
+            ),
+            PetAppearance::Unset { ball_size, .. } if ball_size == 96.0
+        ));
+        assert!(matches!(
+            appearance(
+                &record(Some("ghost"), 200),
+                Motion::DEFAULT,
+                BubbleOpacity::DEFAULT,
+                size.value(),
+                Some(&library)
+            ),
+            PetAppearance::Missing { ball_size, .. } if ball_size == 96.0
+        ));
+        assert!(matches!(
+            appearance(
+                &record(Some("kitty"), 200),
+                Motion::DEFAULT,
+                BubbleOpacity::DEFAULT,
+                size.value(),
+                Some(&library)
+            ),
+            PetAppearance::Ready { ball_size, .. } if ball_size == 96.0
+        ));
+    }
+
     #[test]
     fn the_bubble_alpha_rides_every_appearance_arm_because_the_bubble_is_drawn_in_all_of_them() {
         let (library, _data) = library("bubble-arms");
@@ -1149,7 +1317,13 @@ mod tests {
         // is still a window the pet says things in — so an alpha that only arrived with `Ready`
         // would leave a fresh install drawing a bubble the user never chose.
         assert!(matches!(
-            appearance(&record(None, 200), Motion::DEFAULT, alpha, Some(&library)),
+            appearance(
+                &record(None, 200),
+                Motion::DEFAULT,
+                alpha,
+                BallSize::DEFAULT.value(),
+                Some(&library)
+            ),
             PetAppearance::Unset { bubble_opacity, .. } if bubble_opacity == 0.7
         ));
         assert!(matches!(
@@ -1157,6 +1331,7 @@ mod tests {
                 &record(Some("ghost"), 200),
                 Motion::DEFAULT,
                 alpha,
+                BallSize::DEFAULT.value(),
                 Some(&library)
             ),
             PetAppearance::Missing { bubble_opacity, .. } if bubble_opacity == 0.7
@@ -1166,6 +1341,7 @@ mod tests {
                 &record(Some("kitty"), 200),
                 Motion::DEFAULT,
                 alpha,
+                BallSize::DEFAULT.value(),
                 Some(&library)
             ),
             PetAppearance::Ready { bubble_opacity, .. } if bubble_opacity == 0.7

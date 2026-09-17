@@ -92,6 +92,11 @@ pub struct FakeSurfaces {
 pub struct SurfaceState {
     /// Every window opened, as (label, page).
     pub opened: Vec<(String, String)>,
+    /// The size every window was opened at, as (label, size), in the same order. Kept apart from
+    /// `opened` rather than widening its pair: the page a window loads and the number it was built
+    /// at are different claims, and every existing case about the first should not have to destructure
+    /// the second.
+    pub opened_at: Vec<(String, (f64, f64))>,
     pub live: Vec<String>,
     pub closed: Vec<String>,
     /// The presentation each window was opened with, by label. Kept because one of its flags is a
@@ -102,6 +107,12 @@ pub struct SurfaceState {
     pub on_top: Vec<(String, bool)>,
     /// Labels this fake refuses to restack, so the host's handling of a real refusal is reachable.
     pub refuse_on_top: Vec<String>,
+    /// Every resize, as (label, size) in the order they were asked for. A size setting reaches a
+    /// window that is already open through this call and no other, so what a case asserts about
+    /// `character.size` or `general.ballSize` is this list.
+    pub resized: Vec<(String, (f64, f64))>,
+    /// Labels this fake refuses to resize, the way `refuse_on_top` refuses a restack.
+    pub refuse_resize: Vec<String>,
 }
 
 impl FakeSurfaces {
@@ -151,6 +162,23 @@ impl FakeSurfaces {
     pub fn style_of(&self, label: &str) -> Option<WindowStyle> {
         self.state().styles.get(label).copied()
     }
+
+    /// Every resize the host asked for, in order.
+    pub fn resizes(&self) -> Vec<(String, (f64, f64))> {
+        self.state().resized.clone()
+    }
+
+    /// The size one window was opened at, or `None` when it was never opened. The last one wins: a
+    /// label is never reused by the host (`window_host.rs`'s header), so this is a fact about one
+    /// window rather than about an ordering.
+    pub fn size_of(&self, label: &str) -> Option<(f64, f64)> {
+        self.state()
+            .opened_at
+            .iter()
+            .filter(|(opened, _)| opened == label)
+            .next_back()
+            .map(|(_, size)| *size)
+    }
 }
 
 impl PetSurfaces for FakeSurfaces {
@@ -159,7 +187,7 @@ impl PetSurfaces for FakeSurfaces {
         label: &PetWindowLabel,
         page: &str,
         _at: Placement,
-        _size: (f64, f64),
+        size: (f64, f64),
         style: WindowStyle,
         _visible: bool,
     ) -> Result<(), String> {
@@ -167,6 +195,7 @@ impl PetSurfaces for FakeSurfaces {
         state
             .opened
             .push((label.as_str().to_string(), page.to_string()));
+        state.opened_at.push((label.as_str().to_string(), size));
         state.live.push(label.as_str().to_string());
         state.styles.insert(label.as_str().to_string(), style);
         Ok(())
@@ -176,6 +205,19 @@ impl PetSurfaces for FakeSurfaces {
         let mut state = self.state();
         state.closed.push(label.as_str().to_string());
         state.live.retain(|live| live != label.as_str());
+        Ok(())
+    }
+
+    fn resize(&mut self, label: &PetWindowLabel, size: (f64, f64)) -> Result<(), String> {
+        let mut state = self.state();
+        if state.refuse_resize.contains(&label.as_str().to_string()) {
+            return Err("the compositor declined".to_string());
+        }
+        // The windows this fake believes are live, so that a resize of a window that is not open
+        // through the host is visible as such rather than counted. Nothing here refuses for it —
+        // the host is what keeps from asking, and a fake that refused too would hide a host that
+        // asked about a window it had already closed.
+        state.resized.push((label.as_str().to_string(), size));
         Ok(())
     }
 

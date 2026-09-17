@@ -106,6 +106,21 @@ export type PetAppearance = {
    * a double — is the schema's default rather than a guess.
    */
   bubbleOpacity?: number
+  /**
+   * The floating ball's diameter in CSS pixels, from `general.ballSize`.
+   *
+   * The third `general` fact riding this read, and it rides it for the reason {@link PetMotion}
+   * gives: the ball is a pet window, `capabilities/desktop-pet.json` holds no settings read for
+   * it, and its size is both what its page draws and what its own window is sized to — one
+   * stored number behind the orb and the window around it, which is what keeps a host that reads
+   * the setting and a page that draws it from being two answers (§9).
+   *
+   * Read through the field's own rule by whoever draws it
+   * (`features/desktop-pet/services/pet-appearance.ts`'s `petBallSizeOf`, which uses
+   * `PET_NUMBER_RULES['general.ballSize']`), so an answer from a host that does not carry it —
+   * or from a double — is the schema's default rather than a guess.
+   */
+  ballSize?: number
 } & (
   /** No character is chosen. */
   | { status: 'unset' }

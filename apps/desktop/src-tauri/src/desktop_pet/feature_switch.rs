@@ -1,20 +1,21 @@
 //! The feature switch, at the two moments this process learns what it is.
 //!
-//! The pet's three switches — `general.enabled`, `general.characterWindow` and `general.ball` — are
-//! stored values, so the windows follow the *write* that set them — that is [`apply`], and
+//! The pet's two switches — `general.characterWindow` and `general.ball` — are stored values, so the
+//! windows follow the *write* that set them — that is [`apply`], and
 //! `commands::desktop_pet_surface` reaches it from the one command that applies a settings write.
-//! What that leaves out is a launch: the switch is declared with a default (`settings::fields`,
+//! What that leaves out is a launch: the switches are declared with defaults (`settings::fields`,
 //! `GENERAL`), and a default that no write ever carried reached no window. A fresh install therefore
 //! rendered 「显示桌宠」 checked and drew nothing until the user happened to save an unrelated field on
 //! the same page — the defect `bundled-pets.md` reported and this module's [`restore`] closes.
 //!
-//! **Which windows a record opens, in one sentence.** With `enabled` off there is no pet window at
-//! all; with it on, each of the pet's two windows exists exactly when its *own* switch is on —
-//! `characterWindow` for the window the character is drawn in, `ball` for the floating ball. The two
-//! switches are peers and neither is a master, which is what makes 只开悬浮球 a state rather than a
-//! special case, and the rule is read in one place (here) so the page's controls and the host cannot
-//! disagree about what a field means (§5.3). The ball is not a side effect of the character window:
-//! a record with `characterWindow` off and `ball` on opens the ball and nothing else.
+//! **Which windows a record opens, in one sentence.** Each of the pet's two windows exists exactly
+//! when its *own* switch is on — `characterWindow` for the window the character is drawn in, `ball`
+//! for the floating ball — and nothing above them decides anything. The two are peers and neither is
+//! a master, which is what makes 只开悬浮球 a state rather than a special case, and the rule is read
+//! in one place (here) so the page's controls and the host cannot disagree about what a field means
+//! (§5.3). `general.enabled` is *not* a third input: it is derived from these two
+//! (`settings::values::derive_master`), so a record that carries a contradictory one has already
+//! been read as the switches say by the time it reaches here.
 //!
 //! **The rule both moments answer to, stated once.** The window agrees with what the settings page
 //! shows for the same record, arm for arm:
@@ -42,7 +43,9 @@
 use serde_json::Value;
 
 use super::settings::{PetSettingsDomain, PetSettingsLoad, PetSettingsRecord, PetSettingsStore};
-use super::window_host::{stored_always_on_top, PetWindowHost};
+use super::window_host::{
+    stored_always_on_top, stored_ball_size, stored_character_size, PetWindowHost,
+};
 
 /// The identity the pet's window is opened under while the character domain names none.
 ///
@@ -81,9 +84,10 @@ pub fn stored(store: &PetSettingsStore) -> Option<PetSettingsRecord> {
 
 /// Apply one applied `general` write to the pet's windows, or answer that it was not the switch.
 ///
-/// `true` when the record carried the switch, which is the caller's cue to publish the state that
-/// follows — and a `general` record with no readable `enabled` is *not* the switch (answering `true`
-/// for one would let a record this build did not write open a window by being empty).
+/// `true` when the record carried the pet's two window switches, which is the caller's cue to publish
+/// the state that follows — and a `general` record carrying *neither* of them is not the switch:
+/// answering `true` for one would let a record this build did not write open a window by being empty,
+/// which is the guard the old master-switch read provided, kept where the decision now lives.
 ///
 /// The refusal arms are logged rather than returned, and that is a decision rather than a shrug: the
 /// *setting* was saved, and an answer of "refused" would tell the user their preference did not take
@@ -94,35 +98,24 @@ pub fn apply(host: &mut PetWindowHost, record: &PetSettingsRecord, character: &s
     if record.domain != PetSettingsDomain::General {
         return false;
     }
-    let Some(enabled) = record.value("enabled").and_then(Value::as_bool) else {
+    // `general.enabled` is deliberately not read: it is derived from the two below
+    // (`settings::values::derive_master`), so a record that says anything else has already been read
+    // as these two say before it got here, and reading it again would be a second answer to the
+    // question the pair already answers.
+    let (Some(character_window), Some(ball)) = (
+        record.value("characterWindow").and_then(Value::as_bool),
+        record.value("ball").and_then(Value::as_bool),
+    ) else {
         return false;
     };
-    // The ball's own switch first, because it is recorded rather than acted on: the host has to
-    // know the preference before it is asked for the window that follows it. A record without one
-    // is a record written by a build that had no such field — the schema's own default stands,
-    // which is what the host was built with.
-    if let Some(ball) = record.value("ball").and_then(Value::as_bool) {
-        if let Err(refusal) = host.set_ball_enabled(ball) {
-            eprintln!("the pet's ball did not follow a saved setting: {refusal:?}");
-        }
+    // The ball's own switch first, because it is recorded rather than acted on: the host has to know
+    // the preference before it is asked for the window that follows it.
+    if let Err(refusal) = host.set_ball_enabled(ball) {
+        eprintln!("the pet's ball did not follow a saved setting: {refusal:?}");
     }
-    // The character window's own switch, and the third of the three this record carries. A record
-    // without one is a record written before the field existed, and what *that* record meant is the
-    // schema's own default too: `enabled` on meant the character window was there, so reading it as
-    // `true` is the only arm that does not take a window away from a record nobody edited.
-    let character_window = record
-        .value("characterWindow")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    if !enabled {
-        // §5.1's 启用 off: no pet window at all, whichever way the two switches above are set
-        // (§4's rollback — the switch, and nothing is deleted). The ball's preference was recorded
-        // a few lines up and stays the user's; what it does not do is keep a window up.
-        for refusal in host.disable().failed {
-            eprintln!("a pet window could not be closed: {refusal:?}");
-        }
-        return true;
-    }
+    // The character window's own switch, and the whole of what decides that window. Off is
+    // §5.1's 显示角色窗口 going off rather than §4's rollback: the ball's own switch was recorded a
+    // line above and is untouched by this call, so 只开悬浮球 is what is left standing.
     if character_window {
         if let Err(refusal) = host.open(character) {
             eprintln!("the pet's window could not be opened for {character}: {refusal:?}");
@@ -155,10 +148,20 @@ pub fn restore(host: &mut PetWindowHost, store: &PetSettingsStore) {
     if let Err(refusal) = host.set_always_on_top(stored_always_on_top(store)) {
         eprintln!("the pet's window style could not be applied at startup: {refusal:?}");
     }
+    // And the two sizes, for the same reason and at the same moment: a window's geometry is decided
+    // when it is created (`character.size` for the character window, `general.ballSize` for the
+    // ball), so a host that opened one before this ran would open it at the previous size and have
+    // to be resized afterwards. Nothing is open yet, so neither call resizes anything either.
+    if let Err(refusal) = host.set_character_size(stored_character_size(store)) {
+        eprintln!("the pet's character size could not be applied at startup: {refusal:?}");
+    }
+    if let Err(refusal) = host.set_ball_size(stored_ball_size(store)) {
+        eprintln!("the ball's size could not be applied at startup: {refusal:?}");
+    }
     let Some(record) = stored(store) else {
         return;
     };
-    // `stored` answers with a record that always carries `enabled` (this build's defaults when
+    // `stored` answers with a record that always carries both switches (this build's defaults when
     // nothing usable is stored), so `apply` cannot answer `false` here — and if a future schema
     // makes it possible, doing nothing is the right answer rather than a panic.
     if !apply(host, &record, &chosen_character(store)) {

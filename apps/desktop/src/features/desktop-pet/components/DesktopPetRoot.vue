@@ -546,7 +546,8 @@ body {
   position: relative;
   display: flex;
   /* A column, so the bubble sits above the character rather than beside it: the window is the
-     character's box (§7.1's CHARACTER_WINDOW_SIZE), and the reminder has to fit inside it. */
+     character's box plus the slack `window_host::character_window_size` leaves for this reminder,
+     and the bubble has to fit inside it. */
   flex-direction: column;
   align-items: center;
   justify-content: flex-end;

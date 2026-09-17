@@ -25,9 +25,10 @@ pub struct OpenCall {
     pub label: String,
     pub page: String,
     pub at: Placement,
-    /// The size the host asked for, kept so the ball's 80x80 and the character's 260x320 can be
-    /// told apart after the fact — they are the two numbers that make the ball the reference's
-    /// surface rather than a second character window.
+    /// The size the host asked for, kept so the two windows can be told apart after the fact: the
+    /// ball's `general.ballSize` plus its margin against the character's `character.size` plus its
+    /// own, which are the two numbers that make the ball the reference's surface rather than a
+    /// second character window.
     pub size: (f64, f64),
     pub style: WindowStyle,
     pub visible: bool,
@@ -47,6 +48,11 @@ pub struct SurfaceState {
     pub always_on_top: Vec<(String, bool)>,
     /// Labels this fake refuses to restack, so the host's handling of a real refusal is reachable.
     pub refuse_always_on_top: Vec<String>,
+    /// Every resize, as (label, size) in the order they were asked for. A size setting reaches a
+    /// window that is already open through this call and no other.
+    pub resized: Vec<(String, (f64, f64))>,
+    /// Labels this fake refuses to resize, the way `refuse_always_on_top` refuses a restack.
+    pub refuse_resize: Vec<String>,
     /// Labels the window system refuses to close, so the host's handling of a real failure has a
     /// way to be reached without inventing one.
     pub refuse_close: Vec<String>,
@@ -122,6 +128,11 @@ impl FakeSurfaces {
         self.state().always_on_top.clone()
     }
 
+    /// Every resize the host asked for, in order.
+    pub fn resizes(&self) -> Vec<(String, (f64, f64))> {
+        self.state().resized.clone()
+    }
+
     /// The live windows that are not the ball's.
     pub fn live_characters(&self) -> Vec<String> {
         self.live()
@@ -162,6 +173,15 @@ impl PetSurfaces for FakeSurfaces {
         }
         state.live.retain(|live| live != label.as_str());
         state.closed.push(label.as_str().to_string());
+        Ok(())
+    }
+
+    fn resize(&mut self, label: &PetWindowLabel, size: (f64, f64)) -> Result<(), String> {
+        let mut state = self.state();
+        if state.refuse_resize.contains(&label.as_str().to_string()) {
+            return Err("the compositor declined".to_string());
+        }
+        state.resized.push((label.as_str().to_string(), size));
         Ok(())
     }
 

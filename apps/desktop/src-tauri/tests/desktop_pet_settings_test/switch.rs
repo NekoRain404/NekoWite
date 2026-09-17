@@ -167,42 +167,132 @@ fn turning_the_ball_off_closes_it_and_leaves_the_character_window_alone() {
     assert_eq!(host.instances().len(), 1);
 }
 
-/// A ball switched on while the pet is off opens nothing: the master switch governs both surfaces,
-/// and a ball that appeared over a switched-off pet would be a window the user's own switch did not
-/// close.
+/// **The two switches are the state, and nothing above them decides.** With 显示角色窗口 off and 显示悬浮球
+/// on, the ball comes up — and it comes up *while the record's own `enabled` says otherwise*, which is
+/// the arm this case exists for: `enabled` is derived from these two (`values::derive_master`), so a
+/// record carrying a contradictory one has already been read as the switches say by the time a
+/// window is asked for. This is the reported defect written as a test: the ball's switch used to be
+/// drawn disabled while the master was off, and the master was what the host read.
 #[test]
-fn turning_the_ball_on_while_the_pet_is_off_opens_nothing() {
+fn the_switches_are_the_state_and_a_contradictory_master_is_not_an_input() {
     let (mut host, surfaces) = support::host();
     let state = apply_feature_switch(
         &mut host,
         &record(
             PetSettingsDomain::General,
-            &[("enabled", json!(false)), ("ball", json!(true))],
+            &[
+                ("enabled", json!(false)),
+                ("characterWindow", json!(false)),
+                ("ball", json!(true)),
+            ],
         ),
         "cat",
     );
     assert_eq!(
         state,
         Some(PetFeatureState {
-            enabled: false,
-            visible: false
-        })
+            enabled: true,
+            visible: true
+        }),
+        "one window is up, so the pet is on"
     );
-    assert!(surfaces.opened().is_empty());
-    assert!(host.ball_enabled(), "the preference is still the user's");
+    assert!(
+        host.instances().is_empty(),
+        "no character window was opened"
+    );
+    assert_eq!(
+        surfaces.ball_open(),
+        Some((BALL_LABEL.to_string(), DESKTOP_PET_BALL_PAGE.to_string())),
+        "the ball is the window this record asks for"
+    );
+    assert_eq!(host.ball().map(|label| label.as_str()), Some(BALL_LABEL));
 }
 
-/// The switch going off: every window closes, which is §4's rollback — the switch, which deletes
-/// nothing. There is no arm of the state that could carry a cancelled run or a dropped character.
+/// The same record as the *store* reads it: `enabled` is not a value a record can disagree with its
+/// own switches about, because the read recomputes it. What a page shows and what a window does come
+/// from one record, so a page that drew the master beside the two rows would be drawing a value it
+/// cannot be told wrongly — which is why it draws no such control (`PetGeneralSettings.vue`).
 #[test]
-fn turning_the_switch_off_closes_every_window() {
+fn a_stored_record_reads_back_with_the_master_its_switches_mean() {
+    let (store, data) = support::store("master-derived");
+    write_record(
+        &store,
+        PET_SETTINGS_SCHEMA_VERSION,
+        json!({
+            "enabled": true,
+            "motion": "system",
+            "ball": false,
+            "characterWindow": false,
+            "ballSize": 56,
+        }),
+    );
+
+    let record = store
+        .read(PetSettingsDomain::General)
+        .record()
+        .cloned()
+        .expect("a general record this build can read");
+    assert_eq!(record.value("enabled"), Some(&json!(false)));
+    assert_eq!(record.value("ball"), Some(&json!(false)));
+    assert_eq!(record.value("characterWindow"), Some(&json!(false)));
+
+    let (mut host, surfaces) = support::host();
+    restore(&mut host, &store);
+    assert!(
+        surfaces.opened().is_empty(),
+        "no window, because both switches are off"
+    );
+}
+
+/// **And the same record with one switch back on.** The master follows the pair rather than the
+/// other way round: a record whose file says `enabled: true` and whose ball is on opens the ball,
+/// which is the direction the derivation exists to make unarguable.
+#[test]
+fn the_master_follows_a_single_switch_that_is_still_on() {
+    let (store, data) = support::store("master-derived-one");
+    write_record(
+        &store,
+        PET_SETTINGS_SCHEMA_VERSION,
+        json!({
+            "enabled": false,
+            "motion": "system",
+            "ball": true,
+            "characterWindow": false,
+            "ballSize": 56,
+        }),
+    );
+
+    let record = store
+        .read(PetSettingsDomain::General)
+        .record()
+        .cloned()
+        .expect("a general record this build can read");
+    assert_eq!(record.value("enabled"), Some(&json!(true)));
+
+    let (mut host, surfaces) = support::host();
+    restore(&mut host, &store);
+    assert!(surfaces.character_opens().is_empty());
+    assert_eq!(
+        surfaces.ball_open(),
+        Some((BALL_LABEL.to_string(), DESKTOP_PET_BALL_PAGE.to_string()))
+    );
+}
+
+/// The pet going away: both switches off is §4's rollback — the switches, which delete nothing.
+/// There is no arm of the state that could carry a cancelled run or a dropped character, and with the
+/// master gone this is the *only* way a record says "no pet window at all".
+#[test]
+fn turning_both_switches_off_closes_every_window() {
     let (mut host, surfaces) = support::host();
     host.open("cat").expect("a window");
     host.open("dog").expect("another window");
 
     let state = apply_feature_switch(
         &mut host,
-        &record(PetSettingsDomain::General, &[("enabled", json!(false))]),
+        &record(
+            PetSettingsDomain::General,
+            &[("characterWindow", json!(false)), ("ball", json!(false))],
+        ),
         "cat",
     );
     assert_eq!(
@@ -234,10 +324,12 @@ fn a_write_to_another_domain_touches_no_window() {
     assert_eq!(apply_feature_switch(&mut host, &character, "cat"), None);
     assert!(surfaces.opened().is_empty());
 
-    // And a `general` record that carries no switch at all is not a switch either: a record this
-    // build did not write must not be able to open a window by being empty.
+    // And a `general` record that carries neither of the two window switches is not a switch either:
+    // a record this build did not write must not be able to open a window by being empty — the guard
+    // the old master-switch read provided, kept where the decision now lives.
     let mut empty = record(PetSettingsDomain::General, &[]);
-    empty.values.remove("enabled");
+    empty.values.remove("ball");
+    empty.values.remove("characterWindow");
     assert_eq!(apply_feature_switch(&mut host, &empty, "cat"), None);
     assert!(surfaces.opened().is_empty());
 }
@@ -382,21 +474,30 @@ fn turning_the_character_window_back_on_reopens_it_without_a_second_ball() {
     );
 }
 
-/// The master switch off takes a ball-only pet down, which is §4's rollback read against the new
-/// pair: `enabled` is not one of the two window switches, and neither of them can keep a window
-/// alive underneath it.
+/// **只开悬浮球 taken back.** The ball's switch going off leaves no window at all, which is §4's
+/// rollback said with the two switches instead of one: with the character window already off, the
+/// ball was the whole pet, and the switch that turns a pet off is the switch that takes it down.
+///
+/// It is also the case that shows the pair is symmetric: neither switch is subordinate, so the pet
+/// exists exactly while one of them is on and no third field has to be consulted for it.
 #[test]
-fn the_master_switch_takes_a_ball_only_pet_down() {
+fn turning_the_ball_off_takes_a_ball_only_pet_down() {
     let (mut host, surfaces) = support::host();
+    apply_feature_switch(
+        &mut host,
+        &record(
+            PetSettingsDomain::General,
+            &[("characterWindow", json!(false)), ("ball", json!(true))],
+        ),
+        "cat",
+    );
+    assert_eq!(host.ball().map(|label| label.as_str()), Some(BALL_LABEL));
+
     let state = apply_feature_switch(
         &mut host,
         &record(
             PetSettingsDomain::General,
-            &[
-                ("enabled", json!(false)),
-                ("characterWindow", json!(false)),
-                ("ball", json!(true)),
-            ],
+            &[("characterWindow", json!(false)), ("ball", json!(false))],
         ),
         "cat",
     );
@@ -408,21 +509,25 @@ fn the_master_switch_takes_a_ball_only_pet_down() {
             visible: false
         })
     );
-    assert!(surfaces.opened().is_empty(), "nothing at all was opened");
-    assert!(host.ball().is_none());
-    assert!(host.ball_enabled(), "the preference is still the user's");
+    assert!(host.ball().is_none(), "the ball is gone");
+    assert!(surfaces.live().is_empty(), "and nothing else was left");
+    assert!(
+        !host.ball_enabled(),
+        "the preference is the user's, and they said off"
+    );
 }
 
-/// A record that carries no `characterWindow` at all, handed straight to the switch: the other
-/// half of the same arm, one layer down.
+/// A record that carries one of the two switches and not the other is not one this build wrote, and
+/// the host does nothing rather than guessing at the missing half.
 ///
-/// No store produces one — `values::read_values` fills every field the schema declares, on the read
-/// path and on the write path both — so this is a record built outside it, and the value the
-/// switch falls back to is what such a record *means*: `enabled` on was a pet, and a pet was a
-/// character window. Read as `false` instead, every one of those records would lose its window to
-/// this build.
+/// **No store produces one.** `values::read_values` fills every field the schema declares on the read
+/// path and on the write path both, and `settings::migrate` is where a record from a build that had
+/// *fewer* fields is given the meaning it had there — `a_record_from_before_the_switch_existed_opens_the_windows_it_always_did`
+/// below is that arm, end to end. So what this case pins is the refusal at the boundary: a record
+/// whose two halves are not both readable is not a switch, and answering `true` for it would open a
+/// window for a file nobody can point at.
 #[test]
-fn a_record_that_carries_no_character_window_switch_opens_the_character_window() {
+fn a_record_this_build_did_not_write_touches_no_window() {
     let (mut host, surfaces) = support::host();
     let mut values = defaults(PetSettingsDomain::General);
     values.remove("characterWindow");
@@ -433,14 +538,11 @@ fn a_record_that_carries_no_character_window_switch_opens_the_character_window()
         values,
     };
 
-    apply_feature_switch(&mut host, &record, "cat");
+    assert_eq!(apply_feature_switch(&mut host, &record, "cat"), None);
 
-    assert_eq!(surfaces.character_opens().len(), 1);
-    assert_eq!(host.instances()[0].character_id, "cat");
-    assert_eq!(
-        surfaces.ball_open(),
-        Some((BALL_LABEL.to_string(), DESKTOP_PET_BALL_PAGE.to_string()))
-    );
+    assert!(surfaces.opened().is_empty());
+    assert!(host.instances().is_empty());
+    assert!(host.ball().is_none());
 }
 
 /// A record written before the field existed — the arm the whole shape has to be safe for. Nothing
@@ -467,19 +569,36 @@ fn a_record_from_before_the_switch_existed_opens_the_windows_it_always_did() {
 }
 
 /// **And the record that must not gain a window.** This is every user who has ever turned the pet
-/// off: `enabled: false` with `ball` left at its default `true`, written by a build that had no
-/// character-window field. Read as "the ball follows `ball` alone" it would put a ball on their
-/// desktop at the next launch — a window they never asked for, appearing because of an upgrade.
+/// off: `enabled: false` with both window switches left at their default `true`, written by a build
+/// whose `enabled` *was* the master switch. Read as the derived value it would be `true` — the two
+/// switches say so — and the next launch would put a pet on their desktop: a window they never asked
+/// for, appearing because of an upgrade.
+///
+/// So the migration is what this case pins, and it is asserted on the record itself as well as on the
+/// windows: the master's *off* is written into the two switches it used to stand above, and the
+/// derived value is then `false` for the right reason. Both switches are set to `true` in the stored
+/// file on purpose — that is the hardest shape for the migration, and it is what the old build wrote
+/// for a user who turned the pet off without ever opening the ball's own row.
 #[test]
-fn a_record_from_before_the_switch_existed_and_switched_off_opens_nothing() {
-    let (store, data) = support::store("startup-before-switched-off");
+fn a_record_that_said_the_pet_was_off_migrates_to_both_switches_off() {
+    let (store, _data) = support::store("startup-master-off");
     write_record(
         &store,
         PET_SETTINGS_SCHEMA_VERSION - 1,
-        json!({ "enabled": false, "motion": "system", "ball": true }),
+        json!({ "enabled": false, "motion": "system", "ball": true, "characterWindow": true }),
     );
-    let (mut host, surfaces) = support::host();
 
+    let record = store
+        .read(PetSettingsDomain::General)
+        .record()
+        .cloned()
+        .expect("a record this build can read, migrated");
+    assert_eq!(record.schema_version, PET_SETTINGS_SCHEMA_VERSION);
+    assert_eq!(record.value("enabled"), Some(&json!(false)));
+    assert_eq!(record.value("characterWindow"), Some(&json!(false)));
+    assert_eq!(record.value("ball"), Some(&json!(false)));
+
+    let (mut host, surfaces) = support::host();
     restore(&mut host, &store);
 
     assert!(
@@ -488,6 +607,31 @@ fn a_record_from_before_the_switch_existed_and_switched_off_opens_nothing() {
     );
     assert!(host.instances().is_empty());
     assert!(host.ball().is_none(), "and no ball appeared either");
+}
+
+/// The other half of the same migration: a master left *on* says nothing about the two switches, so
+/// what the record's own switches say stands — and a record from a build that had no
+/// `characterWindow` field at all keeps the window it always had, because `enabled` on meant a pet
+/// and a pet was a character window.
+#[test]
+fn a_record_that_said_the_pet_was_on_keeps_the_switches_it_carries() {
+    let (store, _data) = support::store("startup-master-on");
+    write_record(
+        &store,
+        PET_SETTINGS_SCHEMA_VERSION - 1,
+        json!({ "enabled": true, "motion": "system", "ball": false, "characterWindow": true }),
+    );
+    let (mut host, surfaces) = support::host();
+
+    restore(&mut host, &store);
+
+    assert_eq!(surfaces.character_opens().len(), 1, "the character window");
+    assert_eq!(
+        surfaces.ball_open(),
+        None,
+        "and not the ball, which it said no to"
+    );
+    assert!(host.ball_enabled() == false);
 }
 
 /// A window system that refuses everything, so the enable path's handling of a real failure has a
@@ -520,6 +664,10 @@ impl PetSurfaces for RefusingSurfaces {
     }
 
     fn set_always_on_top(&mut self, _label: &PetWindowLabel, _on_top: bool) -> Result<(), String> {
+        Err("no compositor here".to_string())
+    }
+
+    fn resize(&mut self, _label: &PetWindowLabel, _size: (f64, f64)) -> Result<(), String> {
         Err("no compositor here".to_string())
     }
 
@@ -751,16 +899,21 @@ fn a_first_run_opens_the_pet_its_default_declares() {
     assert_eq!(host.instances()[0].character_id, UNSELECTED_CHARACTER);
 }
 
-/// **A user who turned it off stays off.** The whole reason the default is applied from the *record*
-/// rather than from the schema: an install that saved `enabled: false` must not be resurrected by a
-/// launch, which is the one thing a switch that turns a feature off may never do.
+/// **A user who turned the pet off stays off.** The whole reason the defaults are applied from the
+/// *record* rather than from the schema: an install whose record says both windows are off must not
+/// be resurrected by a launch, which is the one thing a switch that turns a feature off may never do.
+///
+/// "Off" is the two switches and not `enabled`, and this case is where that shows: a stored record
+/// carrying `enabled: false` beside two switches that are on is read back as `enabled: true`, because
+/// the master is a restatement of them (`a_stored_record_reads_back_with_the_master_its_switches_mean`).
+/// A window is taken away by the switch that governs it, never by a summary of the case.
 #[test]
-fn a_stored_off_switch_stays_off_at_startup() {
+fn a_stored_pair_of_switches_off_stays_off_at_startup() {
     let (store, data) = support::store("startup-off");
     stored(
         &data,
         PetSettingsDomain::General,
-        &[("enabled", json!(false))],
+        &[("characterWindow", json!(false)), ("ball", json!(false))],
     );
     let (mut host, surfaces) = support::host();
 
@@ -768,6 +921,7 @@ fn a_stored_off_switch_stays_off_at_startup() {
 
     assert!(surfaces.opened().is_empty(), "nothing at all was opened");
     assert!(host.instances().is_empty());
+    assert!(host.ball().is_none());
 }
 
 /// The character's own record is what the window is opened for, and a first run has one: the

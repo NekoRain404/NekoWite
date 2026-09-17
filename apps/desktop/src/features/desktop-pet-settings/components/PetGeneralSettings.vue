@@ -2,11 +2,12 @@
 /**
  * §5.1's 常规与交互, less the fields that belong to another page.
  *
- * The master switch is the whole reason this page exists: the plan records that upstream has no
- * such setting (「不存在上游能力：独立的启用/禁用桌宠总开关」) and that §4's rollback is defined by
- * it — 「回退通过关闭桌宠功能开关和移除装配引用，不影响 Agent 工作、笔记保存或原设置页。已导入的角色/
- * 养成保留」. So the switch is a settings write like any other, and what it must *not* do is
- * stated where the user can read it rather than left to be discovered.
+ * §4's rollback is this page's to state: 「回退通过关闭桌宠功能开关和移除装配引用，不影响 Agent 工作、
+ * 笔记保存或原设置页。已导入的角色/养成保留」. The 功能开关 is the pair of window switches below —
+ * both off is what "the pet is off" means — and the page records that upstream has no standalone
+ * master switch either (「不存在上游能力：独立的启用/禁用桌宠总开关」). So the switches are settings
+ * writes like any other, and what they must *not* do is stated where the user can read it rather
+ * than left to be discovered.
  *
  * It writes two domains, because §5.1's page does and because the schemas are what a page is
  * allowed to be about: `general` for 启用, the motion policy and §5.1's 悬浮球, `view` for
@@ -28,11 +29,29 @@
  * ball」 row (`:50-52`) is a separate flag, and its ball is spawned from that flag alone
  * (`windows/src-tauri/src/lib.rs:884-887`), so upstream can show the ball without the character too.
  *
- * 显示桌宠 is the one switch above them: it is §5.1's 启用 and §4's rollback, and with it off there is
- * no pet window at all. Both window switches are *disabled while it is off* — they are still stored,
- * still meaningful and still the user's, but they can have no visible effect until it is on, and
- * §5.2 forbids a control that looks like it should do something and cannot. The notes say the same
- * thing in words, and the ball's says which switch is which.
+ * Neither switch is ever drawn *disabled*, in any state this page can render: a control that cannot
+ * be operated is the defect 「我希望桌宠和悬浮球可以分别打开分别关闭」 names, and 「分别打开分别关闭」
+ * is exactly the ability to reach all four combinations — including turning one window back on while
+ * the other is off. §5.2's rule about a control that looks like it should do something and cannot
+ * is why *the pair is the whole of the state*: there is nothing left over for a third switch to
+ * speak for.
+ *
+ * 显示桌宠 used to sit above them as that third switch, and it is gone. `general.enabled` is
+ * *derived* — `enabled == characterWindow || ball`, recomputed by the store on every read and every
+ * write (`desktop_pet/settings/values.rs`'s `derive_master`) — so a control for it could only ever
+ * contradict the pair, and one that was off left both real switches disabled, which is how the
+ * state 「两只都关掉」 became unreachable. The field is still declared and still written; it is just
+ * not the user's to set. That is also why each setter below makes *two* `edit` calls: `dirty` in
+ * `use-pet-settings.ts` compares the draft with the record the store answers with, and the store
+ * answers with `enabled` recomputed, so writing only the switch the user touched would leave the
+ * draft disagreeing with every record from then on and show 「未保存」 for a save that landed.
+ *
+ * 悬浮球大小 is the ball's own size, and it is the same kind of port as the switches: upstream keeps
+ * the orb's diameter in one place (`--ball-size`) and derives the window around it
+ * (`windows/src/styles.css:227-236`), which is what this build does with `general.ballSize` — the
+ * host sizes the ball's window from it and the ball draws its orb from it. The slider is drawn in
+ * the stored unit from the schema's own rule, so it can only produce a value the write accepts
+ * (§5.3 「界面和后端使用同一规则」).
  *
  * §7.2 decides which of the window behaviours may be offered. A control whose capability this
  * machine was not verified to have is shown *disabled, with the finding's own words* — the mode
@@ -43,6 +62,7 @@
 import { computed } from 'vue'
 import SelectMenu, { type SelectOption } from '../../../components/SelectMenu.vue'
 import { t } from '../../../i18n'
+import { PET_NUMBER_RULES } from '../../../platform/gateways/pet-contracts'
 import type { PetCapability, PetRoamMode } from '../../../platform/gateways/pet-contracts'
 import type { PetSettingsContext } from './DesktopPetSettings.vue'
 import { reportedCapabilities } from '../services/pet-capability-report'
@@ -126,14 +146,44 @@ const roamRestrictions = computed(() =>
 
 const alwaysOnTopRestriction = computed(() => unavailability('always-on-top'))
 
-function setEnabled(value: boolean): void {
-  general.edit('enabled', value)
-}
+/**
+ * The two window switches, each of them writing the master it derives as well.
+ *
+ * The second `edit` in each is not a second decision — it is the same `enabled == characterWindow
+ * || ball` the store applies, stated in the draft. It is here because `dirty` compares the draft
+ * against the record the store answers with, and a record's `enabled` is always the derived one:
+ * a page that wrote only the switch the user touched would be permanently, invisibly unsaved, and
+ * a page that read `enabled` back from the store instead would be a second authority on a value
+ * only these two fields decide.
+ *
+ * The other field is read once, before either write, so the derivation is over the state the user
+ * is looking at rather than over the half-updated draft.
+ */
 function setBall(value: boolean): void {
+  const characterWindow = generalValues.value.characterWindow
   general.edit('ball', value)
+  general.edit('enabled', value || characterWindow)
 }
 function setCharacterWindow(value: boolean): void {
+  const ball = generalValues.value.ball
   general.edit('characterWindow', value)
+  general.edit('enabled', value || ball)
+}
+
+/** The schema's own rule for the ball's diameter, not a bound picked here (§5.3). */
+const BALL_SIZE_RULE = PET_NUMBER_RULES['general.ballSize']
+
+/**
+ * The rule's own ends, applied at the boundary that submits — the same second half of one rule the
+ * character's size slider carries (`PetCharacterSettings.vue`'s `setSize`). The input declares the
+ * same two ends, so no gesture can leave the rule; this is here because the submit path is where
+ * the write is trusted from, and without it the page would be asking the store to refuse what it
+ * could have prevented (`pet-settings-values.ts` refuses it either way).
+ */
+function setBallSize(raw: number): void {
+  if (!Number.isFinite(raw)) return
+  const rounded = Math.round(raw)
+  general.edit('ballSize', Math.min(BALL_SIZE_RULE.max, Math.max(BALL_SIZE_RULE.min, rounded)))
 }
 function setMotion(value: string | number): void {
   general.edit('motion', value === 'reduced' ? 'reduced' : 'system')
@@ -160,35 +210,44 @@ function resetPage(): void {
       {{ t('settings.pet.readOnly') }}
     </p>
     <template v-else>
-      <label class="settings-field settings-toggle">
-        <span>{{ t('settings.pet.general.enabled') }}</span>
-        <input
-          class="checkbox"
-          type="checkbox"
-          :checked="generalValues.enabled"
-          @change="setEnabled(($event.target as HTMLInputElement).checked)"
-        >
-      </label>
-      <span class="settings-note">{{ t('settings.pet.general.enabledNote') }}</span>
-
+      <!-- The two window switches are peers and neither is ever disabled: 「分别打开分别关闭」 is
+           the reach of all four combinations, and the one where the other window is off is the
+           one a switch that locked itself would have taken away. -->
       <label class="settings-field settings-toggle">
         <span>{{ t('settings.pet.general.ball') }}</span>
         <input
           class="checkbox"
           type="checkbox"
-          :disabled="!generalValues.enabled"
+          data-test="pet-general-ball"
           :checked="generalValues.ball"
           @change="setBall(($event.target as HTMLInputElement).checked)"
         >
       </label>
       <span class="settings-note">{{ t('settings.pet.general.ballNote') }}</span>
 
+      <!-- The ball's own size, drawn in the stored unit the way the character's is, and filed
+           here rather than on 角色与动画 because the ball is a window of its own with no character
+           behind it at all. -->
+      <span class="settings-label">{{ t('settings.pet.general.ballSize', { px: generalValues.ballSize }) }}</span>
+      <input
+        id="pet-general-ball-size"
+        class="input range"
+        type="range"
+        :min="BALL_SIZE_RULE.min"
+        :max="BALL_SIZE_RULE.max"
+        step="1"
+        :value="generalValues.ballSize"
+        data-test="pet-general-ball-size"
+        @input="setBallSize(Number(($event.target as HTMLInputElement).value))"
+      >
+      <span class="settings-note">{{ t('settings.pet.general.ballSizeNote') }}</span>
+
       <label class="settings-field settings-toggle">
         <span>{{ t('settings.pet.general.characterWindow') }}</span>
         <input
           class="checkbox"
           type="checkbox"
-          :disabled="!generalValues.enabled"
+          data-test="pet-general-character-window"
           :checked="generalValues.characterWindow"
           @change="setCharacterWindow(($event.target as HTMLInputElement).checked)"
         >

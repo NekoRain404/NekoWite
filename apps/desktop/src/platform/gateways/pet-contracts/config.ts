@@ -136,18 +136,25 @@ export type PetAgentIcons = Readonly<Record<string, string>>
 export interface PetSettingsValues {
   general: {
     /**
-     * §5.1's 启用, and §4's rollback: turning this off stops the pet and cancels
-     * nothing else — no agent task, no note save, and no character, care progress or
-     * history is deleted. The switch exists for the people who do not want a pet at
-     * all, so it defaults on and turns the feature *off*; §7.1's explicit opt-in
-     * requirement is about the pet staying resident after its window is closed, which
-     * is a different switch from whether the pet exists.
+     * §5.1's 启用 — **derived, and no longer a control.**
      *
-     * It is the master gate and not one of the two windows: with this off there is no
-     * pet window at all, whichever way `characterWindow` and `ball` are set. Each
-     * window then follows its *own* switch on top of this one — the rule is one
-     * sentence, read in one place (`feature_switch.rs`), so that the page's control
-     * and the host's read cannot disagree about what a field means.
+     * Its value is a restatement of the two window switches: on exactly while
+     * `characterWindow` or `ball` is on. The field is kept because a stored record
+     * carries this shape and a reader that wants "is the pet on" in one field should
+     * be able to ask, but nothing may *set* it: a master that could contradict the two
+     * switches under it is the second answer §9 forbids, and while it was a control a
+     * user who wanted one of the two windows could not have it — both rows were drawn
+     * disabled while the master was off.
+     *
+     * Written as the two switches are written (see `read_values`/`readPetSettingsValues`,
+     * where the rule lives once per side), so the file on disk never holds a
+     * contradiction. §4's rollback is what it always was, said with the two switches
+     * instead of one: turning both off stops the pet and cancels nothing else — no
+     * agent task, no note save, and no character, care progress or history is deleted.
+     *
+     * A record written before the derivation existed means what it said: `enabled: false`
+     * under schema 3 was "no pet window at all", and the migration to 4 turns both
+     * switches off for it rather than letting a ball the user had switched off come back.
      */
     enabled: boolean
     /**
@@ -164,7 +171,7 @@ export interface PetSettingsValues {
      * the existing behaviour a choice rather than changing it. Upstream's own
      * 「Show floating ball」 row (`windows/settings.html:50-52`) is what this ports: the ball
      * follows *this* flag and nothing else, so it is still there when the character's window
-     * is not. `enabled` remains the master gate above it.
+     * is not. Nothing gates it: `enabled` above is derived *from* it and its peer.
      */
     ball: boolean
     /**
@@ -180,6 +187,18 @@ export interface PetSettingsValues {
      * before. Off with `ball` on is the choice the pair exists for: 「只开悬浮球」.
      */
     characterWindow: boolean
+    /**
+     * The floating ball's diameter in CSS pixels (upstream's `--ball-size`,
+     * `windows/src/styles.css:227-236`: 56 px in an 80 px window, with a 12 px margin for the
+     * shadow and the hover scale).
+     *
+     * Filed in `general` beside the ball's own switch rather than in `character`: the ball
+     * wears a character's face when there is one, but it is a window of its own and it is on
+     * the desktop with no character chosen at all, so this is not a property of the character.
+     * The host reads it for the ball window's geometry and the ball's page reads it for the
+     * orb, which is the point — one stored number behind both.
+     */
+    ballSize: number
   }
   character: {
     /**
@@ -313,7 +332,7 @@ export interface PetSettingsValues {
 
 /** The defaults §5.3 requires each schema to state outright. */
 export const PET_SETTINGS_DEFAULTS: { [D in PetSettingsDomain]: PetSettingsValues[D] } = {
-  general: { enabled: true, motion: 'system', ball: true, characterWindow: true },
+  general: { enabled: true, motion: 'system', ball: true, characterWindow: true, ballSize: 56 },
   character: {
     characterId: null,
     size: 160,
@@ -363,6 +382,7 @@ export const PET_SETTINGS_DEFAULTS: { [D in PetSettingsDomain]: PetSettingsValue
 
 /** A numeric field of {@link PetSettingsValues}, as a `domain.field` path. */
 export type PetNumberField =
+  | 'general.ballSize'
   | 'character.size'
   | 'character.idleIntervalSeconds'
   | 'message.bubbleSeconds'
@@ -387,6 +407,11 @@ export interface PetNumberRule {
  */
 export const PET_NUMBER_RULES = {
   'character.size': { min: 64, max: 320, integer: true, fallback: 160 },
+  // The ball's own diameter: upstream's 56 (`--ball-size`) and a quarter of it below, so the orb
+  // is still an orb; the ceiling is what the window can grow to before it stops being a launcher
+  // in a corner and starts being a panel. The host reads the same number for the window's size
+  // (`ball.rs`), which is why there is no rule for a *window* size anywhere.
+  'general.ballSize': { min: 32, max: 128, integer: true, fallback: 56 },
   // Upstream's own floor and default (`MIN_IDLE_INTERVAL_MS` and `DEFAULT_IDLE_INTERVAL` in
   // `animation-bindings.ts`), with the ceiling a minute: a clip that changes less often than
   // that is a still image with a timer attached.
@@ -447,13 +472,16 @@ export type PetSettingsWrite = {
  *
  * 2 is 1 plus the animation, phrase and layout fields the ledger's remaining rows needed
  * (D7d). 3 is 2 plus `general.characterWindow`, the second of the pet's two per-window
- * switches. The bump is what makes §10.2's rule do its work in the other direction: a build
- * that only knows the older version meets the newer record, reports `read-only` and leaves it
- * alone, instead of reading the fields it recognises, defaulting the ones it does not and
- * writing that back over what the user chose — which for a field like `characterWindow` would
- * bring back a window they had switched off.
+ * switches. 4 is 3 plus `general.ballSize` **and** the change to what `general.enabled`
+ * means: it is derived from the two window switches from 4 on, and a 3 record that said
+ * `enabled: false` meant "no pet window at all", so the migration to 4 turns both
+ * switches off for it. The bump is what makes §10.2's rule do its work in the other
+ * direction: a build that only knows the older version meets the newer record, reports
+ * `read-only` and leaves it alone, instead of reading the fields it recognises,
+ * defaulting the ones it does not and writing that back over what the user chose — which
+ * for a field like `characterWindow` would bring back a window they had switched off.
  */
-export const PET_SETTINGS_SCHEMA_VERSION = 3
+export const PET_SETTINGS_SCHEMA_VERSION = 4
 
 /**
  * What reading a domain produced.

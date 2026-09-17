@@ -2,12 +2,12 @@
  * The double's character library, and the appearance a window would draw from it.
  *
  * The reads `appearance()` answers are the ones the real host joins: what the library holds, what
- * the `character` domain names, and the two policies that ride the read from the domains a pet
- * window may not read for itself (`general`'s `motion`, `message`'s `bubbleOpacity`). Keeping them
- * here — rather than letting a test hand in a pre-built appearance — is what makes the *flow*
- * reachable from a test: a page writes `characterId` through the double's settings, and the next
- * `appearance()` read is the state that follows. A double that answered a canned appearance could
- * not show a character being chosen at all, which is the one thing this read exists for.
+ * the `character` domain names, and the three facts that ride the read from the domains a pet
+ * window may not read for itself (`general`'s `motion` and `ballSize`, `message`'s `bubbleOpacity`).
+ * Keeping them here — rather than letting a test hand in a pre-built appearance — is what makes the
+ * *flow* reachable from a test: a page writes `characterId` through the double's settings, and the
+ * next `appearance()` read is the state that follows. A double that answered a canned appearance
+ * could not show a character being chosen at all, which is the one thing this read exists for.
  *
  * Split out of `../memory-pet` for the reason `./settings` is: it is a part of the double with its
  * own subject, and the composition next door is left as the surface a test reads.
@@ -68,7 +68,7 @@ export function createPetCharacterDouble(
   /**
    * The `character` domain, as the host would read it for an appearance.
    *
-   * One of this file's three casts, and all three are for the same reason: a record's `values` is
+   * One of this file's four casts, and all four are for the same reason: a record's `values` is
    * the union of all seven domains' shapes, and TypeScript cannot narrow it by a variable domain
    * (the same limitation `./settings` records for its write path). Each read below is for one
    * literal domain, so what comes back is that domain's shape and the cast says so.
@@ -122,6 +122,26 @@ export function createPetCharacterDouble(
       : PET_SETTINGS_DEFAULTS.message.opacity
   }
 
+  /**
+   * The `general` record's ball diameter, as the host reads it into every appearance arm.
+   *
+   * `stored_ball_size`'s rule (`window_host.rs`): a member that is not a number takes the schema's
+   * default (upstream's `--ball-size`, and the size this build's ball was drawn at before the field
+   * existed), and a `general` record this build may not read takes it too — a size the user never
+   * chose is a change to what they see, not a default. What is *in range* is not this function's
+   * question, and deliberately: the rule is the schema's own and the drawing side applies it
+   * (`petBallSizeOf`), exactly as the host's store normalizes the record before the command reads
+   * it — the host's own read doesn't clamp either.
+   */
+  function storedBallSize(): number {
+    const load = settings.read('general')
+    if (load.status === 'read-only') return PET_SETTINGS_DEFAULTS.general.ballSize
+    const values = load.record.values as PetSettingsValues['general']
+    return typeof values.ballSize === 'number'
+      ? values.ballSize
+      : PET_SETTINGS_DEFAULTS.general.ballSize
+  }
+
   return {
     library() {
       return [...installed]
@@ -129,13 +149,15 @@ export function createPetCharacterDouble(
 
     appearance(): PetAppearance {
       const { selected, values } = storedCharacter()
-      // The two facts that are not the character's, read once and carried on every arm — a fresh
-      // install's ball still moves and its bubble is still drawn, so an appearance that only
-      // arrived with a chosen character would leave the one surface this build has that moves
-      // unreduced and the bubble at whatever the window's own constant said.
+      // The three facts that are not the character's, read once and carried on every arm — a fresh
+      // install's ball still moves, is still drawn, and is still an orb of some size, so an
+      // appearance that only arrived with a chosen character would leave the one surface this build
+      // has that moves unreduced, the bubble at whatever the window's own constant said, and the
+      // orb at whatever size the page's own default was.
       const motion = storedMotion()
       const bubbleOpacity = storedBubbleOpacity()
-      if (selected === null) return { status: 'unset', motion, bubbleOpacity }
+      const ballSize = storedBallSize()
+      if (selected === null) return { status: 'unset', motion, bubbleOpacity, ballSize }
       const entry = installed.find((candidate) => candidate.characterId === selected)
       if (entry === undefined) {
         return {
@@ -144,6 +166,7 @@ export function createPetCharacterDouble(
           detail: 'it is not installed in the character library',
           motion,
           bubbleOpacity,
+          ballSize,
         }
       }
       if (entry.files === 'damaged') {
@@ -153,6 +176,7 @@ export function createPetCharacterDouble(
           detail: 'its files are not what the library recorded',
           motion,
           bubbleOpacity,
+          ballSize,
         }
       }
       return {
@@ -173,6 +197,7 @@ export function createPetCharacterDouble(
         idleIntervalMs: values.idleIntervalSeconds * 1000,
         motion,
         bubbleOpacity,
+        ballSize,
       }
     },
 

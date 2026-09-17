@@ -356,7 +356,7 @@ describe('the wrapping the acceptance names', () => {
   })
 
   it('is no wider than the window it is drawn in', () => {
-    // 260 is `window_host::CHARACTER_WINDOW_SIZE.0` — the number is written here rather than read
+    // 260 is `window_host::CHARACTER_WINDOW_MIN_WIDTH` — the number is written here rather than read
     // from the Rust file because the two languages meet at a test, and the meeting is on the Rust
     // side: `desktop_pet_ipc_test`'s `the_bubble_fits_the_window_it_is_drawn_in` reads this
     // constant out of the layout service and fails when the pair drifts. What this holds is that

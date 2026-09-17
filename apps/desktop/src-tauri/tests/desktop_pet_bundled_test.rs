@@ -32,6 +32,7 @@ use nekowite_lib::desktop_pet::resources::{
 use nekowite_lib::desktop_pet::settings::{
     PetSettingsDomain, PetSettingsLoad, PetSettingsRecord, PetSettingsStore, PetSettingsWrite,
 };
+use nekowite_lib::desktop_pet::window_host::stored_ball_size;
 
 /// The cell the shipped sheet is drawn at, which is the sprite box `PetSprite.vue` mounts.
 const CELL: (u32, u32) = (160, 180);
@@ -131,7 +132,10 @@ fn a_fresh_install_has_a_character_to_draw() {
     // written that domain either, so it is the schema's own default — the same arm the motion
     // policy takes, because both are facts a pet window may not read for itself.
     let bubble = stored_bubble_opacity(&store);
-    match appearance(&record, motion, bubble, Some(&library)) {
+    // And the ball's size, the third fact of that kind: `general.ballSize`, which the ball's page
+    // draws its orb at. Nothing has written `general` here, so this is the schema's own default too.
+    let ball_size = stored_ball_size(&store);
+    match appearance(&record, motion, bubble, ball_size, Some(&library)) {
         nekowite_lib::desktop_pet::PetAppearance::Ready { sheet_path, .. } => {
             assert!(
                 Path::new(&sheet_path).is_file(),

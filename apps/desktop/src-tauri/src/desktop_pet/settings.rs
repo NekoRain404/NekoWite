@@ -43,18 +43,33 @@ pub use fields::{Field, Kind, MemberRule};
 pub use store::{PetSettingsStore, SETTINGS_DIR};
 pub use values::{Problem, ProblemKind, Readout};
 
-/// The schema version this build writes: D7d's bump to 2, and the bump to 3 that added
-/// `general.characterWindow`.
+/// The schema version this build writes: D7d's bump to 2, the bump to 3 that added
+/// `general.characterWindow`, and the bump to 4 that gave the ball a size and took the master switch
+/// away.
 ///
 /// 2 is 1 plus the animation, phrase and layout fields the ledger's remaining rows needed; 3 is 2
-/// plus the second of the pet's two per-window switches. Each bump is what makes the read-only rule
-/// do its work in the other direction: a build that only knows the older version meets the newer
-/// record, reports `read-only` and leaves it alone instead of reading the fields it recognises,
-/// defaulting the ones it does not, and writing that back over what the user chose — for
-/// `characterWindow` that would be a window they had switched off coming back.
+/// plus the second of the pet's two per-window switches; 4 is 3 plus `general.ballSize` **and** the
+/// change to what `general.enabled` means. Each bump is what makes the read-only rule do its work in
+/// the other direction: a build that only knows the older version meets the newer record, reports
+/// `read-only` and leaves it alone instead of reading the fields it recognises, defaulting the ones
+/// it does not, and writing that back over what the user chose — for `characterWindow` that would be
+/// a window they had switched off.
+///
+/// The 3→4 bump is the first one whose *meaning* moved rather than the field list, and it is why the
+/// number is not merely bookkeeping: a 3 record's `enabled: false` was a master switch turned off —
+/// "no pet window at all" — and reading it as the derived value would say `true` for a record whose
+/// two switches were both on, bringing a pet back for someone who had put it away. [`migrate`] is
+/// where that is answered, and the version is how it knows to.
 /// `pet-contracts/config.ts` declares the same number, and `the_schema_version_is_the_typescript_one`
 /// reads it off disk.
-pub const PET_SETTINGS_SCHEMA_VERSION: i64 = 3;
+pub const PET_SETTINGS_SCHEMA_VERSION: i64 = 4;
+
+/// The version `general.enabled` stopped being a master switch the user could set.
+///
+/// Named rather than spelled as a literal in [`migrate`], because it is a fact about the schema
+/// rather than about one step: every record older than this one carries a master switch, and a
+/// reader of the migration should be able to see which builds wrote one.
+const MASTER_SWITCH_VERSION: i64 = 4;
 
 /// The revision a domain that has never been written is at.
 ///
@@ -311,9 +326,13 @@ pub fn read_domain(domain: PetSettingsDomain, stored: Option<&Value>) -> PetSett
     let Some(revision) = whole_number(object.get("revision")) else {
         return unreadable_load(domain);
     };
-    let Some(readout) =
-        values::read_stored_values(domain, object.get("values").unwrap_or(&Value::Null))
-    else {
+    // What an older build *meant* by a field is read here, once, rather than by every reader of the
+    // field forever — and it runs on the *stored* values rather than on the normalized ones, because
+    // the field it is about is one normalization recomputes: a schema-3 `enabled: false` is gone the
+    // moment the derived value is written back over it.
+    let mut raw_values = object.get("values").cloned().unwrap_or(Value::Null);
+    migrate(domain, version, &mut raw_values);
+    let Some(readout) = values::read_stored_values(domain, &raw_values) else {
         return unreadable_load(domain);
     };
     // The upgraded record carries *this* build's version, so a write-back is an upgrade rather
@@ -336,6 +355,40 @@ pub fn read_domain(domain: PetSettingsDomain, stored: Option<&Value>) -> PetSett
             repaired: readout.repaired,
         }
     }
+}
+
+/// What an older record's values mean in this build's schema, applied once on the way in.
+///
+/// One migration so far, and it is a change of *meaning* rather than of shape: `general.enabled` was
+/// a master switch through schema 3 — with it off there was no pet window at all, whichever way
+/// `characterWindow` and `ball` were set — and is derived from those two switches from 4 on. Reading
+/// a 3 record's `enabled: false` as the derived value would compute *true* for a record whose both
+/// switches were on: the user had asked for no pet at all, and they would get one back. That is the
+/// regression a schema bump exists to prevent, and it is the reason this one happened.
+///
+/// So the old master's *off* is written into the two switches it used to stand above. Both go off,
+/// the derived value is `false` for the right reason, and the user's answer survives the upgrade.
+/// Everything else a 3 record carries is this build's already — `characterWindow` and `ball` are
+/// fields of both schemas, and `ballSize` is a field a 3 record simply does not have, which is what
+/// the schema's own default is for — so there is no second step here.
+///
+/// It mutates the *stored* object rather than the normalized one, and it has to: the field it is
+/// about is the one normalization recomputes, so a derived `enabled: true` would have hidden the
+/// user's answer from this function.
+fn migrate(domain: PetSettingsDomain, version: i64, raw: &mut Value) {
+    if domain != PetSettingsDomain::General || version >= MASTER_SWITCH_VERSION {
+        return;
+    }
+    let Some(values) = raw.as_object_mut() else {
+        // Not an object at all: `read_stored_values` answers `None` for it a line later, and there
+        // is nothing here to migrate in any case.
+        return;
+    };
+    if values.get("enabled").and_then(Value::as_bool) != Some(false) {
+        return;
+    }
+    values.insert("characterWindow".to_string(), Value::Bool(false));
+    values.insert("ball".to_string(), Value::Bool(false));
 }
 
 /// Whether one submitted write may be applied — `decidePetSettingsWrite`.

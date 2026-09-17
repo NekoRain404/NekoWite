@@ -85,14 +85,29 @@ pub struct Field {
     pub kind: Kind,
 }
 
-/// The fields of `general`: §5.1's 启用, the two per-window switches, and the motion policy.
+/// The fields of `general`: §5.1's 启用, the two per-window switches, the ball's size, and the
+/// motion policy.
 const GENERAL: &[Field] = &[
-    // §5.1's 启用, and §4's rollback: turning this off stops the pet and cancels nothing else — no
-    // agent task, no note save, and no character, care progress or history. It defaults on and
-    // turns the feature *off*, for the reason `pet-contracts/config.ts` gives.
+    // §5.1's 启用, and §4's rollback — **derived, and no longer a control.**
     //
-    // The master gate and not one of the two windows: with this off there is no pet window at all,
-    // whichever way the two below are set. Each window then follows its own switch on top of it.
+    // It is on exactly while `characterWindow` or `ball` is on, and nothing may set it to anything
+    // else: [`super::values::read_values`] recomputes it on every read and every write, so the file
+    // on disk never holds a contradiction and the host never has to ask which of the three wins.
+    // While it *was* a control it was the defect this pair exists to end — with it off both child
+    // rows were drawn disabled, so a user who wanted only the ball could not say so (「我希望桌宠和
+    // 悬浮球可以分别打开分别关闭，不是强绑定的」), and it was a second answer to a question the
+    // runtime state already answers by observation (`PetFeatureState::of` reads "a character window
+    // or a ball is open").
+    //
+    // It defaults on and turns the feature *off*, for the reason `pet-contracts/config.ts` gives,
+    // and that is consistent with the derivation: both switches default on. §4's rollback is what it
+    // always was, said with the two switches instead of one — turning both off stops the pet and
+    // cancels nothing else: no agent task, no note save, and no character, care progress or history.
+    //
+    // A record written by a build that had the master (schema 3) means what it said there, and the
+    // migration to 4 is where that is honoured (`super::migrate`): `enabled: false` in such a record
+    // was "no pet window at all", and it turns both switches off rather than letting a window the
+    // user had switched off come back.
     Field {
         name: "enabled",
         kind: Kind::Bool(true),
@@ -112,8 +127,9 @@ const GENERAL: &[Field] = &[
     // so. On by default because that is what upstream's `unwrap_or(true)` means and what this build
     // already did — the field makes the existing behaviour a choice rather than changing it.
     //
-    // It is a *preference about one of the pet's windows*, not a second master switch: the ball
-    // exists when this is on and 启用 is on, which is why it is 常规与交互's row and not its own page.
+    // It is *preference about one of the pet's windows*, not a second master switch: the ball exists
+    // when this is on, and nothing above it decides otherwise — `enabled` is derived *from* this
+    // field and its peer, so the two can never disagree.
     Field {
         name: "ball",
         kind: Kind::Bool(true),
@@ -123,13 +139,37 @@ const GENERAL: &[Field] = &[
     // `windows/src-tauri/src/lib.rs:613-623`). A port and not an addition: upstream can show its
     // ball without the character, and that row is how.
     //
-    // The second of the two per-window switches beside `ball`, and the reason the pair exists:
-    // 启用 governs the feature, these two govern its windows, and off-with-`ball`-on is 「只开悬浮球」.
-    // On by default because that is what upstream's own `checked` means and what this build did
-    // before the field existed, so no stored record gains or loses a window by being read here.
+    // The second of the two per-window switches beside `ball`, and the reason the pair exists: these
+    // two govern the windows, and off-with-`ball`-on is 「只开悬浮球」. On by default because that is
+    // what upstream's own `checked` means and what this build did before the field existed, so no
+    // stored record gains or loses a window by being read here.
     Field {
         name: "characterWindow",
         kind: Kind::Bool(true),
+    },
+    // The floating ball's diameter in CSS pixels: upstream's `--ball-size` (`styles.css:227-236`,
+    // 56 px inside an 80 px window with a 12 px margin for the shadow and the hover scale).
+    //
+    // Filed here, beside the ball's own switch, and not in `character`: the ball wears a character's
+    // face when there is one, but it is a window of its own that is on the desktop with no character
+    // chosen at all — so this is not a property of the character, and `character.size` cannot be a
+    // second control for it. A domain of the ball's own was the alternative and was not taken: the
+    // domains are §5.3's, a new one would have to move `PET_SETTINGS_DOMAINS` and every reader of
+    // it, and 悬浮球 already has its home here (§5.1's 常规与交互 draws both of its rows).
+    //
+    // It is the *orb's* diameter and not the window's: the window is `ball + 2 * BALL_MARGIN`
+    // (`desktop_pet::ball`), which is the same 80 px at this default. One stored number, read by the
+    // host for the window and by the ball's page for the orb — see `ball.rs` for why the margin is
+    // the only constant left between them, and `tests/desktop_pet_settings_test/geometry.rs` for the
+    // test that fails if the two drift.
+    Field {
+        name: "ballSize",
+        kind: Kind::Number {
+            min: 32.0,
+            max: 128.0,
+            integer: true,
+            fallback: 56.0,
+        },
     },
 ];
 

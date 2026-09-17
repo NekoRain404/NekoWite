@@ -252,6 +252,99 @@ describe('the ball window and §5.2’s 动效', () => {
   })
 })
 
+/**
+ * Write the 悬浮球 size the way the settings page does: through the host's own channel.
+ *
+ * `general` again, and the write is an *applied* one, so the host publishes a change for it — which
+ * is the only way a ball already on the desktop hears about a size picked in the main window.
+ */
+async function setBallSize(
+  host: MemoryPetGateway,
+  ballSize: number,
+  revision: number,
+): Promise<void> {
+  await host.updateSettings({
+    domain: 'general',
+    revision,
+    values: { ...PET_SETTINGS_DEFAULTS.general, ballSize },
+  })
+}
+
+/**
+ * The orb's diameter, from the same read as what it wears (§5.1's 悬浮球).
+ *
+ * The claim is §9's second answer: one stored number behind the orb this page draws *and* the
+ * window the host sizes around it (`ball.rs` reads the same field, and `geometry.rs` checks the
+ * arithmetic against `PetFloatingBall.vue`'s own `BALL_MARGIN`). So what is asserted below is the number that
+ * reaches the drawn orb, and — once — that the window-sized frame around it moved by the same
+ * number rather than by a constant of its own.
+ */
+describe('the ball window and the size of the orb', () => {
+  it('draws the orb, and the frame around it, at the stored diameter', async () => {
+    const host = createMemoryPetGateway({ visible: true, characters: [KITTY] })
+    mount(host)
+    await flush()
+
+    // The schema's own default, which is what this build's ball has always been drawn at: the ref
+    // starts there so the first frame is right even before the host answers.
+    expect(orb().style.width).toBe(`${PET_SETTINGS_DEFAULTS.general.ballSize}px`)
+    const frame = document.querySelector('.pet-ball') as HTMLElement
+    const frameAtDefault = Number.parseFloat(frame.style.width)
+
+    await setBallSize(host, 96, 1)
+    await flush()
+
+    // A user picks a larger ball in the main window's settings. Before this wiring the value was
+    // stored, drawn on 常规与交互 and read by nothing on the desktop: the orb stayed at the schema's
+    // default and the window around it never moved.
+    expect(orb().style.width).toBe('96px')
+    expect(orb().style.height).toBe('96px')
+    // The frame around the orb moved by the same amount. Stated as a difference rather than as a
+    // width because the margin at each edge is `PetFloatingBall.vue`'s (`props.size + BALL_MARGIN *
+    // 2`) and stays in that file — `geometry.rs` reads it off disk. What this asserts is that the
+    // frame followed the orb at all, which it has to: the host sizes the *window* from the same
+    // stored number (`ball.rs`), so an orb drawn wider than its window would be clipped.
+    expect(Number.parseFloat(frame.style.width) - frameAtDefault).toBe(
+      96 - PET_SETTINGS_DEFAULTS.general.ballSize,
+    )
+
+    // And back down, because the size is read rather than latched — a second choice reaches a ball
+    // that is already on the desktop.
+    await setBallSize(host, 40, 2)
+    await flush()
+    expect(orb().style.width).toBe('40px')
+  })
+
+  it('sizes the plain orb too, in the arm where no character is chosen', async () => {
+    // Nothing chosen: the `unset` arm, which draws upstream's orb and no character. It is still a
+    // window with a size, and a fresh install that sets one has to see it.
+    const host = createMemoryPetGateway({ visible: true })
+    mount(host)
+    await flush()
+    expect(document.querySelector('.pet-ball__face')).toBeNull()
+
+    await setBallSize(host, 128, 1)
+    await flush()
+
+    expect(orb().style.width).toBe('128px')
+  })
+
+  it('reads a diameter the rule refuses as the schema’s default', async () => {
+    // A number outside the rule is one the settings control cannot produce — a hand-edited file, or
+    // a host from before the control existed. Drawing it anyway would size the page's orb from a
+    // value the host's store would have refused, so it takes the schema's default instead.
+    const host = createMemoryPetGateway({ visible: true })
+    const connection: PetWindowGateway = {
+      ...host,
+      appearance: async () => ({ status: 'unset', ballSize: 999 }),
+    }
+    mount(connection)
+    await flush()
+
+    expect(orb().style.width).toBe(`${PET_SETTINGS_DEFAULTS.general.ballSize}px`)
+  })
+})
+
 describe('the ball window’s gestures', () => {
   it('sends a right-click to the settings page the ball belongs to', async () => {
     const host = createMemoryPetGateway({ visible: true })

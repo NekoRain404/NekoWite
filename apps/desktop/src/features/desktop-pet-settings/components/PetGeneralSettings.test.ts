@@ -5,15 +5,24 @@
  * belongs to: a switch that renders correctly and drops its write is the failure
  * `SettingsPanel.controls.test.ts` exists for, and a *second* one lives here — a roaming mode
  * offered where §7.2 says this machine cannot run it.
+ *
+ * Two of the page's claims are about the *pair* of window switches rather than about either one,
+ * and each is asserted as the thing it is: that 显示悬浮球 and 显示角色窗口 are peers, and that
+ * `general.enabled`, which the store derives from them, is written beside them by the page — a
+ * page that wrote only the switch it was handed would leave the draft disagreeing with every
+ * record the store answers with. The third is that no state of the page draws either switch
+ * disabled, because a disabled control is what the user reported.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, type App as VueApp } from 'vue'
 import { t } from '../../../i18n'
 import { createMemoryPetGateway, type MemoryPetGateway } from '../../../platform/gateways/memory-pet'
-import type {
-  PetCapabilityFinding,
-  PetSettingsDomain,
-  PetSettingsWrite,
+import {
+  PET_NUMBER_RULES,
+  PET_SETTINGS_DEFAULTS,
+  type PetCapabilityFinding,
+  type PetSettingsDomain,
+  type PetSettingsWrite,
 } from '../../../platform/gateways/pet-contracts'
 import DesktopPetSettings from './DesktopPetSettings.vue'
 
@@ -38,12 +47,16 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  mounted.forEach((app) => app.unmount())
-  mounted = []
-  document.body.innerHTML = ''
+  unmountAll()
   warnSpy.mockRestore()
   vi.useRealTimers()
 })
+
+function unmountAll(): void {
+  mounted.forEach((app) => app.unmount())
+  mounted = []
+  document.body.innerHTML = ''
+}
 
 /** Everything this machine was verified to do, for the tests that are not about §7.2. */
 const ALL_AVAILABLE: { [C in 'always-on-top' | 'pointer-follow' | 'window-climb']?: PetCapabilityFinding } = {
@@ -73,6 +86,20 @@ function fieldControl<T extends HTMLElement>(label: string, selector: string): T
   const control = field?.querySelector<T>(selector)
   if (!control) throw new Error(`no ${selector} labelled "${label}"`)
   return control
+}
+
+/** The ball's diameter slider, the control the second half of this page's acceptance is about. */
+function ballSlider(): HTMLInputElement {
+  const slider = document.querySelector<HTMLInputElement>('[data-test="pet-general-ball-size"]')
+  if (!slider) throw new Error('no ball size slider')
+  return slider
+}
+
+async function dragBallTo(px: number): Promise<void> {
+  const slider = ballSlider()
+  slider.value = String(px)
+  slider.dispatchEvent(new Event('input', { bubbles: true }))
+  await flush(DEBOUNCE_PLUS)
 }
 
 async function choose(trigger: HTMLElement, value: string): Promise<void> {
@@ -112,22 +139,22 @@ async function seed(
 }
 
 describe('every control writes the domain it belongs to', () => {
-  it('reaches general for the switch and the motion policy, and view for the window', async () => {
+  it('reaches general for the motion policy and view for the window', async () => {
     const gateway = createMemoryPetGateway({ capabilities: ALL_AVAILABLE })
     mount(gateway)
     await flush()
 
-    fieldControl<HTMLInputElement>(t('settings.pet.general.enabled'), 'input').click()
     await choose(fieldControl<HTMLElement>(t('settings.pet.general.motion'), '[role="combobox"]'), 'reduced')
     await flush(DEBOUNCE_PLUS)
 
     expect(await storedValues(gateway, 'general')).toEqual({
-      enabled: false,
+      enabled: true,
       motion: 'reduced',
       // The two window switches are on this page too and this case never touched them: a write is
       // the whole domain, so what a page does not edit keeps the value it was read with.
       ball: true,
       characterWindow: true,
+      ballSize: 56,
     })
 
     // The window behaviour this page owns is `view.alwaysOnTop`, and it is the same kind of check
@@ -137,7 +164,7 @@ describe('every control writes the domain it belongs to', () => {
     expect((await storedValues(gateway, 'view')).alwaysOnTop).toBe(false)
   })
 
-  it('reaches the ball’s own switch, which is on the same domain as the master one', async () => {
+  it('reaches the ball’s own switch, which is the one and only thing that decides the ball', async () => {
     const gateway = createMemoryPetGateway({ capabilities: ALL_AVAILABLE })
     mount(gateway)
     await flush()
@@ -149,8 +176,9 @@ describe('every control writes the domain it belongs to', () => {
     await flush(DEBOUNCE_PLUS)
 
     expect((await storedValues(gateway, 'general')).ball).toBe(false)
-    // The master switch is untouched: the two are one `general` record and two decisions, which
-    // is the whole point of the field — a user who wants the character and not the ball.
+    // The character window's switch is untouched: the two are one `general` record and two
+    // decisions, which is the whole point of the pair — a user who wants the character and not
+    // the ball.
     expect((await storedValues(gateway, 'general')).enabled).toBe(true)
   })
 
@@ -168,55 +196,129 @@ describe('every control writes the domain it belongs to', () => {
     characterWindow.click()
     await flush(DEBOUNCE_PLUS)
 
-    // The two switches are one `general` record and two decisions: the ball was not touched, and
-    // neither was the master switch — off-with-the-ball-on is the write that says 「只开悬浮球」.
-    expect((await storedValues(gateway, 'general'))).toEqual({
+    // 「只开悬浮球」: the two switches are peers and each is stored on its own, so the ball's being
+    // on is not a consequence of the character window's being on. `enabled` is derived *from* the
+    // pair, and the store recomputes it on every read — so the page writes it beside them, or the
+    // draft would differ from every record the store answers with.
+    expect(await storedValues(gateway, 'general')).toEqual({
       enabled: true,
       motion: 'system',
       ball: true,
       characterWindow: false,
+      ballSize: 56,
     })
   })
 
-  it('disables the character window’s switch while the pet is off, and says why', async () => {
+  it('takes the derived master down with the last window, and writes that too', async () => {
     const gateway = createMemoryPetGateway({ capabilities: ALL_AVAILABLE })
-    await seed(gateway, 'general', { enabled: false })
     mount(gateway)
     await flush()
 
-    // The same §5.2 arm the ball's switch gets, on the other window: with 显示桌宠 off there is no
-    // pet window at all, so this preference can have no visible effect until it is on.
-    const characterWindow = fieldControl<HTMLInputElement>(
-      t('settings.pet.general.characterWindow'),
-      'input',
-    )
-    expect(characterWindow.disabled).toBe(true)
-    characterWindow.click()
+    fieldControl<HTMLInputElement>(t('settings.pet.general.ball'), 'input').click()
+    fieldControl<HTMLInputElement>(t('settings.pet.general.characterWindow'), 'input').click()
     await flush(DEBOUNCE_PLUS)
-    expect((await storedValues(gateway, 'general')).characterWindow).toBe(true)
-    const notes = [...document.querySelectorAll<HTMLElement>('.settings-section .settings-note')]
-      .map((note) => note.textContent ?? '')
-    expect(notes.some((note) => note.includes(t('settings.pet.general.characterWindowNote')))).toBe(true)
+
+    // A page that only wrote the switch it was handed would leave `enabled` at true here, and the
+    // host — which reads the derived value — would answer false for ever after.
+    expect(await storedValues(gateway, 'general')).toEqual({
+      enabled: false,
+      motion: 'system',
+      ball: false,
+      characterWindow: false,
+      ballSize: 56,
+    })
   })
 
-  it('disables the ball’s switch while the pet is off, and says why', async () => {
+  it('brings the derived master back with either switch, from a store where both were off', async () => {
     const gateway = createMemoryPetGateway({ capabilities: ALL_AVAILABLE })
-    await seed(gateway, 'general', { enabled: false })
+    await seed(gateway, 'general', { enabled: false, ball: false, characterWindow: false })
     mount(gateway)
     await flush()
 
-    // §5.2's 「不显示可点击但无效果的控件」, applied to a preference about one of the pet's windows:
-    // the value is still stored and still meaningful, but nothing can show it until 显示桌宠 is on.
     const ball = fieldControl<HTMLInputElement>(t('settings.pet.general.ball'), 'input')
-    expect(ball.disabled).toBe(true)
+    expect(ball.checked).toBe(false)
     ball.click()
     await flush(DEBOUNCE_PLUS)
-    expect((await storedValues(gateway, 'general')).ball).toBe(true)
-    const notes = [...document.querySelectorAll<HTMLElement>('.settings-section .settings-note')]
-      .map((note) => note.textContent ?? '')
-    expect(notes.some((note) => note.includes(t('settings.pet.general.ballNote')))).toBe(true)
+
+    const stored = await storedValues(gateway, 'general')
+    expect(stored.ball).toBe(true)
+    // The other half of the same rule, from the other direction: the switch that came back on is
+    // the one that has to raise the master, and only the page can say so in the draft.
+    expect(stored.enabled).toBe(true)
   })
 
+  it('never draws a disabled window switch, in any state the page can render', async () => {
+    const gateway = createMemoryPetGateway({ capabilities: ALL_AVAILABLE })
+    mount(gateway)
+    await flush()
+
+    const boxes = (): HTMLInputElement[] => [
+      fieldControl<HTMLInputElement>(t('settings.pet.general.ball'), 'input'),
+      fieldControl<HTMLInputElement>(t('settings.pet.general.characterWindow'), 'input'),
+    ]
+    for (const box of boxes()) expect(box.disabled).toBe(false)
+
+    // Both windows off — the state the removed 显示桌宠 row used to disable this pair in, and the
+    // state the user reported: a switch that cannot be operated is not a control.
+    for (const box of boxes()) box.click()
+    await flush(DEBOUNCE_PLUS)
+    for (const box of boxes()) expect(box.disabled).toBe(false)
+    expect((await storedValues(gateway, 'general')).enabled).toBe(false)
+
+    // And the same again from the state that follows: one switch off, the other still operable.
+    fieldControl<HTMLInputElement>(t('settings.pet.general.ball'), 'input').click()
+    await flush(DEBOUNCE_PLUS)
+    for (const box of boxes()) expect(box.disabled).toBe(false)
+    expect((await storedValues(gateway, 'general')).enabled).toBe(true)
+  })
+})
+
+describe('the ball’s own size', () => {
+  it('draws the slider from the contract’s rule, in the unit the store holds', async () => {
+    mount(createMemoryPetGateway({ capabilities: ALL_AVAILABLE }))
+    await flush()
+
+    // §5.3 「界面和后端使用同一规则」: the ends are `PET_NUMBER_RULES`, not numbers picked here.
+    expect(ballSlider().min).toBe(String(PET_NUMBER_RULES['general.ballSize'].min))
+    expect(ballSlider().max).toBe(String(PET_NUMBER_RULES['general.ballSize'].max))
+    expect(ballSlider().value).toBe(String(PET_SETTINGS_DEFAULTS.general.ballSize))
+  })
+
+  it('writes the diameter it shows, and shows it in the stored unit', async () => {
+    const gateway = createMemoryPetGateway({ capabilities: ALL_AVAILABLE })
+    mount(gateway)
+    await flush()
+
+    await dragBallTo(96)
+    expect((await storedValues(gateway, 'general')).ballSize).toBe(96)
+
+    const labels = [...document.querySelectorAll<HTMLElement>('.settings-section .settings-label')]
+      .map((element) => element.textContent ?? '')
+    expect(labels.some((label) => label.includes(t('settings.pet.general.ballSize', { px: 96 })))).toBe(true)
+
+    // 「重开保留」, on the store rather than on the component: a fresh dialog reads it back.
+    unmountAll()
+    mount(gateway)
+    await flush()
+    expect(ballSlider().value).toBe('96')
+  })
+
+  it('cannot submit a diameter outside the rule, even when the input is set past its ends', async () => {
+    const gateway = createMemoryPetGateway({ capabilities: ALL_AVAILABLE })
+    mount(gateway)
+    await flush()
+
+    // What this pins is the guarantee, not the layer: the input's own ends come from the same
+    // `PET_NUMBER_RULES` entry and stop a gesture before the handler sees it, so which of the two
+    // refuses here is not observable — the store's value is.
+    await dragBallTo(5)
+    expect((await storedValues(gateway, 'general')).ballSize)
+      .toBe(PET_NUMBER_RULES['general.ballSize'].min)
+
+    await dragBallTo(900)
+    expect((await storedValues(gateway, 'general')).ballSize)
+      .toBe(PET_NUMBER_RULES['general.ballSize'].max)
+  })
 })
 
 describe('§7.2 decides which window behaviours are offered', () => {
@@ -310,7 +412,8 @@ describe('restoring this page', () => {
     mount(gateway)
     await flush()
 
-    fieldControl<HTMLInputElement>(t('settings.pet.general.enabled'), 'input').click()
+    fieldControl<HTMLInputElement>(t('settings.pet.general.ball'), 'input').click()
+    await dragBallTo(96)
     fieldControl<HTMLInputElement>(t('settings.pet.general.alwaysOnTop'), 'input').click()
     await flush(DEBOUNCE_PLUS)
     // Both of this page's domains are dirty before the reset, so what follows is the reset and
@@ -329,6 +432,7 @@ describe('restoring this page', () => {
       motion: 'system',
       ball: true,
       characterWindow: true,
+      ballSize: 56,
     })
     expect((await storedValues(gateway, 'view')).alwaysOnTop).toBe(true)
     // §5.3 「恢复本页默认只影响当前域」: the reset reached this page's two domains and no others,

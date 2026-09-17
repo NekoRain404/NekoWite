@@ -129,9 +129,13 @@ describe('every field D7d added', () => {
   it('is declared by the schema, and the version says so', () => {
     // The bump is what makes §10.2 protect the new fields: a build that only knows the older
     // version meets the newer record and leaves it alone instead of defaulting what it cannot
-    // read. The number moved to 3 when `general.characterWindow` arrived, and it is written out
-    // here rather than compared with itself so that the next bump comes through this line.
-    expect(PET_SETTINGS_SCHEMA_VERSION).toBe(3)
+    // read. The number moved to 3 when `general.characterWindow` arrived and to 4 when
+    // `general.ballSize` did — and when `general.enabled` stopped being a master switch and became
+    // derived from those two, which is the same protection read the other way round: a 3 record's
+    // `enabled: false` means "no pet window at all", and the migration to 4 is what keeps it
+    // meaning that. It is written out here rather than compared with itself so that the next bump
+    // comes through this line.
+    expect(PET_SETTINGS_SCHEMA_VERSION).toBe(4)
     for (const { domain, field } of ROUND_TRIPS) {
       expect(Object.keys(PET_SETTINGS_DEFAULTS[domain])).toContain(field)
     }

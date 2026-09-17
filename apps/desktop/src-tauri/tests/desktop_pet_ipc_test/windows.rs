@@ -8,9 +8,9 @@ use std::fs;
 use std::path::Path;
 
 use crate::desktop_pet::window_host::{
-    HostRefusal, PetWindowHost, Placement, BALL_LABEL, BALL_WINDOW_SIZE, CHARACTER_WINDOW_SIZE,
-    DEFAULT_CHARACTER_CAP, DESKTOP_PET_BALL_PAGE, DESKTOP_PET_PAGE, HARD_CHARACTER_CAP,
-    PET_WINDOW_STYLE,
+    ball_window_size, character_window_size, HostRefusal, PetWindowHost, Placement,
+    BALL_DEFAULT_SIZE, BALL_LABEL, CHARACTER_DEFAULT_SIZE, DEFAULT_CHARACTER_CAP,
+    DESKTOP_PET_BALL_PAGE, DESKTOP_PET_PAGE, HARD_CHARACTER_CAP, PET_WINDOW_STYLE,
 };
 use crate::support::{fill, with_host, FakeSurfaces};
 
@@ -220,9 +220,9 @@ fn the_pet_comes_up_with_its_ball_on_the_reference_s_window() {
     assert_eq!(ball.label, BALL_LABEL);
     assert_eq!(ball.label, "pet-ball");
     assert_eq!(ball.page, DESKTOP_PET_BALL_PAGE);
-    assert_eq!(ball.size, BALL_WINDOW_SIZE);
+    assert_eq!(ball.size, ball_window_size(BALL_DEFAULT_SIZE));
     assert_eq!(ball.size, (80.0, 80.0));
-    assert_ne!(ball.size, CHARACTER_WINDOW_SIZE);
+    assert_ne!(ball.size, character_window_size(CHARACTER_DEFAULT_SIZE));
     assert_eq!(ball.style, PET_WINDOW_STYLE);
     assert!(ball.visible);
 
@@ -333,11 +333,14 @@ fn the_bubble_fits_the_window_it_is_drawn_in() {
     let text = fs::read_to_string(&layout).unwrap_or_else(|error| panic!("{layout:?}: {error}"));
 
     let bubble = number_after(&text, "export const PET_BUBBLE_MAX_WIDTH =");
-    let (window_width, _) = CHARACTER_WINDOW_SIZE;
+    // The widest window the rule can ask for is the one a bubble has to fit in, and the narrowest is
+    // the floor the rule itself keeps (`window_host.rs`'s CHARACTER_WINDOW_MIN_WIDTH); what this
+    // asserts is the relationship at the default size, where the cap and the window are both 260.
+    let (window_width, _) = character_window_size(CHARACTER_DEFAULT_SIZE);
     assert!(
         bubble <= window_width,
         "the bubble caps itself at {bubble}px and the window it is drawn in is {window_width}px \
-         wide (CHARACTER_WINDOW_SIZE): the surface would be clipped, not overhanging"
+         wide (the window rule's own width): the surface would be clipped, not overhanging"
     );
 }
 

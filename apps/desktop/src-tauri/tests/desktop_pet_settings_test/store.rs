@@ -83,7 +83,7 @@ fn a_write_reaches_the_disk_and_the_file_is_the_record() {
     let record = applied(store.apply(&write(
         PetSettingsDomain::General,
         0.0,
-        &[("enabled", json!(false))],
+        &[("characterWindow", json!(false)), ("ball", json!(false))],
     )));
     assert_eq!(
         record.revision, 1,
@@ -94,7 +94,9 @@ fn a_write_reaches_the_disk_and_the_file_is_the_record() {
     assert_eq!(stored["domain"], "general");
     assert_eq!(stored["schemaVersion"], PET_SETTINGS_SCHEMA_VERSION);
     assert_eq!(stored["revision"], 1);
-    assert_eq!(stored["values"]["enabled"], false);
+    assert_eq!(stored["values"]["characterWindow"], false);
+    assert_eq!(stored["values"]["ball"], false);
+    assert_eq!(stored["values"]["enabled"], false, "and the derived master");
     assert_eq!(
         stored,
         serde_json::to_value(&record).expect("a record serializes"),
@@ -116,7 +118,7 @@ fn a_second_writer_at_the_revision_it_read_is_refused_and_nothing_is_written() {
     applied(store.apply(&write(
         PetSettingsDomain::General,
         0.0,
-        &[("enabled", json!(false))],
+        &[("characterWindow", json!(false)), ("ball", json!(false))],
     )));
     let before = fs::read_to_string(store.path_of(PetSettingsDomain::General)).expect("the file");
 
@@ -135,7 +137,12 @@ fn a_second_writer_at_the_revision_it_read_is_refused_and_nothing_is_written() {
         "a refused write must not touch the file"
     );
     let stored = on_disk(&store, PetSettingsDomain::General);
-    assert_eq!(stored["values"]["enabled"], false);
+    assert_eq!(stored["values"]["characterWindow"], false);
+    assert_eq!(stored["values"]["ball"], false);
+    assert_eq!(
+        stored["values"]["enabled"], false,
+        "and the derived master followed them"
+    );
     assert_eq!(stored["values"]["motion"], "system");
 }
 

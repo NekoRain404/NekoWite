@@ -86,6 +86,26 @@ async function enable(pet: MemoryPetGateway, revision: number): Promise<void> {
   })
 }
 
+/**
+ * The same write with the pet switched *off*, which is the two window switches rather than the
+ * master: `general.enabled` is derived from them (`characterWindow || ball`), so a write that set
+ * only the master would be recomputed to `true` against the schema's two on-by-default switches —
+ * and the pet would come back on the next read. That is exactly the defect the derivation and the
+ * 3→4 migration exist to prevent, seen from the side that writes.
+ */
+async function disable(pet: MemoryPetGateway, revision: number): Promise<void> {
+  await pet.updateSettings({
+    domain: 'general',
+    revision,
+    values: {
+      ...PET_SETTINGS_DEFAULTS.general,
+      characterWindow: false,
+      ball: false,
+      enabled: false,
+    },
+  })
+}
+
 describe('the states §6.2 maps runs onto', () => {
   it('shows a run the snapshot says is executing as working, and reads nothing into a lull', async () => {
     const pet = createMemoryPetGateway()
@@ -466,7 +486,12 @@ describe('the settings schemas', () => {
     const conflict = await pet.updateSettings({
       domain: 'general',
       revision,
-      values: { ...PET_SETTINGS_DEFAULTS.general, enabled: false },
+      values: {
+        ...PET_SETTINGS_DEFAULTS.general,
+        characterWindow: false,
+        ball: false,
+        enabled: false,
+      },
     })
     expect(conflict).toMatchObject({
       status: 'conflict',
@@ -656,11 +681,7 @@ describe('turning the pet off', () => {
 
   it('cannot show a pet that is off, and says so rather than pretending', async () => {
     const pet = createMemoryPetGateway()
-    await pet.updateSettings({
-      domain: 'general',
-      revision: 1,
-      values: { ...PET_SETTINGS_DEFAULTS.general, enabled: false },
-    })
+    await disable(pet, 1)
     expect(await pet.setVisible(true)).toEqual({ enabled: false, visible: false })
   })
 
@@ -693,11 +714,7 @@ describe('turning the pet off', () => {
 
     // §4's rollback is this switch. §7.1: disabling stops the animation, the listeners and
     // the timers and cancels no agent task.
-    await pet.updateSettings({
-      domain: 'general',
-      revision: 2,
-      values: { ...PET_SETTINGS_DEFAULTS.general, enabled: false },
-    })
+    await disable(pet, 2)
     expect(await pet.feature()).toEqual({ enabled: false, visible: false })
     expect(await taskFor(pet, key)).toMatchObject({ state: 'working' })
     expect(recordOf(await pet.readSettings('care')).values).toMatchObject({
@@ -741,11 +758,7 @@ describe('the double publishes the feature state the way the host does', () => {
     const seen: boolean[] = []
     await pet.subscribeFeature((state) => seen.push(state.enabled))
 
-    await pet.updateSettings({
-      domain: 'general',
-      revision: 1,
-      values: { ...PET_SETTINGS_DEFAULTS.general, enabled: false },
-    })
+    await disable(pet, 1)
 
     // §7.1's way back is a settings page in the main window, so the double has to publish from the
     // write path — a pet window in another window hears about the switch here and nowhere else.
@@ -763,7 +776,12 @@ describe('the double publishes the feature state the way the host does', () => {
     const refused = await pet.updateSettings({
       domain: 'general',
       revision: 99,
-      values: { ...PET_SETTINGS_DEFAULTS.general, enabled: false },
+      values: {
+        ...PET_SETTINGS_DEFAULTS.general,
+        characterWindow: false,
+        ball: false,
+        enabled: false,
+      },
     })
 
     expect(refused.status).toBe('conflict')

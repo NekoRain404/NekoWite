@@ -5,10 +5,11 @@
  * it is handed carries the container's own sessions — so the page that shows a value and the
  * preview that draws it cannot be reading two different drafts.
  *
- * For §10's acceptance: 「主开关/通知/预览真实生效、重开保留」. The switch is driven here through
- * the real control, read back out of the store, and then found again after the dialog is closed
- * and reopened — which is the only version of "it persists" that is about the store rather than
- * about the component's own state.
+ * For §10's acceptance: 「主开关/通知/预览真实生效、重开保留」. The pet's master is derived from its
+ * two window switches, so 「主开关真实生效」 is driven here by driving *those* through the real
+ * controls, reading the derived value back out of the store, and then finding the pair again after
+ * the dialog is closed and reopened — which is the only version of "it persists" that is about the
+ * store rather than about the component's own state.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick, type App as VueApp } from 'vue'
@@ -203,19 +204,27 @@ describe('which pages the container offers', () => {
   })
 })
 
-describe('the master switch, end to end', () => {
-  it('writes the general domain and is still off after the dialog is closed and reopened', async () => {
+describe('the two window switches, end to end', () => {
+  it('turns the pet off through the pair, and is still off after the dialog is closed and reopened', async () => {
     const gateway = createMemoryPetGateway()
     mount({ gateway })
     await flush()
 
-    const box = fieldControl<HTMLInputElement>(t('settings.pet.general.enabled'), 'input')
-    expect(box.checked).toBe(true)
-    box.click()
+    const ball = fieldControl<HTMLInputElement>(t('settings.pet.general.ball'), 'input')
+    const characterWindow = fieldControl<HTMLInputElement>(
+      t('settings.pet.general.characterWindow'),
+      'input',
+    )
+    expect(ball.checked).toBe(true)
+    expect(characterWindow.checked).toBe(true)
+    // Both off is what §4's rollback is now: the master is derived from the pair, so the pair is
+    // what a caller has to drive — and a caller that could not reach it could not roll back.
+    ball.click()
+    characterWindow.click()
     await flush(DEBOUNCE_PLUS)
 
     expect((await storedValues(gateway, 'general')).enabled).toBe(false)
-    // 「预览真实生效」: the stage follows the switch rather than describing it.
+    // 「预览真实生效」: the stage follows the switches rather than describing them.
     expect(document.querySelector('.pet-preview__notice')?.textContent)
       .toContain(t('settings.pet.preview.off'))
 
@@ -223,7 +232,10 @@ describe('the master switch, end to end', () => {
     mount({ gateway })
     await flush()
 
-    expect(fieldControl<HTMLInputElement>(t('settings.pet.general.enabled'), 'input').checked).toBe(false)
+    expect(fieldControl<HTMLInputElement>(t('settings.pet.general.ball'), 'input').checked).toBe(false)
+    expect(
+      fieldControl<HTMLInputElement>(t('settings.pet.general.characterWindow'), 'input').checked,
+    ).toBe(false)
     expect(document.querySelector('.pet-preview__notice')).not.toBeNull()
   })
 
@@ -232,12 +244,17 @@ describe('the master switch, end to end', () => {
     mount({ gateway })
     await flush()
 
-    fieldControl<HTMLInputElement>(t('settings.pet.general.enabled'), 'input').click()
+    fieldControl<HTMLInputElement>(t('settings.pet.general.ball'), 'input').click()
+    fieldControl<HTMLInputElement>(t('settings.pet.general.characterWindow'), 'input').click()
     await flush(DEBOUNCE_PLUS)
 
-    // §5.3: the store did not persist it, so the switch stays where the user put it and the
-    // store still holds the old value — a switch that snapped back would be claiming success.
-    expect((await storedValues(gateway, 'general')).enabled).toBe(true)
-    expect(fieldControl<HTMLInputElement>(t('settings.pet.general.enabled'), 'input').checked).toBe(false)
+    // §5.3: the store did not persist it, so the switches stay where the user put them and the
+    // store still holds the old values — a switch that snapped back would be claiming success.
+    expect((await storedValues(gateway, 'general')).ball).toBe(true)
+    expect((await storedValues(gateway, 'general')).characterWindow).toBe(true)
+    expect(fieldControl<HTMLInputElement>(t('settings.pet.general.ball'), 'input').checked).toBe(false)
+    expect(
+      fieldControl<HTMLInputElement>(t('settings.pet.general.characterWindow'), 'input').checked,
+    ).toBe(false)
   })
 })

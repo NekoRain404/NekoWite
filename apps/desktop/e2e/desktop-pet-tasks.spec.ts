@@ -499,8 +499,9 @@ const BUBBLE_CAP_PX = 240
 const BUBBLE_CAP_FRACTION = 0.4
 
 /**
- * The width of the character window: `window_host::CHARACTER_WINDOW_SIZE` (260x320), which the
- * bubble is drawn inside rather than beside. Not imported, for the reason above.
+ * The width of the character window at the schema's default character size: 260, which is
+ * `window_host::character_window_size(160).0` and the floor the rule keeps at every smaller size.
+ * The bubble is drawn *inside* the window rather than beside it. Not imported, for the reason above.
  */
 const CHARACTER_WINDOW_WIDTH = 260
 
@@ -609,10 +610,12 @@ for (const size of [80, 160, 320]) {
 }
 
 test('the bubble is bounded in the window the host actually builds', async ({ browser }) => {
-  // 260x320 is `window_host::CHARACTER_WINDOW_SIZE`, and it is the one window this product has: the
-  // host does not read the character's size setting, so every character gets it. The sweep above
-  // sizes a window per character — frames nobody builds today — and this is the one the product
-  // opens, where the cap is 128px and the box has to be measured rather than assumed.
+  // 260x320 is what `window_host::character_window_size` answers for a 160px character — the
+  // schema's default size, and the window every existing install has — and it is the one window
+  // this case is about. The sweep above sizes a frame per character by a *different* budget (as
+  // wide as the largest character needs, and tall enough for the bubble's own cap); what the host
+  // builds is the sprite's box plus a constant slack, floored at this width. Here the cap is 128px
+  // and the box has to be measured rather than assumed.
   const frame = { width: CHARACTER_WINDOW_WIDTH, height: 320 }
   const context = await browser.newContext({ viewport: frame })
   const page = await context.newPage()

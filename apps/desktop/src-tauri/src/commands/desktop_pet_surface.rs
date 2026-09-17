@@ -119,6 +119,14 @@ pub fn desktop_pet_update_settings<R: tauri::Runtime>(
         );
     }
     if let PetSettingsUpdate::Applied { record } = &outcome {
+        // The geometry *first*, and the order is the point: a window this write opens (the ball
+        // coming back, the character window being switched on) is opened by the feature switch below
+        // at the size the same record just chose, rather than at the previous one and resized a line
+        // later. A poisoned lock is logged the same way as the two calls after it, and for the same
+        // reason — the setting *was* saved, and what could not follow it is a window.
+        if let Err(detail) = host(&state).map(|mut host| apply_window_geometry(&mut host, record)) {
+            eprintln!("the pet's windows did not follow a saved size: {detail}");
+        }
         // A poisoned window lock does not turn a saved setting into a failed one: the write did
         // happen, and this call's answer is what the caller asked for. What could not be applied
         // is the window, which is logged here and stated in the state the channel then carries.
@@ -195,6 +203,44 @@ pub fn apply_window_style(host: &mut PetWindowHost, record: &PetSettingsRecord) 
     };
     if let Err(refusal) = host.set_always_on_top(on_top) {
         eprintln!("a pet window did not follow the saved style: {refusal:?}");
+    }
+    true
+}
+
+/// How big the pet's windows are, as an applied write delivers it to the ones that are open.
+///
+/// [`apply_window_style`]'s shape, and it closes the same kind of gap on the other two domains. The
+/// sizes are §5.1's two controls: `character.size` is 角色与动画's slider and `general.ballSize` is
+/// 悬浮球's. Before this call existed the first of them *was* a control that lied — the character
+/// window was upstream's fixed 260x320 at every size the slider offered, and a sprite at the top of
+/// the range (320x360) was drawn into a box narrower than itself — and the second had no field to be
+/// a control with.
+///
+/// The two metrics are the schema's own fields and the host's own methods: a `character` write goes
+/// to [`PetWindowHost::set_character_size`] and a `general` one to [`PetWindowHost::set_ball_size`],
+/// each of which keeps the value and resizes what is already on screen. A write to another domain —
+/// or one whose field is not a readable number, which is a record this build did not write — answers
+/// `false` and touches no window.
+///
+/// A refusal is logged rather than returned, for the reason the two calls above give: the setting
+/// *was* saved, and what could not follow it is a compositor.
+pub fn apply_window_geometry(host: &mut PetWindowHost, record: &PetSettingsRecord) -> bool {
+    let outcome = match record.domain {
+        PetSettingsDomain::Character => record
+            .value("size")
+            .and_then(serde_json::Value::as_f64)
+            .map(|size| host.set_character_size(size)),
+        PetSettingsDomain::General => record
+            .value("ballSize")
+            .and_then(serde_json::Value::as_f64)
+            .map(|size| host.set_ball_size(size)),
+        _ => None,
+    };
+    let Some(outcome) = outcome else {
+        return false;
+    };
+    if let Err(refusal) = outcome {
+        eprintln!("a pet window did not follow the saved size: {refusal:?}");
     }
     true
 }

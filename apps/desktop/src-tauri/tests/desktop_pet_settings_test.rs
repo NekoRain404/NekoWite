@@ -19,6 +19,9 @@
 //!   stores and the window draws with, needs the same road into a window that cannot read it.
 //! - `window_style.rs` — §5.2's 窗口行为 the same way again: `view.alwaysOnTop` is the one window
 //!   flag that is a setting, and the windows are what have to follow it.
+//! - `geometry.rs` — how big the windows are: `character.size` and `general.ballSize` against the two
+//!   windows they govern, with the page's own arithmetic (the sprite's aspect, the ball's margin) read
+//!   off disk so the drawn box and the window cannot come from two different numbers.
 //! - `schema.rs` — the mirror itself, compared against `pet-contracts/config.ts` and
 //!   `pet-settings-values.ts`, so a field or a rule added on one side alone fails a test.
 //!
@@ -36,6 +39,8 @@
 
 #[path = "desktop_pet_settings_test/bubble.rs"]
 mod bubble;
+#[path = "desktop_pet_settings_test/geometry.rs"]
+mod geometry;
 #[path = "desktop_pet_settings_test/motion.rs"]
 mod motion;
 #[path = "desktop_pet_settings_test/record.rs"]

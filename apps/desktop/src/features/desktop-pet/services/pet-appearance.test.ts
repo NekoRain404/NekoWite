@@ -9,12 +9,16 @@
  * which is the one direction §5.2 forbids (the pet may reduce further than the system, never lift
  * a restriction — and an invented one is a change nobody chose).
  *
+ * The two fields that ride the same read for the same reason are pinned below it, each in the
+ * shape of its own rule: `message.opacity` (§5.2's 气泡与消息) and `general.ballSize` (§5.1's
+ * 悬浮球), both read through `PET_NUMBER_RULES` rather than through a bound written here.
+ *
  * The end of the chain is asserted where it is visible: `pet-ball-window.test.ts` mounts the ball
  * against a host whose policy changes and looks at the orb's own class, and
  * `tests/desktop_pet_settings_test/motion.rs` asserts the same field out of a real store.
  */
 import { describe, expect, it } from 'vitest'
-import { petAppearanceView, petBubbleOpacityOf } from './pet-appearance'
+import { petAppearanceView, petBallSizeOf, petBubbleOpacityOf } from './pet-appearance'
 import {
   PET_MOTION_DEFAULT,
   PET_NUMBER_RULES,
@@ -23,15 +27,20 @@ import {
 } from '../../../platform/gateways/pet-contracts'
 import type { PetAppearance } from '../../../platform/gateways/pet-contracts'
 
-/** One arm of the read, with the policy and the bubble's alpha given or left off entirely. */
+/**
+ * One arm of the read, with the facts that ride it given or left off entirely.
+ *
+ * Left off means *absent*, not `undefined`: a field the answer carries no member for is the arm
+ * these readers exist for, and a helper that always set one would never produce it.
+ */
 function read(
   status: 'unset' | 'missing' | 'ready',
-  motion?: 'system' | 'reduced',
-  bubbleOpacity?: number,
+  carried: { motion?: 'system' | 'reduced'; bubbleOpacity?: number; ballSize?: number } = {},
 ): PetAppearance {
   const policy = {
-    ...(motion === undefined ? {} : { motion }),
-    ...(bubbleOpacity === undefined ? {} : { bubbleOpacity }),
+    ...(carried.motion === undefined ? {} : { motion: carried.motion }),
+    ...(carried.bubbleOpacity === undefined ? {} : { bubbleOpacity: carried.bubbleOpacity }),
+    ...(carried.ballSize === undefined ? {} : { ballSize: carried.ballSize }),
   }
   if (status === 'unset') return { status, ...policy }
   if (status === 'missing') return { status, characterId: 'torn', detail: 'its files are gone', ...policy }
@@ -56,8 +65,8 @@ describe('the motion policy a window is handed', () => {
     // build has that moves, so a policy that only arrived with `ready` would leave a new user's
     // ball following nothing.
     for (const status of ['unset', 'missing', 'ready'] as const) {
-      expect(petAppearanceView(read(status, 'reduced')).motion, status).toBe('reduced')
-      expect(petAppearanceView(read(status, 'system')).motion, status).toBe('system')
+      expect(petAppearanceView(read(status, { motion: 'reduced' })).motion, status).toBe('reduced')
+      expect(petAppearanceView(read(status, { motion: 'system' })).motion, status).toBe('system')
     }
   })
 
@@ -85,8 +94,8 @@ describe('the motion policy a window is handed', () => {
 describe('the bubble alpha a window is handed', () => {
   it('is the stored alpha on every arm, including the two that draw no character', () => {
     for (const status of ['unset', 'missing', 'ready'] as const) {
-      expect(petAppearanceView(read(status, 'system', 0.7)).bubbleOpacity, status).toBe(0.7)
-      expect(petAppearanceView(read(status, 'system', 1)).bubbleOpacity, status).toBe(1)
+      expect(petAppearanceView(read(status, { bubbleOpacity: 0.7 })).bubbleOpacity, status).toBe(0.7)
+      expect(petAppearanceView(read(status, { bubbleOpacity: 1 })).bubbleOpacity, status).toBe(1)
     }
   })
 
@@ -108,5 +117,51 @@ describe('the bubble alpha a window is handed', () => {
     // The ends themselves are inside it — a rule is a range, not an advisory.
     expect(petBubbleOpacityOf({ bubbleOpacity: rule.min })).toBe(rule.min)
     expect(petBubbleOpacityOf({ bubbleOpacity: rule.max })).toBe(rule.max)
+  })
+})
+
+/**
+ * The floating ball's diameter, read the same way and for the same reason (§5.1's 悬浮球).
+ *
+ * It is the one stored number behind two drawn things: the orb this window paints, and the window
+ * the host puts around it (`ball.rs`'s `orb + 2 * BALL_MARGIN`, and the page's own
+ * `props.size + BALL_MARGIN * 2`). What is pinned here is that it arrives on every arm — a plain
+ * orb is still an orb of some size — and that a value the rule refuses takes the schema's default
+ * rather than being drawn anyway, because a window that drew an out-of-rule orb would be drawing a
+ * window the host did not size for it.
+ */
+describe('the ball size a window is handed', () => {
+  it('is the stored diameter on every arm, including the two that draw no character', () => {
+    for (const status of ['unset', 'missing', 'ready'] as const) {
+      expect(petAppearanceView(read(status, { ballSize: 96 })).ballSize, status).toBe(96)
+      // Both ends of the rule, which are inside it: a rule is a range, not an advisory.
+      expect(
+        petAppearanceView(read(status, { ballSize: PET_NUMBER_RULES['general.ballSize'].min }))
+          .ballSize,
+        status,
+      ).toBe(PET_NUMBER_RULES['general.ballSize'].min)
+    }
+  })
+
+  it('reads an absent diameter, and one outside the rule, as the schema default', () => {
+    // The rule is the schema's own, so this test cannot drift from what the store enforces.
+    const rule = PET_NUMBER_RULES['general.ballSize']
+    expect(rule.fallback).toBe(PET_SETTINGS_DEFAULTS.general.ballSize)
+
+    // Absent: an answer that did not come from this host — a double, or a build from before the
+    // field existed — is the size this build's ball was drawn at before the field existed.
+    expect(petBallSizeOf({})).toBe(rule.fallback)
+    expect(petAppearanceView(read('unset')).ballSize).toBe(rule.fallback)
+
+    // Outside the rule: a diameter outside the range is one the settings control cannot produce,
+    // and the ceiling is what the window can grow to before it stops being a launcher in a corner.
+    expect(petBallSizeOf({ ballSize: rule.min - 1 })).toBe(rule.fallback)
+    expect(petBallSizeOf({ ballSize: rule.max + 1 })).toBe(rule.fallback)
+    // The rule is integral: an orb half a pixel wide is a measurement, not a size.
+    expect(petBallSizeOf({ ballSize: rule.min + 0.5 })).toBe(rule.fallback)
+    expect(petBallSizeOf({ ballSize: '96' })).toBe(rule.fallback)
+    // The ends themselves are inside it.
+    expect(petBallSizeOf({ ballSize: rule.min })).toBe(rule.min)
+    expect(petBallSizeOf({ ballSize: rule.max })).toBe(rule.max)
   })
 })

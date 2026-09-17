@@ -29,6 +29,7 @@ use nekowite_lib::desktop_pet::settings::{
     PetSettingsDomain, PetSettingsLoad, PetSettingsStore, PetSettingsUpdate, PetSettingsWrite,
     PET_SETTINGS_INITIAL_REVISION, PET_SETTINGS_SCHEMA_VERSION,
 };
+use nekowite_lib::desktop_pet::window_host::stored_ball_size;
 use nekowite_lib::desktop_pet::{Motion, PetAppearance};
 
 use crate::support;
@@ -57,6 +58,7 @@ fn window_read(store: &PetSettingsStore) -> PetAppearance {
         &record,
         stored_motion(store),
         stored_bubble_opacity(store),
+        stored_ball_size(store),
         None,
     );
     read

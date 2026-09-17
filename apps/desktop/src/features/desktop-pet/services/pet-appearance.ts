@@ -4,8 +4,10 @@
  * The pet window's half of the join the host made: `desktop_pet_appearance` answers which
  * character is chosen, where its sheet is, and the `character` domain's values as the store read
  * them — and this turns that into the four things `PetSprite` takes, or into the sentence a window
- * shows instead. Pure, and deliberately so: no read, no subscription and no cache, because the
- * window's own composable owns when to ask and what to do when the answer changes.
+ * shows instead. Three fields ride every arm and none of them is the character's: `general.motion`,
+ * `message.opacity` and `general.ballSize`, each read through its own field's rule below. Pure, and
+ * deliberately so: no read, no subscription and no cache, because the window's own composable owns
+ * when to ask and what to do when the answer changes.
  *
  * The field rules are *not* restated here, and there are none to restate: the host's store
  * validated the `character` domain when it read it (§5.3's 「界面和后端使用同一规则」), so what
@@ -57,6 +59,18 @@ export interface PetAppearanceView {
    * said. Already inside its rule: the host's store validated the domain it came from (§5.3).
    */
   bubbleOpacity: number
+  /**
+   * The floating ball's diameter in CSS pixels (`general.ballSize`, §5.1's 悬浮球).
+   *
+   * On every arm for the reason the two above are: the ball is a window whether or not a character
+   * is chosen, and upstream's plain orb is still an orb of some size. It is the one stored number
+   * behind two drawn things — the orb this window paints and the window the host puts around it
+   * (`ball.rs`'s `orb + 2 * BALL_MARGIN`) — so a window that drew it at anything else would be the
+   * second answer §9 forbids. Already inside its rule: {@link petBallSizeOf} read it through the
+   * schema's `general.ballSize` rule, which is the one the settings control and the store use
+   * (§5.3), so no reader of this value has to judge it again.
+   */
+  ballSize: number
   /** What to say instead of drawing, or null when there is something to draw. */
   notice: string | null
 }
@@ -86,6 +100,10 @@ export function petAppearanceView(read: PetAppearance): PetAppearanceView {
   // of them, and `petBubbleOpacityOf` is where an answer that carries none becomes the schema's
   // default — the value this build's bubble was drawn with before the field existed.
   const bubbleOpacity = petBubbleOpacityOf(read)
+  // And the ball's diameter, read once for the same reason: the orb is drawn in all three arms —
+  // upstream's plain one where there is no character — so a size that only arrived with `ready`
+  // would leave a fresh install's orb at whatever this build's constant said.
+  const ballSize = petBallSizeOf(read)
   if (read.status === 'unset') {
     return {
       imageUrl: null,
@@ -93,6 +111,7 @@ export function petAppearanceView(read: PetAppearance): PetAppearanceView {
       animation: {},
       motion,
       bubbleOpacity,
+      ballSize,
       notice: 'No character is selected.',
     }
   }
@@ -103,6 +122,7 @@ export function petAppearanceView(read: PetAppearance): PetAppearanceView {
       animation: {},
       motion,
       bubbleOpacity,
+      ballSize,
       notice: `The character "${read.characterId}" cannot be drawn: ${read.detail}.`,
     }
   }
@@ -117,6 +137,7 @@ export function petAppearanceView(read: PetAppearance): PetAppearanceView {
     },
     motion,
     bubbleOpacity,
+    ballSize,
     notice: null,
   }
 }
@@ -137,6 +158,24 @@ export function petAppearanceView(read: PetAppearance): PetAppearanceView {
  */
 export function petBubbleOpacityOf(read: { bubbleOpacity?: unknown }): number {
   return readPetNumber(read.bubbleOpacity, PET_NUMBER_RULES['message.opacity'])
+}
+
+/**
+ * The floating ball's diameter a read carries, or the schema's default where it carries none.
+ *
+ * `petBubbleOpacityOf`'s arrangement one field over, and for its reason: the rule is
+ * `PET_NUMBER_RULES['general.ballSize']` — the one the settings control is bounded by and the
+ * store validates a write against — so a window cannot draw an orb the user could not have asked
+ * for. An absent field (a double, or a build from before the field existed) and a value outside
+ * the rule both take that rule's fallback, which is the diameter this build's ball was drawn at
+ * before the field existed.
+ *
+ * The host reads the same stored number for the *window* around the orb (`ball.rs`), and the page
+ * adds the same margin to it (`PetFloatingBall.vue`'s `props.size + BALL_MARGIN * 2`): this is the
+ * one place the value is judged, so both readers judge it the same way.
+ */
+export function petBallSizeOf(read: { ballSize?: unknown }): number {
+  return readPetNumber(read.ballSize, PET_NUMBER_RULES['general.ballSize'])
 }
 
 /** The sprite box for a size in CSS pixels, at the sheet's aspect. */

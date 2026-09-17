@@ -352,9 +352,10 @@ pub fn run() {
             // capability files are what hand it out, and the pet window holds eight — the
             // three added to this list with the task feed, the five it already had, and no more.
             //
-            // `desktop_pet_update_settings` is the pet's switch: writing `general.enabled`
-            // is what opens and closes the window, which is why `desktop_pet_open` — which
-            // had no caller until this landed — is only ever reached through it.
+            // `desktop_pet_update_settings` is the pet's switch: writing `general.characterWindow`
+            // or `general.ball` is what opens and closes a window, and the same write carries the
+            // two sizes the windows are built at. That is why `desktop_pet_open` — which had no
+            // caller until it landed — is only ever reached through it.
             commands::desktop_pet::desktop_pet_state,
             commands::desktop_pet::desktop_pet_windows,
             commands::desktop_pet::desktop_pet_open,

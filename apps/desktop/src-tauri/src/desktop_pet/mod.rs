@@ -8,7 +8,8 @@
 //! - [`window_host`] — which character windows exist, what they are labelled, how they are
 //!   created on demand and torn down, and which window is allowed to ask for any of it (§7.1).
 //!   The floating ball's window (D11b's surface, which had none) is minted there too: same label
-//!   prefix so the pet's capability governs it, same style, its own 80x80 size and its own page.
+//!   prefix so the pet's capability governs it, same style, its own size — `general.ballSize` plus
+//!   the page's own margin — and its own page.
 //! - [`linux_capabilities`] — what this machine has been *observed* to do, with what happens
 //!   where it has not, so a missing capability is stated rather than substituted (§7.2).
 //! - [`task_feed`] — the one place a runtime frame becomes a task a window can read, and the one
@@ -60,7 +61,9 @@ pub mod task_feed;
 pub mod task_projection;
 pub mod window_host;
 
-pub use ball::{BALL_LABEL, BALL_WINDOW_SIZE, DESKTOP_PET_BALL_PAGE};
+pub use ball::{
+    ball_window_size, BALL_DEFAULT_SIZE, BALL_LABEL, BALL_MARGIN, DESKTOP_PET_BALL_PAGE,
+};
 pub use bundled::{seed, Seeded, BUNDLED_CHARACTER_ID, BUNDLED_CHARACTER_NAME};
 pub use care_ledger::{CareLedger, CareOutcome, CareSummary, DAY_WINDOW, MEAL_XP};
 pub use character_view::{
@@ -75,7 +78,9 @@ pub use history::{
 pub use linux_capabilities::{
     CapabilityReport, Desktop, DisplaySession, Finding, LinuxEnvironment, Observations, Observed,
 };
-pub use notification_delivery::{NotificationDelivery, PetNotice};
+pub use notification_delivery::{
+    system_channel, NoChannel, NotificationDelivery, PetNotice, APP_NAME,
+};
 pub use notification_policy::{
     channel_for, NotificationChannel, NotificationOutcome, NotificationPolicy,
     NotificationPreferences, TaskFact,
@@ -93,8 +98,8 @@ pub use settings::{
 pub use task_feed::{publish_tasks, PetTaskFeed, PET_TASKS_CHANNEL};
 pub use task_projection::{system_clock, PetClock, PetTaskKey, PetTaskProjection, TaskProjection};
 pub use window_host::{
-    CallerWindow, Closed, HostRefusal, PetInstance, PetSurfaces, PetWindowHost, PetWindowLabel,
-    Placement, TauriSurfaces, TeardownReport, WindowAction, WindowStyle, WorkArea,
-    CHARACTER_WINDOW_SIZE, DEFAULT_CHARACTER_CAP, DESKTOP_PET_PAGE, HARD_CHARACTER_CAP,
-    PET_WINDOW_STYLE,
+    character_window_size, stored_ball_size, stored_character_size, CallerWindow, Closed,
+    HostRefusal, PetInstance, PetSurfaces, PetWindowHost, PetWindowLabel, Placement, TauriSurfaces,
+    TeardownReport, WindowAction, WindowStyle, WorkArea, CHARACTER_DEFAULT_SIZE,
+    DEFAULT_CHARACTER_CAP, DESKTOP_PET_PAGE, HARD_CHARACTER_CAP, PET_WINDOW_STYLE,
 };

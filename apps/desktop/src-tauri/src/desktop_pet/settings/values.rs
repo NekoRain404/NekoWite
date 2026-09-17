@@ -97,6 +97,21 @@ pub struct Readout {
 /// migrated record look as though it had repaired something. An unknown key of a stored object is
 /// dropped rather than refused: a record on disk may be ahead of this build in ways a submission
 /// from this build's own form cannot be.
+///
+/// **`general.enabled` is recomputed here, and this is the only place it is decided.** It is not a
+/// control any more — its value is `characterWindow || ball` — and every direction goes through this
+/// function: a stored record read off the disk, and a submission `decide_write` is about to persist
+/// (which normalizes with [`read_values`] before it writes). So the file never holds a record whose
+/// master disagrees with the switches under it, and nothing that reads the value has to ask which of
+/// the three wins (§9's second-answer rule, one field over).
+///
+/// It is *not* reported as a repair, and that is deliberate: the field is not a value the user set
+/// that this build could not use, it is a sentence about two other fields, and reporting it would
+/// tell a reader their record had been mended when what happened is that a derived value was
+/// recomputed. The one arm where a stored `enabled` really does carry a user's choice is a record
+/// from before the derivation existed — schema 3, where it was a master switch — and that is a
+/// *migration*, not a repair: `super::super::settings::migrate` reads it and turns the switches off
+/// for it.
 pub fn read_values(domain: PetSettingsDomain, raw: &Value) -> Readout {
     let stored = raw.as_object();
     let mut values = Map::new();
@@ -114,7 +129,21 @@ pub fn read_values(domain: PetSettingsDomain, raw: &Value) -> Readout {
         };
         values.insert(field.name.to_string(), kept);
     }
+    if domain == PetSettingsDomain::General {
+        derive_master(&mut values);
+    }
     Readout { values, repaired }
+}
+
+/// The master switch, restated from the two switches it is a statement about.
+///
+/// Both fields are present and boolean by the time this runs — the loop above fills every declared
+/// field with its own value or default, and `Kind::Bool`'s judge admits booleans alone — so the
+/// `true` below is the schema's own default and not a choice made here.
+fn derive_master(values: &mut Map<String, Value>) {
+    let switch = |name: &str| values.get(name).and_then(Value::as_bool).unwrap_or(true);
+    let on = switch("characterWindow") || switch("ball");
+    values.insert("enabled".to_string(), Value::Bool(on));
 }
 
 /// The values blob of a stored record, or `None` when it is not a blob at all.

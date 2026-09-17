@@ -198,9 +198,12 @@ describe('the stage says what it cannot show', () => {
     expect(previewNotes().some((note) => note.includes(t('settings.pet.preview.noCharacter')))).toBe(true)
   })
 
-  it('draws no pet at all while the master switch is off', async () => {
+  it('draws no pet at all while both of the pet’s windows are off', async () => {
     const gateway = createMemoryPetGateway()
-    await seed(gateway, 'general', { enabled: false })
+    // Seeded through the pair rather than through `enabled`: the master is derived from the two
+    // switches, so `enabled` alone is not a state the store can hold — a record saying `false`
+    // while a window's switch is on is a record this build re-derives as *on*.
+    await seed(gateway, 'general', { enabled: false, ball: false, characterWindow: false })
     mount(gateway)
     await flush()
 

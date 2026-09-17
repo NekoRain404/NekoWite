@@ -383,6 +383,21 @@ function keptValue(path: string, fallback: unknown, candidate: unknown): unknown
  * was never set (an older schema's field, or a fresh install) and defaults quietly, while a
  * field that *is* there and cannot be used is defaulted **and reported**. Merging the two
  * would make every migrated record look as though it had repaired something.
+ *
+ * **`general.enabled` is recomputed here, and this is the only place it is decided on this
+ * side.** It is not a control any more: its value is `characterWindow || ball`, and every
+ * direction goes through this function — a record read off the disk, and a submission the
+ * store is about to persist — so the page can never be handed a record whose master
+ * disagrees with the two switches under it. The Rust half does the same thing in the same
+ * place (`settings::values::read_values`), and §5.3's 「界面和后端使用同一规则」 is why the
+ * two are written to match: a page that derived this differently from the store would show a
+ * "unsaved" badge for a save that landed.
+ *
+ * It is *not* reported as a repair: the field is not a value the user set that this build
+ * could not use, it is a sentence about two other fields. The one arm where a stored
+ * `enabled` really does carry a user's choice is a record from before the derivation existed
+ * — schema 3, where it was a master switch — and that is a *migration*, not a repair
+ * (`pet-settings-policy.ts`'s `readPetSettingsDomain`).
  */
 export function readPetSettingsValues<D extends PetSettingsDomain>(
   domain: D,
@@ -401,6 +416,12 @@ export function readPetSettingsValues<D extends PetSettingsDomain>(
     const problem = fieldProblem(domain, field, fallback, candidate)
     values[field] = problem ? fallbackFor(domain, field, fallback) : keptValue(path, fallback, candidate)
     if (problem) repaired.push(path)
+  }
+  if (domain === 'general') {
+    // Both fields are present and boolean by the loop above — it fills every field the
+    // schema declares, and a boolean's rule admits booleans alone — so this reads them
+    // rather than falling back on anything.
+    values.enabled = values.characterWindow === true || values.ball === true
   }
   // The runtime half of a mapped type: every key written above came from
   // `PetSettingsValues[D]`'s own defaults, so the object is that type by construction.

@@ -99,6 +99,36 @@ function defaultsLoad(domain: PetSettingsDomain, reason: 'absent' | 'unreadable'
 }
 
 /**
+ * What an older record's values mean in this build's schema, applied once on the way in.
+ *
+ * The mirror of `settings::migrate`, and there is one migration so far: `general.enabled` was
+ * a master switch through schema 3 — with it off there was no pet window at all, whichever
+ * way `characterWindow` and `ball` were set — and is derived from those two switches from 4
+ * on. Reading a 3 record's `enabled: false` as the derived value would compute *true* for a
+ * record whose both switches were on: the user had asked for no pet at all, and they would
+ * get one back. So the old master's *off* is written into the two switches it used to stand
+ * above, and the derived value is `false` for the right reason.
+ *
+ * It runs on the *stored* object rather than on the normalized one, and it has to: the field
+ * it is about is the one normalization recomputes, so a derived `enabled: true` would have
+ * hidden the user's answer from this function. One object is returned either way — the
+ * caller's own when there is nothing to migrate, so the common path allocates nothing.
+ */
+function migrateValues(domain: PetSettingsDomain, version: number, raw: unknown): unknown {
+  if (domain !== 'general' || version >= GENERAL_MASTER_SWITCH_VERSION) return raw
+  if (!isSettingsObject(raw) || raw.enabled !== false) return raw
+  return { ...raw, characterWindow: false, ball: false }
+}
+
+/**
+ * The schema version `general.enabled` stopped being a master switch the user could set.
+ *
+ * Named rather than spelled as a literal, because it is a fact about the schema rather than
+ * about one step: every record older than this one carries a master switch.
+ */
+const GENERAL_MASTER_SWITCH_VERSION = 4
+
+/**
  * What one stored record is, as this build can read it.
  *
  * The version check precedes every other one. Data written by a newer build is reported and
@@ -133,7 +163,7 @@ export function readPetSettingsDomain(domain: PetSettingsDomain, stored: unknown
     // to back the file up from before writing (§10.2).
     return defaultsLoad(domain, 'unreadable')
   }
-  const readout = readStoredPetSettingsValues(domain, stored.values)
+  const readout = readStoredPetSettingsValues(domain, migrateValues(domain, version, stored.values))
   if (readout === null) return defaultsLoad(domain, 'unreadable')
   const record = recordFor(domain, PET_SETTINGS_SCHEMA_VERSION, revision, readout.values)
   if (version === PET_SETTINGS_SCHEMA_VERSION) {

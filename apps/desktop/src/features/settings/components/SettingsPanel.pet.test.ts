@@ -188,12 +188,16 @@ function activePetPage(): string | null {
   return tab?.getAttribute('data-page') ?? null
 }
 
-function masterSwitch(): HTMLInputElement {
-  const label = [...document.querySelectorAll<HTMLElement>('.pet-settings label')].find((candidate) =>
-    candidate.textContent?.includes('Show the desktop pet'),
+/**
+ * One of the general page's toggles, by the label the user reads. There are two of them and they are
+ * peers — 显示悬浮球 and 显示角色窗口 — so a case has to say which one it means.
+ */
+function windowSwitch(label: string): HTMLInputElement {
+  const row = [...document.querySelectorAll<HTMLElement>('.pet-settings label')].find((candidate) =>
+    candidate.textContent?.includes(label),
   )
-  const input = label?.querySelector<HTMLInputElement>('input[type="checkbox"]')
-  if (!input) throw new Error('the master switch is not on the general page')
+  const input = row?.querySelector<HTMLInputElement>('input[type="checkbox"]')
+  if (!input) throw new Error(`the ${label} switch is not on the general page`)
   return input
 }
 
@@ -306,16 +310,19 @@ describe('the pet’s settings are reachable from the dialog', () => {
     expect([...new Set(petCommands())].filter((command) => !allowed.has(command))).toEqual([])
   })
 
-  it('writes the master switch through the command that opens the pet’s window', async () => {
-    // A user who switched the pet off: the switch renders what the store holds rather than the
-    // schema's default, and the transition below is the one `apply_feature_switch` acts on.
-    stored = { general: { enabled: false } }
+  it('writes a window’s own switch through the command that opens its window', async () => {
+    // A user who switched the pet off: the switches render what the store holds rather than the
+    // schema's defaults, and the transition below is the one `apply_feature_switch` acts on.
+    stored = { general: { characterWindow: false, ball: false } }
     mountPanel()
     await nextTick()
     petRow().click()
     await until(() => document.querySelector('.pet-settings__rail') !== null, 'the section')
 
-    const toggle = masterSwitch()
+    // 显示悬浮球, and *not* 显示角色窗口: turning the ball on while the character window stays off is
+    // 只开悬浮球, the state this pair of switches exists for — and the one a master switch could not
+    // express.
+    const toggle = windowSwitch('Show the floating ball')
     expect(toggle.checked).toBe(false)
     toggle.checked = true
     toggle.dispatchEvent(new Event('change'))
@@ -327,12 +334,14 @@ describe('the pet’s settings are reachable from the dialog', () => {
     const write = invokeMock.mock.calls.find(
       ([command]) => command === 'desktop_pet_update_settings',
     )
-    // The whole write, not a field of it: `general.enabled` is the value the Rust side reads to
-    // open the pet's window, and a page that wrote it into another domain would save a setting
-    // nothing acts on.
+    // The whole write, not a field of it. `general.ball` is what the Rust side reads to open the
+    // ball's window — a page that wrote it into another domain would save a setting nothing acts
+    // on — and `enabled` rides along because it is *derived* from this switch and its peer
+    // (`characterWindow || ball`): the page states the derived value so its own draft agrees with
+    // the record the store answers with, and the store recomputes it either way.
     expect((write?.[1] as { write: unknown }).write).toMatchObject({
       domain: 'general',
-      values: { enabled: true },
+      values: { ball: true, characterWindow: false, enabled: true },
     })
   })
 

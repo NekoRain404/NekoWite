@@ -12,9 +12,10 @@
  * - **It reads the appearance, and re-reads it when another window changes it.** This is what
  *   makes the ball wear the character instead of upstream's plain orb, and `desktop_pet_appearance`
  *   is in the pet capability for exactly this read. The two domains the orb draws from are the
- *   `character` one and `general.motion` (§5.2's 动效), so a character *or* a motion policy chosen
- *   in the main window's settings reaches a ball that is already on the desktop — the rule
- *   `use-pet-window.ts` states for the character window.
+ *   `character` one and `general` — its motion policy (§5.2's 动效) and the orb's own diameter
+ *   (§5.1's 悬浮球) — so a character, a motion policy or a size chosen in the main window's
+ *   settings reaches a ball that is already on the desktop, the rule `use-pet-window.ts` states
+ *   for the character window.
  * - **Right-click is upstream's 「right = Settings」** (`lib.rs:306-309`) and lands on `general`,
  *   which is where §5.1's 常规与交互 (启用、窗口行为、点击动作、悬浮球) lives. The left click is
  *   *not* wired: upstream opens its quick-bubble menu by growing this window to 300x420
@@ -29,7 +30,11 @@
  *   the host would refuse it anyway (the ball is not a character instance: `window_host.rs`).
  */
 import { computed, onMounted, onScopeDispose, ref } from 'vue'
-import { isPetAppearance, PET_MOTION_DEFAULT } from '../../../platform/gateways/pet-contracts'
+import {
+  isPetAppearance,
+  PET_MOTION_DEFAULT,
+  PET_SETTINGS_DEFAULTS,
+} from '../../../platform/gateways/pet-contracts'
 import type {
   PetMotion,
   PetSettingsChange,
@@ -81,7 +86,8 @@ const props = withDefaults(
  * the same plain orb, and what tells them apart is a sentence for a window with room: the pet
  * window draws it at 260x320 and the settings character page lists what it cannot draw. Here it
  * rides as the orb's tooltip — see {@link notice} — because this window is an 80 px box with a
- * 56 px orb in it.
+ * 56 px orb in it at the schema's default size, and the rule's own ceiling leaves it no room for a
+ * sentence either.
  */
 const imageUrl = ref<string | null>(null)
 /** The host's own words when it had none to draw, or when the read was refused. */
@@ -106,6 +112,25 @@ const notice = ref<string | null>(null)
 const motion = ref<PetMotion>(PET_MOTION_DEFAULT)
 const reduceMotion = computed(() => motion.value === 'reduced')
 
+/**
+ * How large the orb is drawn, from the same read (`general.ballSize`, §5.1's 悬浮球).
+ *
+ * **The one stored number behind both the orb and the window around it.** The host sizes this
+ * window from it (`ball.rs`: the stored diameter plus `2 * BALL_MARGIN`), and `PetFloatingBall.vue`
+ * adds the same margin to what it is handed here, so a page that drew the orb at anything else
+ * would draw it outside the box the host gave it — §9's second answer, stated as arithmetic. The
+ * value arrives already inside its rule (`petBallSizeOf`), which is the same rule the settings
+ * control writes against.
+ *
+ * Read on every answer, including the two that draw nothing: upstream's plain orb is still an orb
+ * of some size, and a fresh install with no character chosen can still want a bigger one.
+ *
+ * It starts at the schema's default rather than at nothing, for {@link motion}'s reason: the first
+ * frame is drawn at the size this build was built with, and the read replaces it as soon as the
+ * host answers.
+ */
+const ballSize = ref<number>(PET_SETTINGS_DEFAULTS.general.ballSize)
+
 let unsubscribe: (() => void) | null = null
 let disposed = false
 
@@ -127,8 +152,11 @@ async function readAppearance(): Promise<void> {
     imageUrl.value = view.imageUrl
     notice.value = view.notice
     // Set on every answer, including the two that draw nothing: a policy is not a property of the
-    // character, and a write that turns it off has to reach a ball that is already on screen.
+    // character, and a write that turns it off has to reach a ball that is already on screen. The
+    // size rides the same answer for the same reason — the orb is drawn in all three arms, and a
+    // slider moved in the main window has to resize a ball that is already on the desktop.
     motion.value = view.motion
+    ballSize.value = view.ballSize
   } catch (cause) {
     if (disposed) return
     imageUrl.value = null
@@ -191,6 +219,7 @@ onScopeDispose(dispose)
 <template>
   <PetFloatingBall
     :image-url="imageUrl"
+    :size="ballSize"
     :platform="platform"
     :clock="clock"
     :create-image="createImage"

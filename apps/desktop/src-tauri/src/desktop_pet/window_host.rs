@@ -47,21 +47,23 @@
  *   (`UnrecognizedCaller { observed: "pet-ball" }`), which is the structural half of 「the ball is
  *   a stable click target and must not be click-through」: the permission is granted to the pet's
  *   windows as a group, and the identity check is what keeps the ball from using it.
- * - **It follows its own switch, not the character list.** The ball exists when `general.ball` is
- *   on *and* `general.enabled` is, and it is the character window's presence that no longer
- *   decides: {@link PetWindowHost::open} — the call `feature_switch::apply` makes for the character
- *   window — brings it up too, {@link PetWindowHost::ensure_ball} is the call that brings it up on
- *   its own (the window that exists when 显示角色窗口 is off), {@link PetWindowHost::set_visible}
- *   hides and shows it with the rest, and {@link PetWindowHost::disable} closes it. Its switch
- *   (`general.ball`, upstream's stored flag, `lib.rs:331-345`) is read in
- *   {@link Ball::ensure}; {@link PetWindowHost::set_ball_enabled} is how the preference reaches it,
- *   and {@link PetWindowHost::close_characters} is the operation the character window's own switch
- *   gets instead.
+ * - **It follows its own switch, not the character list.** The ball exists exactly while
+ *   `general.ball` is on, and nothing above that switch decides anything — `general.enabled` is
+ *   derived from this one and the character window's, so a record cannot say "no pet window at all"
+ *   while a window's own switch is on. {@link PetWindowHost::open} — the call
+ *   `feature_switch::apply` makes for the character window — brings it up too,
+ *   {@link PetWindowHost::ensure_ball} is the call that brings it up on its own (the window that
+ *   exists when 显示角色窗口 is off), {@link PetWindowHost::set_visible} hides and shows it with the
+ *   rest, and {@link PetWindowHost::disable} closes it. Its switch (`general.ball`, upstream's
+ *   stored flag, `lib.rs:331-345`) is read in {@link Ball::ensure};
+ *   {@link PetWindowHost::set_ball_enabled} is how the preference reaches it, and
+ *   {@link PetWindowHost::close_characters} is the operation the character window's own switch gets
+ *   instead.
  *
  * **What the ball's window *is*, and how it answers its switch, is `ball.rs`.** The policy lived
  * here until it had a switch of its own to hold; this file keeps the one `PetSurfaces`, the
- * instances and the rules about them, and `Ball` keeps the label, the page, the size, the corner
- * and the user's answer.
+ * instances, the rules about them, and the two window *sizes* the two surfaces are built at
+ * ([`character_window_size`], and `ball::ball_window_size` for the ball).
  */
 use serde::Serialize;
 
@@ -70,8 +72,12 @@ use super::settings::{PetSettingsDomain, PetSettingsStore};
 // The ball's policy moved to `ball.rs`; the path it was read by does not move with it. Every caller
 // that named `window_host::BALL_LABEL` — the command surface's tests among them — still resolves,
 // which is the property `state.rs` states for its own split: the split moved the code, not the
-// surface.
-pub use super::ball::{BALL_LABEL, BALL_WINDOW_SIZE, DESKTOP_PET_BALL_PAGE};
+// surface. `BALL_WINDOW_SIZE` is gone rather than re-exported: a window size is a function of
+// `general.ballSize` now (`ball::ball_window_size`), and a constant here would be the second answer
+// the setting exists to end.
+pub use super::ball::{
+    ball_window_size, BALL_DEFAULT_SIZE, BALL_LABEL, BALL_MARGIN, DESKTOP_PET_BALL_PAGE,
+};
 
 /// §7.1's numbers: 「建议默认最多 3 个、可配置硬上限 5 个，需性能验证后确认」.
 ///
@@ -88,9 +94,75 @@ const LABEL_PREFIX: &str = "pet";
 /// (§9); its second Vite entry is the integrator's wiring point, so this names the built page.
 pub const DESKTOP_PET_PAGE: &str = "desktop-pet.html";
 
-/// The character window's size in logical px: upstream's `260x320` (`:459`), the same at all
-/// four of its builder sites.
-pub const CHARACTER_WINDOW_SIZE: (f64, f64) = (260.0, 320.0);
+/// The character window's size in logical px, for a character drawn at `size` (§5.1's 角色与动画).
+///
+/// **It was upstream's fixed `260x320` and it is now a function of the setting**, which is the defect
+/// this rule closes: the sprite is drawn at `character.size` — the slider offers 64 to 320 — and a
+/// window that never moved meant a sprite at the top of the range was drawn into a box narrower than
+/// itself.
+///
+/// **Measured before the rule landed** (Chromium, `page.setViewportSize` as the window, the real
+/// `DesktopPetRoot` mounted on the real appearance read — `e2e/desktop-pet-window-fit.spec.ts`): at
+/// 320 the canvas was 320x360 and the window 260x320, and the canvas came out **30 px past the left
+/// edge, 30 px past the right and 40 px past the bottom**, clipped there by the page's own
+/// `overflow: hidden`. It was *not* scaled down: the canvas's CSS box, its backing store and its
+/// computed style all read 320x360, because a flex item does not shrink below its own content and
+/// there was no free space to take it from. 64 and 160 fitted with room to spare. After the rule, all
+/// three fit.
+///
+/// The rule is stated over *upstream's own pair*: 260x320 is upstream's window and 160x180 is
+/// upstream's sprite at 100%, so the difference between them — 100 px of width and 140 px of height,
+/// [`CHARACTER_WINDOW_SLACK`] — is the room its window had for the bubble and the character's own
+/// breathing space. That slack is what is kept constant, so the window at the default size is exactly
+/// the window this build has always opened, and the room above the sprite for the bubble does not
+/// shrink as the character grows.
+///
+/// The aspect is the sheet's ([`SPRITE_ASPECT`], `pet-appearance.ts`'s `BASE_WIDTH`/`BASE_HEIGHT`) and
+/// not a number invented here: the window has to be at least as tall as the sprite it holds, and this
+/// is the only way to know how tall that is without asking the page. One stored number —
+/// `character.size` — is read by this function for the window and by
+/// `services/pet-appearance.ts` for the sprite's box; the *aspect* is theirs together and
+/// `tests/desktop_pet_settings_test/geometry.rs` reads it out of the TypeScript module, so the two
+/// cannot drift apart without a test failing.
+pub fn character_window_size(size: f64) -> (f64, f64) {
+    let (base_width, base_height) = SPRITE_ASPECT;
+    let height = (size * base_height / base_width).round();
+    (
+        (size + CHARACTER_WINDOW_SLACK.0).max(CHARACTER_WINDOW_MIN_WIDTH),
+        height + CHARACTER_WINDOW_SLACK.1,
+    )
+}
+
+/// The narrowest character window this build will ask for: 260 px, which is upstream's window and
+/// the width of the bubble's own cap (`pet-bubble-layout.ts`'s `PET_BUBBLE_MAX_WIDTH`).
+///
+/// A floor and not a preference. The character is drawn in this window and so is every reminder the
+/// pet has: the bubble stretches to the window's width, and a window narrower than the width that
+/// cap was chosen against would squeeze every row the surface exists to show. A small character
+/// therefore gets a window with more room around it rather than a narrower one — which is also what
+/// keeps the *default* window (160 px of character) exactly the 260x320 this build has always opened.
+const CHARACTER_WINDOW_MIN_WIDTH: f64 = 260.0;
+
+/// The sprite box's aspect: upstream's canvas at 100% (`index.html:12`, `main.ts:116-117`).
+///
+/// `PetSprite.vue`'s `BASE_SIZE` and `pet-appearance.ts`'s `BASE_WIDTH`/`BASE_HEIGHT` are the same
+/// pair on the page's side, and the reader of the sprite box is `pet-appearance.ts`'s `box()`. Kept
+/// as the two numbers rather than as a ratio so the cross-language test can compare them literally.
+const SPRITE_ASPECT: (f64, f64) = (160.0, 180.0);
+
+/// What upstream's window has around upstream's sprite: 260x320 minus 160x180.
+///
+/// The height is where the bubble goes — `DesktopPetRoot.vue` lays the window out as a column with the
+/// bubble above the sprite and the sprite against the bottom edge — and the width is what centres a
+/// character narrower than the window.
+const CHARACTER_WINDOW_SLACK: (f64, f64) = (100.0, 140.0);
+
+/// The rendered size the character window is built for when nothing says otherwise.
+///
+/// `character.size`'s own default (`settings::fields`, `pet-contracts/config.ts`), which is the size
+/// of a window opened before any record has been read — and the size [`character_window_size`] answers
+/// upstream's own 260x320 for.
+pub const CHARACTER_DEFAULT_SIZE: f64 = 160.0;
 
 /// What we ask a compositor for, as a value rather than as calls buried in an adapter.
 ///
@@ -154,6 +226,50 @@ pub fn stored_always_on_top(store: &PetSettingsStore) -> bool {
                 .and_then(serde_json::Value::as_bool)
         })
         .unwrap_or(PET_WINDOW_STYLE.always_on_top)
+}
+
+/// The size the character window is built for, as the `character` record holds it (§5.1's 角色与动画).
+///
+/// The same shape as [`stored_always_on_top`] and for the same reason: it is a stored preference the
+/// *window's own geometry* depends on, so the host has to be told it before it opens one, and the two
+/// moments it can change are a launch and an applied write. Read once at each rather than per window:
+/// a file read per `open` would be a read for a value that only changes through one command.
+///
+/// Every arm but a readable number answers [`CHARACTER_DEFAULT_SIZE`] — an absent record is a fresh
+/// install, and an unreadable one is this build's defaults everywhere else, which is the reading
+/// `settings::values` gives it too. §10.2's read-only arm is a record whose *choice* this build cannot
+/// read, and the default is the direction that does not clip a sprite it cannot measure.
+pub fn stored_character_size(store: &PetSettingsStore) -> f64 {
+    store
+        .read(PetSettingsDomain::Character)
+        .record()
+        .and_then(|record| record.value("size").and_then(serde_json::Value::as_f64))
+        .unwrap_or(CHARACTER_DEFAULT_SIZE)
+}
+
+/// The floating ball's diameter, as the `general` record holds it (`general.ballSize`).
+///
+/// Beside [`stored_character_size`] rather than in `ball.rs`, because it is the same fact about the
+/// same question — what size is a window built at — and because two of the three callers are here and
+/// in `character_view` (the ball's page is told the same number through the appearance read, so that
+/// one stored value sizes both the orb and the window around it).
+///
+/// Every arm but a readable number answers `ball::BALL_DEFAULT_SIZE`. The `general` domain is read
+/// once for both of the ball's facts, and a read-only record — a newer build's — is the arm where a
+/// choice exists and cannot be read: the schema's default is what this build's ball has always been.
+///
+/// The reading itself is `character_view::BallSize`'s, because the *page* needs the same number
+/// through the appearance read and two readers of one field is how a window and an orb come to
+/// disagree. What is here is the store half of it, beside the character's size for the same reason.
+pub fn stored_ball_size(store: &PetSettingsStore) -> f64 {
+    store
+        .read(PetSettingsDomain::General)
+        .record()
+        .map_or(
+            super::character_view::BallSize::DEFAULT,
+            super::character_view::BallSize::of,
+        )
+        .value()
 }
 
 /// A new window's position, logical px.
@@ -234,6 +350,10 @@ pub enum WindowAction {
     /// settings one: the setting is stored whether or not it can be delivered, and this is what a
     /// compositor refusing the change is reported under.
     AlwaysOnTop,
+    /// Giving an open window a new size (`character.size`, `general.ballSize`). The same shape as
+    /// [`Self::AlwaysOnTop`]: the setting is stored whether or not the compositor honours it, and
+    /// §7.2's 「asked for」 is what a refusal here means.
+    Resize,
 }
 
 /// Why the host refused.
@@ -268,9 +388,9 @@ pub trait PetSurfaces: Send {
     /// whether it starts on screen.
     ///
     /// The size is a parameter rather than something the adapter reads, because the pet has two
-    /// surfaces of two different sizes — a 260x320 character window and an 80x80 ball — and an
-    /// adapter that picked one of them itself would be the place the two could be swapped without
-    /// a test noticing.
+    /// surfaces of two sizes — a character window that follows `character.size` and a ball that
+    /// follows `general.ballSize` — and an adapter that picked one of them itself would be the place
+    /// the two could be swapped without a test noticing.
     fn open(
         &mut self,
         label: &PetWindowLabel,
@@ -282,6 +402,19 @@ pub trait PetSurfaces: Send {
     ) -> Result<(), String>;
 
     fn close(&mut self, label: &PetWindowLabel) -> Result<(), String>;
+
+    /// Give an existing window a new size, keeping its position.
+    ///
+    /// A separate call rather than a close-and-reopen, for the reason [`Self::set_always_on_top`] is
+    /// one: the size setting is about the pet that is *on screen*, and reopening it would reload the
+    /// page — the sprite, the bubble and the open menu — every time a slider moved. Three settings
+    /// reach it: `character.size` for the character's window, and `general.ballSize` for the ball's.
+    ///
+    /// **The position is not this call's business.** The compositor keeps the window where it is and
+    /// moves only the edges, which is what a user dragging the size slider expects — and for the ball
+    /// it is also what keeps a position the user dragged it to. What a *new* window is placed at is
+    /// [`PetWindowHost::open`]'s and [`super::ball::Ball::ensure`]'s, and those read the size.
+    fn resize(&mut self, label: &PetWindowLabel, size: (f64, f64)) -> Result<(), String>;
 
     fn set_visible(&mut self, label: &PetWindowLabel, visible: bool) -> Result<(), String>;
 
@@ -357,6 +490,14 @@ pub struct PetWindowHost {
     /// What every window this host opens is asked for. [`PET_WINDOW_STYLE`] until a stored
     /// preference replaces it — see [`Self::set_always_on_top`] for the one flag that moves.
     style: WindowStyle,
+    /// The rendered size the character is drawn at, `character.size` (§5.1's 角色与动画), which the
+    /// character window's own geometry is derived from ([`character_window_size`]).
+    ///
+    /// Held rather than read per window for the reason the style is: it is a stored preference whose
+    /// only door is an applied write (or the launch), and asking a file per `open` would be a read for
+    /// a value that moves through one command. [`CHARACTER_DEFAULT_SIZE`] until a store says
+    /// otherwise, so a host built without one opens exactly the window this build always opened.
+    character_size: f64,
     visible: bool,
 }
 
@@ -369,7 +510,47 @@ impl PetWindowHost {
             instances: Vec::new(),
             ball: Ball::new(PetWindowLabel::ball()),
             style: PET_WINDOW_STYLE,
+            character_size: CHARACTER_DEFAULT_SIZE,
             visible: true,
+        }
+    }
+
+    /// The size the character's windows are built at, as the host currently holds it.
+    pub fn character_size(&self) -> f64 {
+        self.character_size
+    }
+
+    /// Tell the host how big the character is drawn, and resize the windows that are already open.
+    ///
+    /// The same shape as [`Self::set_always_on_top`], for the same reason: the setting is about the
+    /// pet the user can see, so a slider that moved while the window stayed the size it was opened at
+    /// would be a control that lies (§5.2). Every open character window is asked before anything is
+    /// reported — stopping at the first refusal would leave the rest at the old size — and the *first*
+    /// refusal is what a caller reads. The preference is kept either way: it is the user's, and the
+    /// next window opens with it.
+    ///
+    /// The ball is not touched: it has a size of its own (`general.ballSize`, [`Self::set_ball_size`])
+    /// and the two are different settings about different windows.
+    pub fn set_character_size(&mut self, size: f64) -> Result<(), HostRefusal> {
+        self.character_size = size;
+        let (width, height) = character_window_size(size);
+        let labels: Vec<PetWindowLabel> = self
+            .instances
+            .iter()
+            .map(|instance| instance.label.clone())
+            .collect();
+        let mut refusal: Option<HostRefusal> = None;
+        for label in &labels {
+            if let Err(detail) = self.surfaces.resize(label, (width, height)) {
+                refusal.get_or_insert(HostRefusal::Window {
+                    action: WindowAction::Resize,
+                    detail,
+                });
+            }
+        }
+        match refusal {
+            Some(refused) => Err(refused),
+            None => Ok(()),
         }
     }
 
@@ -461,6 +642,26 @@ impl PetWindowHost {
         self.ball.set_enabled(&mut *self.surfaces, enabled)
     }
 
+    /// How big the ball is drawn, as the ball currently holds it (`general.ballSize`).
+    pub fn ball_size(&self) -> f64 {
+        self.ball.size()
+    }
+
+    /// Tell the host how big the ball is drawn, and resize its window if one is up.
+    ///
+    /// [`Self::set_character_size`]'s shape, one window over. What is *not* here is a move, and that
+    /// is a decision rather than an omission: the ball's default corner is computed from its size when
+    /// the window is created ([`super::ball::Ball::ensure`]), and a resize keeps the window's top-left
+    /// because a host cannot move a window on Wayland at all — position is the compositor's, which is
+    /// the same reason the drag is `start_dragging` rather than a stream of positions. A ball standing
+    /// at that corner therefore grows toward the screen's interior and, at the top of its range, can
+    /// reach past the work area's right edge; dragging it back is one gesture, and the alternative
+    /// would be this process guessing at a position it cannot read. Reported rather than papered over:
+    /// §7.2's `position-restore` row is `unverified` for the same reason and nothing here changes it.
+    pub fn set_ball_size(&mut self, size: f64) -> Result<(), HostRefusal> {
+        self.ball.set_size(&mut *self.surfaces, size)
+    }
+
     /// Bring the ball's window up if the user wants one and it is not up yet.
     ///
     /// The half [`Self::set_ball_enabled`] deliberately leaves out, and it is a call of its own
@@ -513,7 +714,7 @@ impl PetWindowHost {
                 &label,
                 DESKTOP_PET_PAGE,
                 at,
-                CHARACTER_WINDOW_SIZE,
+                character_window_size(self.character_size),
                 self.style,
                 self.visible,
             )
@@ -685,7 +886,10 @@ impl PetWindowHost {
     fn cascade(&self) -> Placement {
         const STEP: f64 = 40.0;
         const MARGIN: f64 = 20.0;
-        let (width, height) = CHARACTER_WINDOW_SIZE;
+        // The window the clamp is about: the size this host would open one at, which is the stored
+        // character size. A cascade that clamped against a different number would park the window
+        // under the taskbar it is trying to avoid.
+        let (width, height) = character_window_size(self.character_size);
         let index = self.instances.len() as f64;
         let Some(area) = self.surfaces.work_area() else {
             return Placement {
@@ -759,6 +963,16 @@ impl PetSurfaces for TauriSurfaces {
     fn close(&mut self, label: &PetWindowLabel) -> Result<(), String> {
         self.window(label)?
             .close()
+            .map_err(|error| error.to_string())
+    }
+
+    fn resize(&mut self, label: &PetWindowLabel, size: (f64, f64)) -> Result<(), String> {
+        use tauri::{LogicalSize, Size};
+        // Logical and not physical, which is what the size the host computes is: `inner_size` at
+        // creation takes the same unit, so a window opened at 260x320 and then resized to its own
+        // size again is the same window on a HiDPI display as on a 1:1 one.
+        self.window(label)?
+            .set_size(Size::Logical(LogicalSize::new(size.0, size.1)))
             .map_err(|error| error.to_string())
     }
 
