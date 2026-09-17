@@ -51,20 +51,19 @@ const ROUND_TRIPS: RoundTrip[] = [
   { domain: 'character', field: 'idleIntervalSeconds', value: 30 },
   { domain: 'character', field: 'idleClips', value: [1, 3, 5] },
   { domain: 'character', field: 'bindings', value: { idle: 0, working: 7, waiting: 6 } },
-  // 气泡与消息: upstream `ap_font_size`, `ap_idle`, `ap_bub_*`, `ap_theme_phrases`,
-  // `ap_left_click_action`, `ap_quick_bubbles`, `ap_icon_<agentKind>`.
+  // 气泡与消息: upstream `ap_font_size`, `ap_idle`, `ap_bub_*`, `ap_quick_bubbles` and
+  // `ap_icon_<agentKind>`. Four keys upstream has and this build does not are deliberately absent
+  // here and were removed from the schema — `ap_bub_sortkind`, `ap_bub_hidden`,
+  // `ap_theme_phrases` and `ap_left_click_action`; `pet-contracts/config.ts` carries the reason for
+  // each.
   { domain: 'message', field: 'fontSize', value: 14 },
   { domain: 'message', field: 'idle', value: false },
   { domain: 'message', field: 'layoutMode', value: 'carousel' },
   { domain: 'message', field: 'layoutMaxRows', value: 9 },
   { domain: 'message', field: 'grouping', value: 'flat' },
-  { domain: 'message', field: 'sortByKind', value: true },
   { domain: 'message', field: 'filter', value: 'attention' },
   { domain: 'message', field: 'dot', value: 'claude' },
   { domain: 'message', field: 'separator', value: 'space' },
-  { domain: 'message', field: 'phraseTheme', value: 'wizard' },
-  { domain: 'message', field: 'leftClick', value: 'all' },
-  { domain: 'message', field: 'hiddenAgents', value: ['opencode'] },
   {
     domain: 'message',
     field: 'tokens',

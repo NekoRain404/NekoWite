@@ -251,13 +251,13 @@ const sprite = arguments[0], sheetSpec = arguments[1], win = arguments[2], done 
   // that frame. Written rather than mounted, because the claim is not "a bubble mounted with a
   // theme looks right" but "choosing a theme changes the bubble that is already on the desktop".
   window.__petBubble = {
-    setTheme: async (value) => {
+    setMessage: async (values) => {
       const read = await bubbleGateway.readSettings('message');
       if (read.status !== 'current') return 'the double would not read message';
       const update = await bubbleGateway.updateSettings({
         domain: 'message',
         revision: read.record.revision,
-        values: Object.assign({}, read.record.values, { theme: value }),
+        values: Object.assign({}, read.record.values, values),
       });
       return update.status;
     },
@@ -770,6 +770,38 @@ function verify(results) {
     theme?.system?.theme === (theme?.system?.systemDark ? 'dark' : 'light'),
   )
 
+  /*
+   * The other two fields of the same domain, measured the same way — one write each, read off the
+   * page. `message.fontSize` and `message.dot` were stored and read by nobody until they crossed the
+   * appearance payload, so what each check is about is that a *write* changes what is drawn.
+   */
+  const message = results.message
+  run(
+    'a text size written on the settings page is the size the bubble draws at',
+    `10px → ${JSON.stringify(message?.smallPlain?.fontSize)}, 14px → ${JSON.stringify(message?.largeClaude?.fontSize)}`,
+    message?.smallPlain?.fontSize === '10px' && message?.largeClaude?.fontSize === '14px',
+  )
+  // FAILS IF: the size reaches the surface but not the rows inside it. Upstream sets
+  // `--bubble-font-size` on the document root and everything inherits (`main.ts:104`), and a
+  // component that set `font-size` on itself alone would leave the rows at the app's body size.
+  run(
+    'and the rows inside the bubble are drawn at it too',
+    `row 10px → ${JSON.stringify(message?.smallPlain?.rowFontSize)}, 14px → ${JSON.stringify(message?.largeClaude?.rowFontSize)}`,
+    message?.smallPlain?.rowFontSize === '10px' && message?.largeClaude?.rowFontSize === '14px',
+  )
+  // FAILS IF: the dot's shape stops following `message.dot`. Both styles are the same state colour
+  // and differ in form — a disc is round, upstream's `claude` is a glyph on a square box
+  // (`references/desktop-pet/windows/src/styles.css:149`) — so the reading is the box's radius and
+  // the glyph's presence, never a colour.
+  run(
+    'a dot style written on the settings page is the shape the rows draw',
+    `plain ${JSON.stringify(message?.smallPlain?.dot)} / ${JSON.stringify(message?.smallPlain?.dotGlyph)}, claude ${JSON.stringify(message?.largeClaude?.dot)} / ${JSON.stringify(message?.largeClaude?.dotGlyph)}`,
+    message?.smallPlain?.dot === '50%' &&
+      message?.smallPlain?.dotGlyph === 'none' &&
+      message?.largeClaude?.dot === '0px' &&
+      message?.largeClaude?.dotGlyph !== 'none',
+  )
+
   return {
     passed: checks.filter((c) => c.holds).length,
     failed: checks.filter((c) => !c.holds).length,
@@ -862,7 +894,7 @@ done({
 const BUBBLE_THEME = `
 const value = arguments[0], done = arguments[arguments.length - 1];
 (async () => {
-  const status = await window.__petBubble.setTheme(value);
+  const status = await window.__petBubble.setMessage(value);
   // The window re-reads on the published change, and that read is a promise this script cannot
   // await: the frame arrives through the store's own listener, the read follows it, and the render
   // follows the read. One turn of the event loop plus a frame is what the three need.
@@ -872,6 +904,7 @@ const value = arguments[0], done = arguments[arguments.length - 1];
   if (!bubble) { done({ ok: false, why: 'the bubble is not in the page' }); return; }
   const root = getComputedStyle(document.documentElement);
   const dot = frame.querySelector('.pet-task__dot');
+  const row = frame.querySelector('.pet-task__row');
   done({
     ok: true,
     write: status,
@@ -883,9 +916,12 @@ const value = arguments[0], done = arguments[arguments.length - 1];
     background: getComputedStyle(bubble).backgroundColor,
     color: getComputedStyle(bubble).color,
     fontSize: getComputedStyle(bubble).fontSize,
+    rowFontSize: row ? getComputedStyle(row).fontSize : null,
     // The dot's two styles differ in shape and in nothing else: a disc is round, upstream's
     // claude style is a glyph on a square box (references/desktop-pet/windows/src/styles.css:149).
+    // The glyph reading is the generated content, so a square box with no glyph in it is not a pass.
     dot: dot ? getComputedStyle(dot).borderRadius : null,
+    dotGlyph: dot ? getComputedStyle(dot, '::before').content : null,
   });
 })().catch((error) => done({ ok: false, why: String((error && error.message) || error) }));
 `
@@ -903,7 +939,7 @@ async function main() {
   })
 
   const wd = new WebDriver(driverPort)
-  const results = { engine: null, page: null, states: {}, hit: {}, advanced: null, root: {}, ball: {}, bubble: null, theme: null }
+  const results = { engine: null, page: null, states: {}, hit: {}, advanced: null, root: {}, ball: {}, bubble: null, theme: null, message: null }
   const watchdog = setTimeout(() => {
     process.stderr.write('\n[webkit-pet] watchdog: nothing finished in 300s\n')
     process.kill(process.pid, 'SIGKILL')
@@ -1073,9 +1109,23 @@ async function main() {
     stage('bubble theme')
     results.theme = {}
     for (const value of ['light', 'dark', 'system']) {
-      const read = await wd.executeAsync(BUBBLE_THEME, [value])
+      const read = await wd.executeAsync(BUBBLE_THEME, [{ theme: value }])
       if (!read?.ok) throw new Error(`the ${value} theme is not measurable: ${read?.why}`)
       results.theme[value] = read
+    }
+
+    // The `message` domain's other two drawn fields, one write each, read off the same page: the
+    // bubble's own text size and the shape of a row's state dot. Both were stored and read by
+    // nobody until they crossed this payload, so what is measured is what a *write* changes.
+    stage('bubble size and dot')
+    results.message = {}
+    for (const [name, write] of [
+      ['smallPlain', { fontSize: 10, dot: 'plain' }],
+      ['largeClaude', { fontSize: 14, dot: 'claude' }],
+    ]) {
+      const read = await wd.executeAsync(BUBBLE_THEME, [write])
+      if (!read?.ok) throw new Error(`the ${name} message write is not measurable: ${read?.why}`)
+      results.message[name] = read
     }
 
     const logs = await wd.logs()

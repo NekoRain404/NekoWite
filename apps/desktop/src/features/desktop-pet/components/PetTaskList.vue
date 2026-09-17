@@ -65,6 +65,7 @@ import {
   type PetMessagePhrases,
   type PetTaskListLabels,
 } from '../services/pet-message-template'
+import type { PetBubbleDot } from '../../../platform/gateways/pet-contracts'
 import PetTaskRow from './PetTaskRow.vue'
 
 const props = withDefaults(
@@ -86,6 +87,8 @@ const props = withDefaults(
     stateLabels?: Partial<Record<PetTaskState, string>>
     /** The chrome's own wording, field by field. */
     labels?: Partial<PetTaskListLabels>
+    /** Which style each row's state dot is drawn in (`message.dot`). `PetTaskRow` owns the drawing. */
+    dot?: PetBubbleDot
   }>(),
   {
     tasks: () => [],
@@ -95,6 +98,7 @@ const props = withDefaults(
     agentLabels: () => ({}),
     stateLabels: () => ({}),
     labels: () => ({}),
+    dot: 'plain',
   },
 )
 
@@ -275,6 +279,7 @@ const surfaceStyle = { maxWidth: `${PET_BUBBLE_MAX_WIDTH}px`, boxSizing: 'border
                 :permission-request-id="task.permissionRequestId"
                 :fields="fieldsOf(task)"
                 :label="rowLabel(task)"
+                :dot="dot"
                 @select="emit('select', task)"
               />
             </li>
@@ -341,7 +346,10 @@ const surfaceStyle = { maxWidth: `${PET_BUBBLE_MAX_WIDTH}px`, boxSizing: 'border
   min-height: 0;
   color: var(--app-text, #fff);
   font-family: var(--app-font, system-ui, sans-serif);
-  font-size: var(--app-body-size, 12px);
+  /* The bubble's own size where it was told one, and the app's body size where it was not — the
+     fallback chain is the same one `PetBubble.vue` writes, and its second half is what this list
+     drew with before `message.fontSize` crossed. */
+  font-size: var(--pet-bubble-size, var(--app-body-size, 12px));
   line-height: 1.5;
   /* The row is the click target, not the sentence inside it: selecting text in a bubble the user
      is trying to click is how a click becomes a drag. */

@@ -3,8 +3,8 @@
  * §5.1's 气泡与消息 — the bubble's appearance, and nothing this build cannot save.
  *
  * The ledger's inventory for this page is eighteen keys (`docs/architecture/desktop-pet-port-ledger.md`
- * §5, the 气泡与消息 rows). Two of them are reachable through this build's settings schema, and
- * this page renders those two and no others:
+ * §5, the 气泡与消息 rows). This page and the layout block below it render every one of them that
+ * this build's schema can act on, and state the one that it cannot:
  *
  *  - `ap_theme` → the theme control. Upstream's control is a three-way segment
  *    (`settings.html:161-165`, default `dark`); this page renders the same three-way choice the
@@ -43,24 +43,27 @@
  *    control below. The same sentence was here, and the same payload closed it: the lines reach the
  *    bubble as its `line` prop, picked from the user's list by `usePetWindow`.
  *
- * The rest are still *stated* rather than drawn, in one paragraph at the foot of the page, and the
- * reasons there are the reasons above:
- *
- *  - `ap_bub_sortkind` (`:382`, sorting by agent kind within a group) and `ap_bub_dot` (`:191`,
- *    the state dot's two styles): stored, and no surface reads either.
+ *  - `ap_font_size` (`settings.html:166-170`) → the font-size control, and `ap_bub_dot` (`:190-194`)
+ *    → the state-dot control on the layout page. Both were **stored and read by nobody**, and both
+ *    are the same fix as the theme's: the field rides the `message` payload and the surface that
+ *    draws with it takes a prop. `message.dot` is filed with the row's own furniture because that
+ *    is where upstream draws it (its Separator / Dot group), not because the value goes that way.
  *  - `ap_bub_hidden` (`:394`, the per-agent visibility list) and `ap_icon_<agentKind>` (`:425`):
  *    both are keyed by the agent registry, and a control for a list of agents has to be generated
  *    「从当前 Agent 注册表」 (§5.2) rather than from upstream's fixed names — which is the registry's
- *    data and not this page's.
- *  - `ap_theme_phrases` (`:441`, a five-word vocabulary): the schema holds it, and there is still no
- *    pool per theme for it to choose between.
- *  - `ap_font_size` is `message.fontSize`, stored and not drawn: no surface reads it.
- *  - `ap_left_click_action` is `message.leftClick`: upstream's own caller for `ap_quick_bubbles`
- *    (`windows/src/main.ts:568-579`, a left-click on the pet shows one of the lines), which this
- *    build's character window does not have — its click is the other half of a drag gesture and
- *    lands nowhere, which is upstream's default too.
+ *    data and not this page's. **These two stay in the schema and are the whole of what the page
+ *    states in words**: the control is a later piece of work and the field is what it will read, so
+ *    this is §5.2's own 「说明原因」 arm rather than a value with no reader.
  *  - `ap_font_family` is read by the bubble window (`main.ts:105`) and upstream ships no control
  *    that writes it, so there is none to port.
+ *
+ * **Three keys left the schema with this change**, and each is named here because the paragraph at
+ * the foot of the page used to list it: `ap_bub_sortkind` (`:382`), `ap_theme_phrases` (`:441`) and
+ * `ap_left_click_action` (`:202`). None of the three could be given a reader *or* a control — see
+ * `pet-contracts/config.ts`'s `message` type, where each removal carries its own reason — and a
+ * field that no surface can ever act on is the schema claiming a feature that is not here. A record
+ * that still carries one is read by `settings::values`, which drops a key it does not know; the
+ * next write never persists it again.
  *
  * The session is the container's (`DesktopPetSettings.vue` creates one per domain), so this page
  * never creates one and never calls `load()`: a page that is not on screen should not read. It
@@ -123,6 +126,19 @@ const THEME_KEYS: { [T in BubbleTheme]: string } = {
 const DURATION_RULE = PET_NUMBER_RULES['message.bubbleSeconds']
 
 /**
+ * The three sizes upstream's own control offers, from the schema's rule rather than from a table
+ * written here.
+ *
+ * Upstream is three buttons — S/M/L at 10, 12 and 14 (`settings.html:166-170`) — and the rule the
+ * store validates a write against is the same span, so the ends are read off it and the middle is
+ * the rule's own fallback, which is the schema's default. A member that stopped being legal here
+ * would stop compiling, because the buttons are built from these three numbers and `setFontSize`
+ * applies the rule at the boundary that submits.
+ */
+const FONT_SIZE_RULE = PET_NUMBER_RULES['message.fontSize']
+const FONT_SIZES = [FONT_SIZE_RULE.min, FONT_SIZE_RULE.fallback, FONT_SIZE_RULE.max] as const
+
+/**
  * The opacity control's rule, and the same one the store will apply (§5.3).
  *
  * The stored value is the *alpha* — upstream's control is a 60–100 percent slider and the value it
@@ -134,6 +150,16 @@ const opacityPercent = computed(() => Math.round(values.value.opacity * 100))
 
 function setTheme(theme: BubbleTheme): void {
   message.edit('theme', theme)
+}
+
+/**
+ * The rule's ends, applied where the write is submitted — the same second half `setDuration` and
+ * `setOpacity` carry, and for the same reason: the button set is built from the rule, but the
+ * submit path is where the write is trusted from.
+ */
+function setFontSize(size: number): void {
+  if (!Number.isFinite(size)) return
+  message.edit('fontSize', Math.min(FONT_SIZE_RULE.max, Math.max(FONT_SIZE_RULE.min, Math.round(size))))
 }
 
 /**
@@ -229,6 +255,22 @@ defineExpose({ settle })
       </div>
       <span class="settings-note">{{ t('settings.pet.bubble.themeNote') }}</span>
 
+      <span class="settings-label">{{ t('settings.pet.bubble.fontSize') }}</span>
+      <div class="view-modes">
+        <button
+          v-for="size in FONT_SIZES"
+          :key="size"
+          class="switch-option"
+          :class="{ 'is-active': values.fontSize === size }"
+          type="button"
+          :data-test="`pet-bubble-font-size-${size}`"
+          @click="setFontSize(size)"
+        >
+          {{ t('settings.pet.bubble.fontSizeOption', { size }) }}
+        </button>
+      </div>
+      <span class="settings-note">{{ t('settings.pet.bubble.fontSizeNote') }}</span>
+
       <label
         class="settings-field"
         for="pet-bubble-opacity"
@@ -295,11 +337,15 @@ defineExpose({ settle })
         >
       </label>
 
+      <!-- The one key on this page with no control, stated rather than drawn (§5.2). It is the
+           per-engine icon list, and the reason it has none is a fact about the page rather than
+           about the value: §5.2 requires the list to be built from the agent registry that is
+           installed right now, and this window has no registry. -->
       <p
         class="settings-note pet-absent"
         data-test="pet-bubble-unwired"
       >
-        {{ t('settings.pet.bubble.dotUnavailable') }}
+        {{ t('settings.pet.bubble.agentsUnavailable') }}
       </p>
 
       <span

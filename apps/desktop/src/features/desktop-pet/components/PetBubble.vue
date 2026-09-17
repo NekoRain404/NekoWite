@@ -29,7 +29,11 @@
  */
 import { computed } from 'vue'
 import { PET_SETTINGS_DEFAULTS } from '../../../platform/gateways/pet-contracts'
-import type { PetTaskProjection, PetTaskState } from '../../../platform/gateways/pet-contracts'
+import type {
+  PetBubbleDot,
+  PetTaskProjection,
+  PetTaskState,
+} from '../../../platform/gateways/pet-contracts'
 import {
   PET_BUBBLE_MAX_WIDTH,
   PET_BUBBLE_MESSAGE_STYLE,
@@ -67,6 +71,17 @@ const props = withDefaults(
      * draw differently from what the store would keep.
      */
     bubbleOpacity?: number
+    /**
+     * The bubble's own text size in px (§5.2's 气泡与消息, upstream `ap_font_size`).
+     *
+     * `message.fontSize` as the host's store read it, or the schema's default when a caller has
+     * none — the same value `petBubbleFontSizeOf` hands `DesktopPetRoot`, and the same rule the
+     * settings page's control is bounded by, so the control cannot produce a size this surface
+     * would draw differently from what the store would keep.
+     */
+    fontSize?: number
+    /** Which style each row's state dot is drawn in (§5.2's 气泡与消息, upstream `ap_bub_dot`). */
+    dot?: PetBubbleDot
   }>(),
   {
     tasks: () => [],
@@ -79,6 +94,8 @@ const props = withDefaults(
     line: null,
     forceList: false,
     bubbleOpacity: PET_SETTINGS_DEFAULTS.message.opacity,
+    fontSize: PET_SETTINGS_DEFAULTS.message.fontSize,
+    dot: PET_SETTINGS_DEFAULTS.message.dot,
   },
 )
 
@@ -137,6 +154,12 @@ const surfaceStyle = computed(
       maxWidth: `${PET_BUBBLE_MAX_WIDTH}px`,
       boxSizing: 'border-box',
       '--pet-bubble-alpha': `${Math.round(props.bubbleOpacity * 100)}%`,
+      // The size travels the same way and for the same reason: upstream sets `--bubble-font-size`
+      // on the document root and everything under it inherits (`windows/src/main.ts:104`), so the
+      // rows inside this surface read the property off their ancestor rather than being handed a
+      // number each. A caller with no setting gets the app's body size, which is what the bubble was
+      // drawn at before the field existed.
+      '--pet-bubble-size': `${props.fontSize}px`,
     }) as const,
 )
 
@@ -170,6 +193,7 @@ const lineStyle = { ...PET_BUBBLE_MESSAGE_STYLE, ...PET_BUBBLE_SCROLL_STYLE } as
       :agent-labels="agentLabels"
       :state-labels="stateLabels"
       :labels="labels"
+      :dot="dot"
       @select="emit('select', $event)"
     />
     <p
@@ -213,7 +237,10 @@ const lineStyle = { ...PET_BUBBLE_MESSAGE_STYLE, ...PET_BUBBLE_SCROLL_STYLE } as
   box-shadow: var(--app-shadow-card, 0 2px 10px rgb(0 0 0 / 35%));
   color: var(--app-text, #fff);
   font-family: var(--app-font, system-ui, sans-serif);
-  font-size: var(--app-body-size, 12px);
+  /* The setting, then the app's body size, then this build's own 12px: the second is what the
+     surface drew with before `message.fontSize` reached it, and it is the fallback for a caller
+     that renders a bubble outside the product. */
+  font-size: var(--pet-bubble-size, var(--app-body-size, 12px));
   line-height: 1.5;
 }
 

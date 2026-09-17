@@ -371,6 +371,8 @@ defineExpose({ lifecycle })
       :now="window_?.now.value ?? 0"
       :force-list="listOpen"
       :bubble-opacity="appearance?.bubbleOpacity"
+      :font-size="bubbleModel.fontSize"
+      :dot="bubbleModel.dot"
       :layout="bubbleModel.layout"
       :line="line"
       @select="selectTask"

@@ -324,6 +324,20 @@ pub struct BubbleMessage {
     pub phrases: Vec<String>,
     /// Whether it says one at all (`message.idle`, upstream's 「Show idle message」).
     pub idle: bool,
+    /// The bubble's own text size in px (`message.fontSize`, upstream `ap_font_size`).
+    ///
+    /// Upstream's `applyBubble` feeds this straight into `--bubble-font-size` on the document root
+    /// (`windows/src/main.ts:88-100`), so it is the *bubble's* size and never the app's body size —
+    /// which is what the page drew with before this crossed, at whatever `--app-body-size` the
+    /// token scale declares.
+    #[serde(rename = "fontSize")]
+    pub font_size: f64,
+    /// Which state-dot style a row draws (`message.dot`): `plain` or `claude`.
+    ///
+    /// A member name crosses for the reason [`BubbleMessage::theme`]'s does — the glyphs and the
+    /// colours are the renderer's — and it rides this payload for the reason the two fields above
+    /// it do: the row that draws the dot is in this window, and the setting had no reader at all.
+    pub dot: String,
     /// Which palette the bubble is drawn from (`message.theme`): `system`, `light` or `dark`.
     ///
     /// A member name crosses and never a colour: the colours are the application's own tokens, and
@@ -349,6 +363,8 @@ impl BubbleMessage {
             tokens: Vec::new(),
             phrases: Vec::new(),
             idle: true,
+            font_size: 12.0,
+            dot: "plain".to_string(),
             theme: "system".to_string(),
         }
     }
@@ -400,6 +416,17 @@ impl BubbleMessage {
                 .value("idle")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(defaults.idle),
+            // Through the field's own rule and not a copy of it: `settings::values` refuses a size
+            // outside upstream's three-button span on the way in, so what reaches the second arm is
+            // a record this build did not write, and the fallback is what the bubble was drawn at
+            // before the field existed.
+            font_size: record
+                .value("fontSize")
+                .and_then(serde_json::Value::as_f64)
+                .filter(|value| value.is_finite() && (10.0..=14.0).contains(value))
+                .map(|value| value.round())
+                .unwrap_or(defaults.font_size),
+            dot: string("dot", &defaults.dot),
             // The store normalized this record on the way out of the file (`settings::values`), so
             // what reaches the second arm is a record this build did not write — and the schema's
             // own default is the theme the bubble was drawn with before the field was carried. The

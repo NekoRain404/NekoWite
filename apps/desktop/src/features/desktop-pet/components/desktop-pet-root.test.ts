@@ -413,10 +413,14 @@ describe('a failure does not outlive what failed', () => {
  * this root draws with it. Before that chain existed the control wrote a value nothing read, which
  * is the defect these two cases are the acceptance for.
  */
-describe('the bubble is drawn at the alpha the host read carried', () => {
+describe('the bubble is drawn at the alpha, the size and the dot the host read carried', () => {
   /** The alpha the surface is actually carrying, which is what the stylesheet mixes. */
   const drawnAlpha = (): string | undefined =>
     document.querySelector<HTMLElement>('.pet-bubble')?.style.getPropertyValue('--pet-bubble-alpha')
+
+  /** The text size the surface is carrying, which is what the rows inside it inherit. */
+  const drawnSize = (): string | undefined =>
+    document.querySelector<HTMLElement>('.pet-bubble')?.style.getPropertyValue('--pet-bubble-size')
 
   /**
    * The `message` domain's own write, as §5.2's 气泡与消息 page makes it.
@@ -451,6 +455,31 @@ describe('the bubble is drawn at the alpha the host read carried', () => {
 
     expect(document.querySelector('.pet-bubble')).not.toBeNull()
     expect(drawnAlpha()).toBe('60%')
+  })
+
+  it('draws the bubble at the size and the dot in the style the same domain holds', async () => {
+    // The other two fields that crossed with this change, and the reason each is asserted on the
+    // *drawn* surface rather than on a prop: `message.fontSize` and `message.dot` were stored and
+    // read by nobody, which is the defect the whole 气泡与消息 payload exists to close.
+    const host = createMemoryPetGateway({ visible: true })
+    await host.updateSettings({
+      domain: 'message',
+      revision: 1,
+      values: { ...PET_SETTINGS_DEFAULTS.message, fontSize: 14, dot: 'claude' },
+    })
+    mount({ gateway: host, connection: host, createImage: imagesFor(() => true), readPixels: twoCells })
+    await flush()
+    host.startRun()
+    await flush()
+    await flush()
+
+    // The size travels as a custom property the surface and the rows inside it read — upstream sets
+    // `--bubble-font-size` on the document root for exactly this reason (`main.ts:104`), and a
+    // component that set `font-size` on itself would leave the rows at the app's body size.
+    expect(drawnSize()).toBe('14px')
+    // And the row draws the style the setting names. `data-dot` rather than a class: the class is
+    // the drawing's business, the attribute is what the setting is about.
+    expect(document.querySelector('.pet-task__dot')?.getAttribute('data-dot')).toBe('claude')
   })
 
   it('re-reads it when another window writes the message domain', async () => {

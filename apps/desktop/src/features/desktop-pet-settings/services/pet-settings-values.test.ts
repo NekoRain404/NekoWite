@@ -270,8 +270,6 @@ describe('the structured kind: unknown members', () => {
       ['message', 'filter', ['all', 'attention', 'active', 'working']],
       ['message', 'separator', ['dot', 'arrow', 'bar', 'space']],
       ['message', 'dot', ['plain', 'claude']],
-      ['message', 'phraseTheme', ['chef', 'engineer', 'wizard', 'explorer', 'scientist']],
-      ['message', 'leftClick', ['none', 'self', 'all']],
     ]
     for (const [domain, field, allowed] of members) {
       for (const member of allowed) {

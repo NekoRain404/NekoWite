@@ -95,8 +95,6 @@ const PET_FIELD_MEMBERS: Readonly<Record<`${PetSettingsDomain}.${string}`, reado
   'message.filter': ['all', 'attention', 'active', 'working'],
   'message.separator': ['dot', 'arrow', 'bar', 'space'],
   'message.dot': ['plain', 'claude'],
-  'message.phraseTheme': ['chef', 'engineer', 'wizard', 'explorer', 'scientist'],
-  'message.leftClick': ['none', 'self', 'all'],
 }
 
 /**

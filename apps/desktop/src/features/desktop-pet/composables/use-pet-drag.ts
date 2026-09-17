@@ -34,12 +34,15 @@
  *     that case is reachable here for the same reason: `hitTest` answers false when there is no
  *     sprite rect to test against. So the *rect* is what refuses a press, never the miss — a
  *     drawn sprite that was missed is refused, a sprite that has not drawn yet is not.
- *   - **The click lands nowhere — and that is upstream's own default, not a gap left here.**
- *     Upstream's `onPetClick` (`:570-580`) reads `ap_left_click_action` and returns immediately
- *     when it is `none`, which is what that key reads as when it has never been written — and
- *     `none` is this build's schema default too (`PET_SETTINGS_DEFAULTS.message.leftClick`). So a
- *     fresh upstream install and this build do the same thing with a press that did not wander:
- *     nothing. What is left is the gesture's other half read as the refusal it is — a press that
+ *   - **The click lands nowhere, and that is now a decision rather than a schema default.**
+ *     Upstream's `onPetClick` (`:570-580`) reads `ap_left_click_action` and does one of three
+ *     things with a press that did not wander; `none` — its default, and the one a fresh install
+ *     carries — does nothing. **This build has no such key**: `message.leftClick` was removed from
+ *     the schema, because the three actions it names have no caller here (the first needs a quick
+ *     bubble the window shows as its idle line instead, and the other two need more than one
+ *     character). So a press reaches `onClick` below and stops, which is upstream's own default
+ *     behaviour and no longer something a stored value could ask to change. What is left is the
+ *     gesture's other half read as the refusal it is — a press that
  *     does not wander is *not* a drag, which is the whole reason the arithmetic exists. It is not
  *     an emit either: this composable's only consumer is the root, and an event nobody hears is a
  *     promise of a bubble that this build has not designed (`desktop-pet-port-ledger.md:114`).

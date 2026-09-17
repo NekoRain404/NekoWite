@@ -21,7 +21,7 @@ import {
   petMotionOf,
   readPetNumber,
 } from '../../../platform/gateways/pet-contracts'
-import type { PetAppearance, PetMotion } from '../../../platform/gateways/pet-contracts'
+import type { PetAppearance, PetBubbleDot, PetMotion } from '../../../platform/gateways/pet-contracts'
 import type { AnimationConfig } from '../rendering/animation-bindings'
 import type { PetBubbleTheme } from './pet-bubble-theme'
 import { petBubbleThemeOf } from './pet-bubble-theme'
@@ -110,6 +110,26 @@ export interface PetBubbleView {
   lines: readonly string[]
   /** Whether the pet says anything at all when there is no task to speak of (`message.idle`). */
   idle: boolean
+  /**
+   * The bubble's own text size in px (`message.fontSize`).
+   *
+   * Already inside its rule, for the reason {@link PetAppearanceView.bubbleOpacity} is: it is read
+   * through `PET_NUMBER_RULES['message.fontSize']`, which is the same rule the settings control is
+   * bounded by and the store validates a write against (§5.3), so a window cannot draw text at a
+   * size the store would have refused. The rows inside the bubble follow it, because upstream's
+   * `--bubble-font-size` is set on the document root and everything under it inherits
+   * (`references/desktop-pet/windows/src/main.ts:104`).
+   */
+  fontSize: number
+  /**
+   * Which style a row's state dot is drawn in (`message.dot`): upstream's `plain` disc or its
+   * `claude` asterisk.
+   *
+   * The *member* and not a drawing: which glyph a row paints is `PetTaskRow.vue`'s, and the colours
+   * it paints it in are the state tokens' — the setting chooses between two shapes and never
+   * between two colours, which is what keeps a state from being readable only by its tint.
+   */
+  dot: PetBubbleDot
   /**
    * Which palette the bubble is drawn from (`message.theme`).
    *
@@ -213,6 +233,30 @@ export function petBubbleOpacityOf(read: { bubbleOpacity?: unknown }): number {
 }
 
 /**
+ * The bubble's own text size a read carries, or the schema's default where it carries none.
+ *
+ * `petBubbleOpacityOf`'s arrangement one field over, and for its reason: the rule is
+ * `PET_NUMBER_RULES['message.fontSize']` — upstream's three buttons are 10/12/14 and the rule keeps
+ * that span — so the value a window draws text at is one the store would accept. An absent field
+ * (a double, or a build from before the field existed) and a value outside the rule both take the
+ * rule's fallback, which is the size the bubble was drawn at before the field existed.
+ */
+export function petBubbleFontSizeOf(read: { fontSize?: unknown } | Record<string, unknown>): number {
+  return readPetNumber(read.fontSize, PET_NUMBER_RULES['message.fontSize'])
+}
+
+/**
+ * The state-dot style a read carries, or the schema's default where it carries none.
+ *
+ * A member name and nothing else, for the reason {@link petBubbleThemeOf} gives one field over: the
+ * members are the schema's, and a value that is not one of them is a word this build cannot draw —
+ * which is the schema's default rather than a shape invented from a string nothing recognises.
+ */
+export function petBubbleDotOf(read: { dot?: unknown } | Record<string, unknown>): PetBubbleDot {
+  return read.dot === 'claude' ? 'claude' : PET_SETTINGS_DEFAULTS.message.dot
+}
+
+/**
  * The bubble's content model a read carries, or the renderer's own defaults where it carries none.
  *
  * The layout is handed over **unread** — `PetBubble` is where `resolvePetBubbleLayout` runs, and it
@@ -244,6 +288,8 @@ export function petBubbleViewOf(read: { bubble?: unknown }): PetBubbleView {
     // A switch, so anything that is not `false` is on — the same reading the schema's default
     // takes, where `idle` is `true` and only an explicit `false` turns it off.
     idle: fields.idle !== false,
+    fontSize: petBubbleFontSizeOf(fields),
+    dot: petBubbleDotOf(fields),
     theme: petBubbleThemeOf(fields),
   }
 }
@@ -276,6 +322,8 @@ export const PET_BUBBLE_VIEW_DEFAULTS: PetBubbleView = {
   layout: {},
   lines: [],
   idle: true,
+  fontSize: PET_SETTINGS_DEFAULTS.message.fontSize,
+  dot: PET_SETTINGS_DEFAULTS.message.dot,
   theme: 'system',
 }
 

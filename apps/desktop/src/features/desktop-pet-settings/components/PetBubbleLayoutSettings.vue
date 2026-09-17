@@ -20,6 +20,7 @@ import { computed } from 'vue'
 import { t } from '../../../i18n'
 import { PET_NUMBER_RULES } from '../../../platform/gateways/pet-contracts'
 import type {
+  PetBubbleDot,
   PetBubbleFilter,
   PetBubbleGrouping,
   PetBubbleMode,
@@ -71,6 +72,21 @@ const FILTER_KEYS: { [F in PetBubbleFilter]: string } = {
   working: 'settings.pet.bubble.filterWorking',
 }
 const SEPARATORS: readonly PetBubbleSeparator[] = ['dot', 'arrow', 'bar', 'space']
+/**
+ * The two state-dot styles (upstream `ap_bub_dot`, `settings.html:190-194`).
+ *
+ * On *this* page because that is where upstream draws it: its own two groups are Theme / Font size /
+ * Opacity / Idle (the appearance, which is `PetBubbleSettings.vue`) and Separator / Dot (the row's
+ * own furniture, which is here). The value does not travel this page's way — it is a `PetBubble`
+ * prop rather than a layout field, because the layout is what a row *is* and the dot's shape is how
+ * it is painted — but where a control lives is a question about the user's reading, not about the
+ * wire.
+ */
+const DOTS: readonly PetBubbleDot[] = ['plain', 'claude']
+const DOT_KEYS: { [D in PetBubbleDot]: string } = {
+  plain: 'settings.pet.bubble.dotPlain',
+  claude: 'settings.pet.bubble.dotClaude',
+}
 const SEPARATOR_KEYS: { [S in PetBubbleSeparator]: string } = {
   dot: 'settings.pet.bubble.separatorDot',
   arrow: 'settings.pet.bubble.separatorArrow',
@@ -227,6 +243,22 @@ function setMaxRows(raw: number): void {
         {{ t(SEPARATOR_KEYS[separator]) }}
       </button>
     </div>
+
+    <span class="settings-label">{{ t('settings.pet.bubble.dot') }}</span>
+    <div class="view-modes">
+      <button
+        v-for="dot in DOTS"
+        :key="dot"
+        class="switch-option"
+        :class="{ 'is-active': values.dot === dot }"
+        type="button"
+        :data-test="`pet-bubble-dot-${dot}`"
+        @click="message.edit('dot', dot)"
+      >
+        {{ t(DOT_KEYS[dot]) }}
+      </button>
+    </div>
+    <span class="settings-note">{{ t('settings.pet.bubble.dotNote') }}</span>
 
     <span class="settings-label">{{ t('settings.pet.bubble.fields') }}</span>
     <div class="pet-bubble__tokens">

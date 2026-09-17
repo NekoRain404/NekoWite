@@ -336,10 +336,6 @@ const MESSAGE: &[Field] = &[
             default: "by-agent",
         },
     },
-    Field {
-        name: "sortByKind",
-        kind: Kind::Bool(false),
-    },
     // These name what the filter does to a row's alert, so a state added to the contract's union
     // does not leave a filter that quietly means something else.
     Field {
@@ -366,23 +362,10 @@ const MESSAGE: &[Field] = &[
             default: "plain",
         },
     },
-    Field {
-        name: "phraseTheme",
-        kind: Kind::Member {
-            members: &["chef", "engineer", "wizard", "explorer", "scientist"],
-            default: "chef",
-        },
-    },
-    Field {
-        name: "leftClick",
-        kind: Kind::Member {
-            members: &["none", "self", "all"],
-            default: "none",
-        },
-    },
     // §5.2 requires the list to be built 「从当前 Agent 注册表」 rather than from upstream's fixed
-    // names; what is stored is the *choice*, so an id stays meaningful after the engine it names is
-    // installed again — which is why an unknown id is kept and not repaired away.
+    // names, and the settings dialog has no registry to read — so this is the one field of the
+    // domain with no control, and the one the page states in words. It stays because the control is
+    // a later piece of work and this is what it will write.
     Field {
         name: "hiddenAgents",
         kind: Kind::List {

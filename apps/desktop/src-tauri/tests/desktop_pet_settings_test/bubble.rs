@@ -415,6 +415,73 @@ fn the_bubble_theme_a_window_is_handed_is_the_member_the_store_holds() {
     }
 }
 
+/// The bubble's text size and its dot style, the two fields that crossed with the theme.
+///
+/// Both were stored, both had (or shared) a control on 气泡与消息, and neither reached the window
+/// that draws them: `message.fontSize` is upstream's `ap_font_size`, whose value goes into
+/// `--bubble-font-size` (`windows/src/main.ts:88-100`), and `message.dot` is the state dot's style.
+#[test]
+fn the_bubble_size_and_dot_a_window_is_handed_are_the_ones_the_store_holds() {
+    let (store, _data) = support::store("bubble-size-and-dot");
+
+    // Nothing written: the schema's own defaults, off the schema's own table.
+    let declared = defaults(PetSettingsDomain::Message);
+    let fresh = window_read(&store);
+    let bubble = bubble_of(&fresh);
+    assert_eq!(bubble.font_size, declared["fontSize"].as_f64().unwrap());
+    assert_eq!(bubble.dot, declared["dot"].as_str().unwrap());
+
+    // The write the page makes: the largest size its three buttons offer, and the second dot style.
+    let store_read = store.read(PetSettingsDomain::Message);
+    let revision = store_read.record().expect("a message record").revision;
+    let outcome = store.apply(&message_write(
+        &store,
+        revision as f64,
+        &[("fontSize", json!(14)), ("dot", json!("claude"))],
+    ));
+    assert!(
+        matches!(outcome, PetSettingsUpdate::Applied { .. }),
+        "the write the settings page makes: {outcome:?}"
+    );
+    let after = window_read(&store);
+    let bubble = bubble_of(&after);
+    assert_eq!(bubble.font_size, 14.0);
+    assert_eq!(bubble.dot, "claude");
+}
+
+/// A size a hand-edited record carries that the rule would refuse takes the fallback, and the other
+/// field of the domain is kept.
+///
+/// The rule is the schema's (`settings/fields.rs`'s `MESSAGE`, 10–14 whole numbers), and this is the
+/// arm a file no build wrote reaches — the same field-by-field reading the layout fields get.
+#[test]
+fn a_bubble_size_outside_the_rule_is_repaired_without_taking_the_dot_with_it() {
+    let (store, _data) = support::store("bubble-size-out-of-rule");
+    let mut planted = submitted(PetSettingsDomain::Message, &[]);
+    planted["fontSize"] = json!(40);
+    planted["dot"] = json!("claude");
+    fs::create_dir_all(store.root()).expect("the records directory");
+    fs::write(
+        store.path_of(PetSettingsDomain::Message),
+        json!({
+            "domain": "message",
+            "schemaVersion": PET_SETTINGS_SCHEMA_VERSION,
+            "revision": 2,
+            "values": planted,
+        })
+        .to_string(),
+    )
+    .expect("a hand-edited record");
+
+    let read = window_read(&store);
+    let bubble = bubble_of(&read);
+    assert_eq!(
+        bubble.font_size, 12.0,
+        "the schema's own default, not the stored 40"
+    );
+    assert_eq!(bubble.dot, "claude", "and the field beside it is kept");
+}
+
 #[test]
 fn a_message_record_from_a_newer_build_leaves_the_bubble_where_this_build_built_it() {
     let (store, _data) = support::store("bubble-domain-newer");

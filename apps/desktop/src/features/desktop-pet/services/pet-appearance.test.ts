@@ -21,6 +21,8 @@ import { describe, expect, it } from 'vitest'
 import {
   petAppearanceView,
   petBallSizeOf,
+  petBubbleDotOf,
+  petBubbleFontSizeOf,
   petBubbleOpacityOf,
   petBubbleViewOf,
 } from './pet-appearance'
@@ -238,6 +240,35 @@ describe('the bubble’s content model and layout, which the host reads for this
     expect(Object.keys(petBubbleViewOf({ bubble: { nonsense: 1 } }).layout)).toEqual([])
   })
 
+  it('carries the bubble’s text size, through the rule the control and the store share', () => {
+    // The rule and not a bound written here (§5.3): `PET_NUMBER_RULES['message.fontSize']` is what
+    // the settings page's three buttons are built from and what the store validates a write with,
+    // so a size this reader accepted is one the store would have kept.
+    const rule = PET_NUMBER_RULES['message.fontSize']
+    expect(petBubbleFontSizeOf({ fontSize: 14 })).toBe(14)
+    expect(petBubbleFontSizeOf({ fontSize: rule.min })).toBe(rule.min)
+    expect(petBubbleFontSizeOf({ fontSize: rule.max })).toBe(rule.max)
+    // Absent (a double, or a build from before the field existed) and unusable both take the rule's
+    // fallback, which is the size the bubble was drawn at before the field crossed.
+    expect(petBubbleFontSizeOf({})).toBe(rule.fallback)
+    expect(petBubbleFontSizeOf({ fontSize: rule.max + 1 })).toBe(rule.fallback)
+    expect(petBubbleFontSizeOf({ fontSize: '14' })).toBe(rule.fallback)
+    expect(petBubbleFontSizeOf({ fontSize: Number.NaN })).toBe(rule.fallback)
+    // The rule is whole numbers, so a fraction is the same as a value out of range.
+    expect(petBubbleFontSizeOf({ fontSize: 12.5 })).toBe(rule.fallback)
+  })
+
+  it('carries the state-dot style, and reads anything but the member as the schema’s default', () => {
+    expect(petBubbleDotOf({ dot: 'plain' })).toBe('plain')
+    expect(petBubbleDotOf({ dot: 'claude' })).toBe('claude')
+    // Absent, and a word that is not a member: both are `plain`, which is the disc this build drew
+    // before the setting had a reader. Reading an unrecognised string as `claude` would invent a
+    // shape, and the same default is what the schema declares.
+    expect(petBubbleDotOf({})).toBe(PET_SETTINGS_DEFAULTS.message.dot)
+    expect(petBubbleDotOf({ dot: 'asterisk' })).toBe(PET_SETTINGS_DEFAULTS.message.dot)
+    expect(petBubbleDotOf({ dot: 1 })).toBe(PET_SETTINGS_DEFAULTS.message.dot)
+  })
+
   it('carries the bubble’s theme, and reads a missing or unknown one as the schema’s default', () => {
     // The member crosses unread in the sense that matters: `petBubbleThemeOf` is the one place it
     // is judged, and it is judged against the schema's own three members — see
@@ -251,5 +282,15 @@ describe('the bubble’s content model and layout, which the host reads for this
     expect(petBubbleViewOf({}).theme).toBe('system')
     expect(petBubbleViewOf({ bubble: {} }).theme).toBe('system')
     expect(petBubbleViewOf({ bubble: { theme: 'solarized' } }).theme).toBe('system')
+  })
+
+  it('carries the text size and the dot style the same way, defaults included', () => {
+    const written = petBubbleViewOf({ bubble: { fontSize: 14, dot: 'claude' } })
+    expect(written.fontSize).toBe(14)
+    expect(written.dot).toBe('claude')
+    // And an answer with no `bubble` at all takes the renderer's own defaults, which is what the
+    // page drew with before either field crossed.
+    expect(petBubbleViewOf({}).fontSize).toBe(PET_SETTINGS_DEFAULTS.message.fontSize)
+    expect(petBubbleViewOf({}).dot).toBe(PET_SETTINGS_DEFAULTS.message.dot)
   })
 })

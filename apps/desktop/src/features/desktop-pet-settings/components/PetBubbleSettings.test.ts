@@ -14,7 +14,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, type App as VueApp } from 'vue'
 import { t } from '../../../i18n'
 import { createMemoryPetGateway, type MemoryPetGateway } from '../../../platform/gateways/memory-pet'
-import { PET_SETTINGS_DEFAULTS, PET_SETTINGS_SCHEMA_VERSION } from '../../../platform/gateways/pet-contracts'
+import {
+  PET_NUMBER_RULES,
+  PET_SETTINGS_DEFAULTS,
+  PET_SETTINGS_SCHEMA_VERSION,
+} from '../../../platform/gateways/pet-contracts'
 import type { PetSettingsDomain, PetSettingsWrite } from '../../../platform/gateways/pet-contracts'
 import DesktopPetSettings from './DesktopPetSettings.vue'
 import PetBubbleSettings from './PetBubbleSettings.vue'
@@ -139,12 +143,13 @@ async function seed(
 }
 
 describe('the bubble theme', () => {
-  it('starts on «follow the app», which is this schema’s default and not upstream’s «dark»', async () => {
+  it('starts on «system», which is this schema’s default and not upstream’s «dark»', async () => {
     mount(createMemoryPetGateway())
     await flush()
 
-    // §5.2 「默认跟随宿主主题」: the pet follows the app unless the user overrides it here, so the
-    // third option names the app rather than the system NekoWite itself may already be following.
+    // §5.2 「默认跟随宿主主题」: the pet takes the palette of the page it is drawn in unless the user
+    // overrides it here — the machine's preference on the desktop, the app's in the preview above —
+    // so the third option is named after neither and says what it is.
     expect(activeTheme()).toBe('system')
     expect(text('pet-bubble-status')).toBe('')
   })
@@ -165,6 +170,63 @@ describe('the bubble theme', () => {
     mount(gateway)
     await flush()
     expect(activeTheme()).toBe('dark')
+  })
+})
+
+/**
+ * The bubble's own text size and the state dot's style.
+ *
+ * Both were stored and read by nobody until they crossed the appearance read (`pet-appearance.ts` →
+ * `usePetWindow` → `DesktopPetRoot.vue` → `PetBubble.vue`), so what is asserted here is the half
+ * this page owns: the control writes the value, and a reopened dialog reads it back. The other half
+ * — that the window draws it — is `desktop-pet-root.test.ts`, the Chromium case in
+ * `e2e/desktop-pet-bubble.spec.ts` and the WebKitGTK probe.
+ */
+describe('the bubble’s text size and dot style', () => {
+  it('offers upstream’s three sizes, drawn from the schema’s own rule', async () => {
+    mount(createMemoryPetGateway())
+    await flush()
+
+    const rule = PET_NUMBER_RULES['message.fontSize']
+    for (const size of [rule.min, rule.fallback, rule.max]) {
+      expect(document.querySelector(`[data-test="pet-bubble-font-size-${size}"]`)).not.toBeNull()
+    }
+    // The schema's default is the one marked, not one this file picked.
+    expect(
+      document
+        .querySelector(`[data-test="pet-bubble-font-size-${PET_SETTINGS_DEFAULTS.message.fontSize}"]`)
+        ?.classList.contains('is-active'),
+    ).toBe(true)
+  })
+
+  it('writes the size and the dot style it shows, and reads both back on reopen', async () => {
+    const gateway = createMemoryPetGateway()
+    mount(gateway)
+    await flush()
+
+    const largest = PET_NUMBER_RULES['message.fontSize'].max
+    press(`pet-bubble-font-size-${largest}`)
+    press('pet-bubble-dot-claude')
+    await flush(DEBOUNCE_PLUS)
+
+    const written = await storedValues(gateway, 'message')
+    expect(written.fontSize).toBe(largest)
+    expect(written.dot).toBe('claude')
+    expect(text('pet-bubble-status')).toBe(t('settings.pet.save.saved'))
+
+    unmountAll()
+    mount(gateway)
+    await flush()
+    expect(
+      document
+        .querySelector(`[data-test="pet-bubble-font-size-${largest}"]`)
+        ?.classList.contains('is-active'),
+    ).toBe(true)
+    expect(
+      document
+        .querySelector('[data-test="pet-bubble-dot-claude"]')
+        ?.classList.contains('is-active'),
+    ).toBe(true)
   })
 })
 
@@ -385,10 +447,11 @@ describe('the row layout and the phrases, which used to be a paragraph', () => {
     mount(createMemoryPetGateway())
     await flush()
 
-    // §5.2 「不可用选项要说明原因，不显示可点击但无效果的控件」: the settings this build still has no
-    // surface for are one sentence, asserted as catalogue text so a page that lost its words fails
-    // here rather than rendering a raw key.
-    expect(text('pet-bubble-unwired')).toBe(t('settings.pet.bubble.dotUnavailable'))
+    // §5.2 「不可用选项要说明原因，不显示可点击但无效果的控件」: the one key left with no surface is
+    // the per-engine icon list, which needs the agent registry this window does not have. It is
+    // asserted as catalogue text, so a page that lost its words fails here rather than rendering a
+    // raw key.
+    expect(text('pet-bubble-unwired')).toBe(t('settings.pet.bubble.agentsUnavailable'))
   })
 
   it('renders no message key it did not get from the catalogue', async () => {

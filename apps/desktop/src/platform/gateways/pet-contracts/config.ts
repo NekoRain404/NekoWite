@@ -79,22 +79,6 @@ export type PetBubbleSeparator = 'dot' | 'arrow' | 'bar' | 'space'
 export type PetBubbleDot = 'plain' | 'claude'
 
 /**
- * The wording the pet reaches for while something is happening (upstream
- * `ap_theme_phrases`, `settings.html:441`). A vocabulary and not a phrase: the lines
- * themselves are the phrase pools' own (`pet-message-template.ts`), and §5.2 keeps a
- * written line from claiming a state the row is not in.
- */
-export type PetPhraseTheme = 'chef' | 'engineer' | 'wizard' | 'explorer' | 'scientist'
-
-/**
- * What a left-click on the pet does (upstream `ap_left_click_action`, `settings.html:202`).
- *
- * `self` and `all` are upstream's 「This pet」 and 「All pets」; the distinction is a
- * multi-character one, so both are representable before the second character lands.
- */
-export type PetLeftClick = 'none' | 'self' | 'all'
-
-/**
  * The sprite-sheet row the pet plays for a mood, keyed by mood (upstream `ap_bind_<mood>`,
  * `settings.ts:1197`).
  *
@@ -275,20 +259,18 @@ export interface PetSettingsValues {
     /** How many rows the surface shows at once (upstream `ap_bub_max`, `settings.html:380`). */
     layoutMaxRows: number
     grouping: PetBubbleGrouping
-    /** Whether the rows are ordered by their agent (upstream `ap_bub_sortkind`). */
-    sortByKind: boolean
     filter: PetBubbleFilter
     separator: PetBubbleSeparator
     dot: PetBubbleDot
-    phraseTheme: PetPhraseTheme
-    leftClick: PetLeftClick
     /**
      * The agents whose rows are not drawn (upstream `ap_bub_hidden`, `settings.ts:962`).
      *
-     * §5.2 requires the list to be built 「从当前 Agent 注册表」 rather than from upstream's
-     * fixed names; what is stored is the *choice*, so an id stays meaningful after the
-     * engine it names is installed again — which is why an unknown id is kept and not
-     * repaired away.
+     * **Kept although no control writes it**, and the one key on 气泡与消息 whose absence is *stated*
+     * rather than resolved either way: §5.2 requires the list to be built 「从当前 Agent 注册表」
+     * rather than from upstream's fixed names, and the settings dialog has no registry to read —
+     * so the control is a later piece of work and this field is what it will read. A stored choice
+     * stays meaningful after the engine it names is installed again, which is why an unknown id is
+     * kept and not repaired away.
      */
     hiddenAgents: readonly string[]
     /** The row's fields and their order. Empty means the renderer's own preset (§5.2's 预设). */
@@ -356,12 +338,9 @@ export const PET_SETTINGS_DEFAULTS: { [D in PetSettingsDomain]: PetSettingsValue
     layoutMode: 'list',
     layoutMaxRows: 5,
     grouping: 'by-agent',
-    sortByKind: false,
     filter: 'all',
     separator: 'dot',
     dot: 'plain',
-    phraseTheme: 'chef',
-    leftClick: 'none',
     hiddenAgents: [],
     tokens: [],
     quickBubbles: [],

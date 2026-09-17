@@ -126,6 +126,24 @@ interface ThemeMeasurement {
   background: string
 }
 
+/**
+ * The bubble's own two drawn settings: the text size and the state dot's shape.
+ *
+ * `rowFontSize` is read as well as the surface's, because the size has to reach the *rows* and not
+ * only the box around them — upstream writes it to the document root so everything inherits
+ * (`references/desktop-pet/windows/src/main.ts:104`), and a component that set `font-size` on
+ * itself alone would leave the rows at the app's body size. The dot's colour is deliberately not
+ * read: both styles use the same state colours, and the shape is what the setting is about.
+ */
+interface ChromeMeasurement {
+  fontSize: string
+  rowFontSize: string | null
+  /** The dot's corner radius: a disc is `50%`, upstream's glyph is a square box. */
+  dot: string | null
+  /** The glyph's generated content: `none` on the disc, a character on the other style. */
+  dotGlyph: string | null
+}
+
 declare global {
   interface Window {
     /** What the page-side mount exposes. One mount at a time, like the pet window itself. */
@@ -138,6 +156,8 @@ declare global {
       setMessage(values: Record<string, unknown>): Promise<void>
       /** What the page resolved for the theme, after whatever write the case made. */
       theme(): ThemeMeasurement
+      /** The bubble's text size and dot shape, after whatever write the case made. */
+      chrome(): ChromeMeasurement
       unmount(): void
     }
   }
@@ -265,6 +285,18 @@ async function mountAt(page: Page, options: MountOptions): Promise<void> {
             colorScheme: resolved.colorScheme,
             elevated: resolved.getPropertyValue('--app-elevated').trim(),
             background: getComputedStyle(surface).backgroundColor,
+          }
+        },
+        chrome: () => {
+          const surface = host.querySelector<HTMLElement>('.pet-bubble')
+          const row = host.querySelector<HTMLElement>('.pet-task__row')
+          const dot = host.querySelector<HTMLElement>('.pet-task__dot')
+          if (!surface) throw new Error('the pet window drew no bubble to measure')
+          return {
+            fontSize: getComputedStyle(surface).fontSize,
+            rowFontSize: row ? getComputedStyle(row).fontSize : null,
+            dot: dot ? getComputedStyle(dot).borderRadius : null,
+            dotGlyph: dot ? getComputedStyle(dot, '::before').content : null,
           }
         },
         setMessage: async (values) => {
@@ -644,3 +676,38 @@ function luminance(hex: string): number {
   const value = parseInt(match[1], 16)
   return 0.2126 * ((value >> 16) & 255) + 0.7152 * ((value >> 8) & 255) + 0.0722 * (value & 255)
 }
+
+/**
+ * The other two fields 气泡与消息 stored and nothing drew: the bubble's text size and the style of
+ * the row's state dot.
+ *
+ * Both are the same shape of defect as the theme and both are fixed the same way — the field rides
+ * the `message` payload on the appearance read, the surface takes it, and the case writes each one
+ * through the host while the pet window is already up, which is the path a settings save takes.
+ */
+test('the text size and the dot style the user picks are what the bubble draws', async ({ page }) => {
+  await page.goto('/desktop-pet.html')
+  await mountAt(page, { size: DEFAULT_SIZE, runs: ['chrome-run'], message: { fontSize: 10, dot: 'plain' } })
+
+  const plain = await page.evaluate(() => window.__petBubble?.chrome())
+  if (!plain) throw new Error('the pet window is not mounted')
+  console.log(`[pet-bubble] chrome plain: ${JSON.stringify(plain)}`)
+  // The size reaches the surface *and* the rows inside it, which is the half a component that set
+  // `font-size` on itself would get wrong.
+  expect(plain.fontSize).toBe('10px')
+  expect(plain.rowFontSize).toBe('10px')
+  // And the dot is a disc: round, with nothing generated into it.
+  expect(plain.dot).toBe('50%')
+  expect(plain.dotGlyph).toBe('none')
+
+  await page.evaluate(() => window.__petBubble?.setMessage({ fontSize: 14, dot: 'claude' }))
+  const claude = await page.evaluate(() => window.__petBubble?.chrome())
+  if (!claude) throw new Error('the pet window is not mounted')
+  console.log(`[pet-bubble] chrome claude: ${JSON.stringify(claude)}`)
+  expect(claude.fontSize).toBe('14px')
+  expect(claude.rowFontSize).toBe('14px')
+  // Upstream's `claude` dot is a glyph on a square box (`windows/src/styles.css:149-158`), so both
+  // halves of the change are read: the disc's `border-radius` is gone and something is drawn.
+  expect(claude.dot).toBe('0px')
+  expect(claude.dotGlyph).not.toBe('none')
+})

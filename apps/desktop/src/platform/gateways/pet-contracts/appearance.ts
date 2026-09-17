@@ -125,6 +125,18 @@ export interface PetBubbleRead {
   /** `message.idle` — whether the pet says anything when there is no task to speak of. */
   idle?: boolean
   /**
+   * `message.fontSize` — the bubble's own text size in px (upstream `ap_font_size`).
+   *
+   * A number, and read through the field's own rule by whoever draws it
+   * (`features/desktop-pet/services/pet-appearance.ts`'s `petBubbleFontSizeOf`, which uses
+   * `PET_NUMBER_RULES['message.fontSize']`), so an answer from something that is not this host —
+   * or a build from before the field existed — is the schema's default rather than a size nobody
+   * chose.
+   */
+  fontSize?: number
+  /** `message.dot` — which state-dot style a row draws (`plain`, `claude`). */
+  dot?: string
+  /**
    * `message.theme` — which palette the bubble is drawn from (`system`, `light` or `dark`).
    *
    * A member name rather than a colour, and the whole reason the setting can be honoured at all:

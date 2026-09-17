@@ -167,6 +167,8 @@ export function createPetCharacterDouble(
       tokens: values.tokens,
       phrases: values.quickBubbles,
       idle: values.idle,
+      fontSize: values.fontSize,
+      dot: values.dot,
       theme: values.theme,
     }
   }
