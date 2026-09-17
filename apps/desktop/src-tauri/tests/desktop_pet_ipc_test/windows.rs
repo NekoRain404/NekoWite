@@ -115,6 +115,83 @@ fn every_window_is_asked_for_with_the_same_presentation() {
     assert!(!PET_WINDOW_STYLE.shadow);
 }
 
+/// The one flag of that presentation that is a setting, and the rule that makes it one.
+///
+/// `view.alwaysOnTop` is upstream's *absence* as much as its value — every builder site upstream has
+/// hardcodes `true` and its page has no row for it — so what is asserted here is the host's own
+/// rule: the windows are opened with the style it holds, an already-open window is asked to change
+/// when it moves, and the compositor's refusal is reported rather than swallowed. The settings that
+/// drive it are `window_style.rs`'s; this is the half that has nothing to do with a store.
+#[test]
+fn a_window_is_opened_with_the_style_the_host_holds() {
+    let (mut host, surfaces) = with_host();
+    host.open("cat").expect("the pet opens");
+    // The default is upstream's, so the change below is the only thing that moves the flag.
+    assert!(surfaces.last_character_open().style.always_on_top);
+
+    host.set_always_on_top(false)
+        .expect("the fake refuses nothing");
+
+    // Every open window was asked — the character's and the ball's, which is one of the pet's
+    // windows (§5.1's 悬浮球) rather than a decoration beside them.
+    let changes = surfaces.on_top_changes();
+    assert_eq!(changes.len(), host.instances().len() + 1, "{changes:?}");
+    assert!(
+        changes.iter().any(|(label, _)| label == BALL_LABEL),
+        "{changes:?}"
+    );
+    assert!(changes.iter().all(|(_, on_top)| !on_top), "{changes:?}");
+
+    // …and the next one opens with it rather than being restyled after the fact.
+    host.open("dog").expect("within the cap");
+    let opened = surfaces.last_character_open();
+    assert!(!opened.style.always_on_top);
+    // The other six flags do not move with it: this is one setting about one row of §7.2.
+    assert_eq!(
+        opened.style,
+        crate::desktop_pet::window_host::WindowStyle {
+            always_on_top: false,
+            ..PET_WINDOW_STYLE
+        }
+    );
+}
+
+#[test]
+fn a_window_the_compositor_will_not_restyle_is_reported_and_the_others_still_asked() {
+    let (mut host, surfaces) = with_host();
+    host.open("cat").expect("the pet opens");
+    let character = host.instances()[0].label.as_str().to_string();
+    surfaces
+        .state()
+        .refuse_always_on_top
+        .push(character.clone());
+
+    let refusal = host
+        .set_always_on_top(false)
+        .expect_err("the compositor refused the character window");
+    // The action that failed, and the windowing system's own words. **Not the label**: a refusal
+    // from this host names what was being done and never which window it was done to — §7.1's
+    // 「前端不能自选任意 label」 read the other way round, so a caller holding a refusal learns
+    // nothing it could aim at another window.
+    assert!(
+        format!("{refusal:?}").starts_with("Window { action: AlwaysOnTop"),
+        "{refusal:?}"
+    );
+    assert!(format!("{refusal:?}").contains("declined"), "{refusal:?}");
+    assert!(
+        !format!("{refusal:?}").contains(character.as_str()),
+        "the host does not hand a label outward: {refusal:?}"
+    );
+    // The ball was still asked: a windowing system that refused one window has not refused the
+    // others, and stopping at the first would leave the rest in the stack the user just left.
+    assert!(surfaces
+        .on_top_changes()
+        .iter()
+        .any(|(label, _)| label == BALL_LABEL));
+    // The preference is kept either way — it is the user's, and the next window opens with it.
+    assert!(!host.style().always_on_top);
+}
+
 #[test]
 fn a_new_window_is_opened_hidden_when_the_pet_is_hidden() {
     let (mut host, surfaces) = with_host();

@@ -188,9 +188,14 @@ export interface PetSettingsValues {
     idleIntervalSeconds: number
   }
   view: {
-    /** Window opacity. Upstream feeds a stored value straight into an `rgba` alpha (`main.ts:93`). */
-    opacity: number
-    /** §7.2 verifies this per desktop; the setting may hold `true` where the capability cannot deliver it. */
+    /**
+     * §7.2 verifies this per desktop; the setting may hold `true` where the capability cannot deliver it.
+     *
+     * Not a migrated upstream setting: upstream hardcodes `.always_on_top(true)` at all four of its
+     * window builders (`references/desktop-pet/windows/src-tauri/src/lib.rs:295,368,463,557`) and its
+     * settings page has no such row. It is this port's own §7.2 gate around a preference, and
+     * `window_host` is what applies it.
+     */
     alwaysOnTop: boolean
     /**
      * The roaming mode the user chose. Kept representable even where the capability is
@@ -206,6 +211,20 @@ export interface PetSettingsValues {
     theme: 'system' | 'light' | 'dark'
     /** The text size in px (upstream `ap_font_size`, three buttons at 10/12/14). */
     fontSize: number
+    /**
+     * The bubble's background alpha (upstream `ap_opacity`).
+     *
+     * **The bubble's, and not the window's.** Upstream's `applyBubble` feeds this value straight
+     * into `--bubble-bg`'s `rgba(…, op)` alpha and returns, leaving every other surface alone
+     * (`references/desktop-pet/windows/src/main.ts:88-100`, control at `settings.html:172-173` on
+     * the Bubble page), and the ledger and the plan file the key under 气泡与消息
+     * (`desktop-pet-port-ledger.md:112`, plan §5.2 「Bubble：主题、透明度、字体……」).
+     *
+     * It is filed here for that reason, and it is *not* a window opacity: upstream has no such
+     * setting, and this build has no way to honour one — `tauri`/`tao` expose no window-opacity call
+     * at all, so a control filed that way could only write a value nothing reads.
+     */
+    opacity: number
     /**
      * Whether the pet chatters while nothing is happening (upstream `ap_idle`,
      * rendered on the bubble page as 「Show idle message」, `settings.html:176`).
@@ -287,11 +306,14 @@ export const PET_SETTINGS_DEFAULTS: { [D in PetSettingsDomain]: PetSettingsValue
     idleMode: 'random',
     idleIntervalSeconds: 5,
   },
-  view: { opacity: 1, alwaysOnTop: true, roam: 'off' },
+  view: { alwaysOnTop: true, roam: 'off' },
   message: {
     bubbleSeconds: 6,
     theme: 'system',
     fontSize: 12,
+    // Upstream's own default (`ap_opacity`'s `|| 92` in `main.ts:93`): 92% of the bubble's own
+    // background colour, which is what its slider opens on.
+    opacity: 0.92,
     idle: true,
     layoutMode: 'list',
     layoutMaxRows: 5,
@@ -324,8 +346,8 @@ export const PET_SETTINGS_DEFAULTS: { [D in PetSettingsDomain]: PetSettingsValue
 export type PetNumberField =
   | 'character.size'
   | 'character.idleIntervalSeconds'
-  | 'view.opacity'
   | 'message.bubbleSeconds'
+  | 'message.opacity'
   | 'message.fontSize'
   | 'message.layoutMaxRows'
   | 'project.maxCharacters'
@@ -350,7 +372,10 @@ export const PET_NUMBER_RULES = {
   // `animation-bindings.ts`), with the ceiling a minute: a clip that changes less often than
   // that is a still image with a timer attached.
   'character.idleIntervalSeconds': { min: 1, max: 60, integer: true, fallback: 5 },
-  'view.opacity': { min: 0.15, max: 1, integer: false, fallback: 1 },
+  // Upstream's own slider ends, 60 to 100 percent (`settings.html:172`, `main.ts:93`), kept as the
+  // fraction the alpha is: the floor is why a stored value cannot leave a bubble whose text is
+  // unreadable, and the default is the value that slider opens on.
+  'message.opacity': { min: 0.6, max: 1, integer: false, fallback: 0.92 },
   'message.bubbleSeconds': { min: 1, max: 60, integer: true, fallback: 6 },
   // Upstream's three buttons are 10/12/14 and it accepts any parsed integer
   // (`settings.ts:1051`); the rule keeps upstream's span and refuses everything outside it,

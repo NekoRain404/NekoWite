@@ -23,7 +23,7 @@ use std::fs;
 
 use serde_json::{json, Value};
 
-use nekowite_lib::desktop_pet::character_view::{appearance, stored_motion};
+use nekowite_lib::desktop_pet::character_view::{appearance, stored_bubble_opacity, stored_motion};
 use nekowite_lib::desktop_pet::settings::values::defaults;
 use nekowite_lib::desktop_pet::settings::{
     PetSettingsDomain, PetSettingsLoad, PetSettingsStore, PetSettingsUpdate, PetSettingsWrite,
@@ -53,14 +53,19 @@ fn window_read(store: &PetSettingsStore) -> PetAppearance {
         .record()
         .expect("a character record is always answerable, defaults included")
         .clone();
-    let read = appearance(&record, stored_motion(store), None);
+    let read = appearance(
+        &record,
+        stored_motion(store),
+        stored_bubble_opacity(store),
+        None,
+    );
     read
 }
 
 /// The policy out of an appearance, whichever arm it is.
 fn motion_of(read: &PetAppearance) -> Motion {
     match read {
-        PetAppearance::Unset { motion }
+        PetAppearance::Unset { motion, .. }
         | PetAppearance::Missing { motion, .. }
         | PetAppearance::Ready { motion, .. } => *motion,
     }

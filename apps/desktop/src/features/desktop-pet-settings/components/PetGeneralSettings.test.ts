@@ -129,13 +129,11 @@ describe('every control writes the domain it belongs to', () => {
       ball: true,
     })
 
-    // The slider is a percentage; the store holds the fraction §5.3's rule is written in.
-    const opacity = document.querySelector<HTMLInputElement>('#pet-general-opacity')
-    if (!opacity) throw new Error('no opacity slider')
-    opacity.value = '40'
-    opacity.dispatchEvent(new Event('input', { bubbles: true }))
+    // The window behaviour this page owns is `view.alwaysOnTop`, and it is the same kind of check
+    // as the two above: the control the page writes is the domain the store reads.
+    fieldControl<HTMLInputElement>(t('settings.pet.general.alwaysOnTop'), 'input').click()
     await flush(DEBOUNCE_PLUS)
-    expect((await storedValues(gateway, 'view')).opacity).toBeCloseTo(0.4)
+    expect((await storedValues(gateway, 'view')).alwaysOnTop).toBe(false)
   })
 
   it('reaches the ball’s own switch, which is on the same domain as the master one', async () => {
@@ -173,16 +171,6 @@ describe('every control writes the domain it belongs to', () => {
     expect(notes.some((note) => note.includes(t('settings.pet.general.ballNote')))).toBe(true)
   })
 
-  it('starts the opacity slider and its ends at the schema’s own rule', async () => {
-    mount(createMemoryPetGateway())
-    await flush()
-
-    const opacity = document.querySelector<HTMLInputElement>('#pet-general-opacity')
-    expect(opacity?.value).toBe('100')
-    // §5.3 「界面和后端使用同一规则」: the ends are `PET_NUMBER_RULES`, not numbers picked here.
-    expect(opacity?.min).toBe('15')
-    expect(opacity?.max).toBe('100')
-  })
 })
 
 describe('§7.2 decides which window behaviours are offered', () => {
@@ -277,11 +265,11 @@ describe('restoring this page', () => {
     await flush()
 
     fieldControl<HTMLInputElement>(t('settings.pet.general.enabled'), 'input').click()
-    const opacity = document.querySelector<HTMLInputElement>('#pet-general-opacity')
-    if (!opacity) throw new Error('no opacity slider')
-    opacity.value = '40'
-    opacity.dispatchEvent(new Event('input', { bubbles: true }))
+    fieldControl<HTMLInputElement>(t('settings.pet.general.alwaysOnTop'), 'input').click()
     await flush(DEBOUNCE_PLUS)
+    // Both of this page's domains are dirty before the reset, so what follows is the reset and
+    // not an absence of change.
+    expect((await storedValues(gateway, 'view')).alwaysOnTop).toBe(false)
     write.mockClear()
 
     const reset = [...document.querySelectorAll<HTMLButtonElement>('.settings-section button')]
@@ -295,7 +283,7 @@ describe('restoring this page', () => {
       motion: 'system',
       ball: true,
     })
-    expect((await storedValues(gateway, 'view')).opacity).toBe(1)
+    expect((await storedValues(gateway, 'view')).alwaysOnTop).toBe(true)
     // §5.3 「恢复本页默认只影响当前域」: the reset reached this page's two domains and no others,
     // which is what keeps it from clearing the character library or care progress.
     expect([...new Set(write.mock.calls.map((call) => call[0].domain))].sort()).toEqual(['general', 'view'])

@@ -85,9 +85,11 @@ export function usePetWindow(options: PetWindowOptions): PetWindow {
   /**
    * Whether a settings write matters to this window.
    *
-   * One domain: the character is the only settings fact this window draws. A comparison rather
-   * than a re-read of everything, and the *only* reason this listener exists is that a write in
-   * another window is otherwise invisible here — which is what would have made a poll necessary.
+   * Two domains, and they are the two the appearance read carries: `character` decides what the
+   * sprite draws, and `message` carries the bubble's background alpha (§5.2's 气泡与消息), which is
+   * drawn by the bubble in this window. A comparison rather than a re-read of everything, and the
+   * *only* reason this listener exists is that a write in another window is otherwise invisible
+   * here — which is what would have made a poll necessary.
    *
    * **`general` is deliberately not here**, and the reason is a fact about this surface rather
    * than about the setting: the read carries `general.motion` too (see `pet-appearance.ts`), and
@@ -98,7 +100,7 @@ export function usePetWindow(options: PetWindowOptions): PetWindow {
    * Re-reading here would be a call per motion change that changes nothing on this surface.
    */
   function onSettingsChanged(change: PetSettingsChange): void {
-    if (change.domain !== 'character') return
+    if (change.domain !== 'character' && change.domain !== 'message') return
     void readAppearance()
   }
 

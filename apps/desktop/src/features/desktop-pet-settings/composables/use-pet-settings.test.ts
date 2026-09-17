@@ -54,7 +54,7 @@ function stubAuthority(
 
 /** A stored record of `domain` with the values of this build's defaults replaced. */
 function storedRecord(
-  domain: 'general' | 'view',
+  domain: 'general' | 'view' | 'message',
   values: Record<string, unknown>,
   revision = PET_SETTINGS_INITIAL_REVISION + 1,
 ): PetSettingsRecord {
@@ -142,16 +142,18 @@ describe('the draft, the debounce and the close path', () => {
   it('coalesces edits inside one window to the value the user stopped on', async () => {
     const gateway = createMemoryPetGateway()
     const write = vi.spyOn(gateway, 'updateSettings')
-    const session = usePetSettings({ authority: gateway, domain: 'view' })
+    // `message` and its opacity slider: a field the user drags, which is where a dozen edits in
+    // one window come from.
+    const session = usePetSettings({ authority: gateway, domain: 'message' })
     await session.load()
 
-    session.edit('opacity', 0.4)
+    session.edit('opacity', 0.7)
     await tick(100)
     session.edit('opacity', 0.9)
     await tick()
     // One write, and not one per step: a slider drag is a dozen edits and one revision.
     expect(write).toHaveBeenCalledTimes(1)
-    expect(write.mock.calls[0]?.[0]?.values).toEqual({ ...PET_SETTINGS_DEFAULTS.view, opacity: 0.9 })
+    expect(write.mock.calls[0]?.[0]?.values).toEqual({ ...PET_SETTINGS_DEFAULTS.message, opacity: 0.9 })
     expect(session.status.value).toBe('saved')
   })
 
@@ -229,20 +231,20 @@ describe('a save that did not happen', () => {
     // impossible value never becomes a round trip the user waits on.
     const gateway = createMemoryPetGateway()
     const write = vi.spyOn(gateway, 'updateSettings')
-    const session = usePetSettings({ authority: gateway, domain: 'view' })
+    const session = usePetSettings({ authority: gateway, domain: 'message' })
     await session.load()
 
     session.edit('opacity', 42)
     await session.settle()
     expect(session.status.value).toBe('invalid')
-    expect(session.problem.value).toBe('view.opacity:out-of-range')
+    expect(session.problem.value).toBe('message.opacity:out-of-range')
     expect(write).not.toHaveBeenCalled()
   })
 
   it('reports a store that answered for another domain instead of reading it anyway', async () => {
     const authority = stubAuthority({
       status: 'current',
-      record: storedRecord('view', { opacity: 0.5 }),
+      record: storedRecord('view', { alwaysOnTop: false }),
     })
     const session = usePetSettings({ authority, domain: 'general' })
     await session.load()
@@ -263,13 +265,13 @@ describe('a refusal is a reload, not a merge', () => {
 
   it('replaces the draft with what the store holds when another window moved first', async () => {
     const gateway = createMemoryPetGateway()
-    const other = usePetSettings({ authority: gateway, domain: 'view' })
-    const session = usePetSettings({ authority: gateway, domain: 'view' })
+    const other = usePetSettings({ authority: gateway, domain: 'message' })
+    const session = usePetSettings({ authority: gateway, domain: 'message' })
     await other.load()
     await session.load()
 
     // The other window writes first and succeeds, so the revision this session read is stale.
-    other.edit('opacity', 0.3)
+    other.edit('opacity', 0.7)
     await other.settle()
     expect(other.status.value).toBe('saved')
 
@@ -278,8 +280,8 @@ describe('a refusal is a reload, not a merge', () => {
     expect(session.status.value).toBe('conflict')
     // The edit is gone and the other window's value is what the page now shows: merging either
     // way would undo the change somebody else just made (§5.3).
-    expect(session.values.value.opacity).toBe(0.3)
-    expect((await storedRecordOf(gateway, 'view')).values.opacity).toBe(0.3)
+    expect(session.values.value.opacity).toBe(0.7)
+    expect((await storedRecordOf(gateway, 'message')).values.opacity).toBe(0.7)
   })
 
   it('treats the newer-schema refusal as read-only, and stops writing', async () => {

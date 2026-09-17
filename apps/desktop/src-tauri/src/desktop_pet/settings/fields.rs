@@ -173,21 +173,15 @@ const CHARACTER: &[Field] = &[
     },
 ];
 
-/// The fields of `view`: the window's appearance and the roaming mode.
+/// The fields of `view`: the window's behaviour and the roaming mode.
 const VIEW: &[Field] = &[
-    // Upstream feeds a stored value straight into an `rgba` alpha (`main.ts:93`); the floor is what
-    // keeps a stored `0` from making the pet invisible rather than transparent.
-    Field {
-        name: "opacity",
-        kind: Kind::Number {
-            min: 0.15,
-            max: 1.0,
-            integer: false,
-            fallback: 1.0,
-        },
-    },
     // §7.2 verifies this per desktop; the setting may hold `true` where the capability cannot
     // deliver it.
+    //
+    // Not a migrated upstream setting: upstream hardcodes `.always_on_top(true)` at each of its
+    // four builders (`references/desktop-pet/windows/src-tauri/src/lib.rs:295,368,463,557`) and
+    // its settings page has no row for one. It is this port's own §7.2 gate around a preference,
+    // and `window_host` is what applies it to the windows that preference governs.
     Field {
         name: "alwaysOnTop",
         kind: Kind::Bool(true),
@@ -235,6 +229,23 @@ const MESSAGE: &[Field] = &[
             max: 14.0,
             integer: true,
             fallback: 12.0,
+        },
+    },
+    // The bubble's *background* alpha (`ap_opacity`), which upstream feeds straight into
+    // `--bubble-bg`'s `rgba(…, op)` (`references/desktop-pet/windows/src/main.ts:88-100`, control
+    // at `settings.html:172-173` on the Bubble page). It is not a window opacity: upstream never
+    // had one, and no crate in this build's tree exposes a window-opacity call to port one with.
+    //
+    // The ends and the default are upstream's own slider — 60 to 100 percent, opening on 92 —
+    // because the floor is what keeps a stored value from leaving a bubble whose text cannot be
+    // read, which is the one thing the surface exists to avoid.
+    Field {
+        name: "opacity",
+        kind: Kind::Number {
+            min: 0.6,
+            max: 1.0,
+            integer: false,
+            fallback: 0.92,
         },
     },
     // Upstream's 「Show idle message」, filed here rather than on `character` where the ledger's

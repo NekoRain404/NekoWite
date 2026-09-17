@@ -135,6 +135,14 @@ pub fn desktop_pet_update_settings<R: tauri::Runtime>(
         // decides a notice from the switches, and it is the only place they can be applied while
         // the app runs. A write to another domain answers `false` here and changes neither.
         apply_notification_switch(&state.tasks, record);
+        // And the window *style*, which is the third thing an applied write reaches: the windows
+        // that are already open are moved by the same call the launch path makes, so the checkbox
+        // acts on the pet on screen rather than on the next one. A poisoned lock is logged the same
+        // way and for the same reason as above — the setting *was* saved, and what could not follow
+        // it is a window.
+        if let Err(detail) = host(&state).map(|mut host| apply_window_style(&mut host, record)) {
+            eprintln!("the pet's windows did not follow a saved style: {detail}");
+        }
     }
     Ok(outcome)
 }
@@ -156,6 +164,38 @@ pub fn apply_feature_switch(
     character: &str,
 ) -> Option<PetFeatureState> {
     feature_switch::apply(host, record, character).then(|| PetFeatureState::of(host))
+}
+
+/// §5.2's 窗口行为, as an applied `view` write delivers it to the windows that are open.
+///
+/// The same shape as [`apply_feature_switch`], one domain over: a preference in the `view` record
+/// reaches a window that is already on screen through the write that saved it, and through nothing
+/// else. `view.alwaysOnTop` is upstream's *absence* as much as its value — upstream hardcoded
+/// `.always_on_top(true)` at every one of its builder sites and its page had no such row — so what
+/// this closes is not a porting gap but §5.2's own rule: the control on 常规与交互 stored a value
+/// the window host never read, and a control that lies is the defect the rule names.
+///
+/// A write to another domain answers `false` and touches no window. A refusal from the compositor is
+/// logged rather than returned, for the reason [`apply_feature_switch`] gives about its own: the
+/// *setting* was saved, and what failed is a windowing system — §7.2's 「置顶」 row is where a user
+/// reads what this desktop does instead, and the next window opens with the preference either way
+/// (the host keeps it).
+pub fn apply_window_style(host: &mut PetWindowHost, record: &PetSettingsRecord) -> bool {
+    if record.domain != PetSettingsDomain::View {
+        return false;
+    }
+    let Some(on_top) = record
+        .value("alwaysOnTop")
+        .and_then(serde_json::Value::as_bool)
+    else {
+        // A `view` record with no readable value is one this build did not write. The host keeps
+        // what it has, which is the schema's own default and what upstream asked for.
+        return false;
+    };
+    if let Err(refusal) = host.set_always_on_top(on_top) {
+        eprintln!("a pet window did not follow the saved style: {refusal:?}");
+    }
+    true
 }
 
 /// The notification switches, as an applied write delivers them to the ledger that reads them.

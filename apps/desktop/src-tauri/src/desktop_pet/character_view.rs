@@ -7,10 +7,11 @@
 //! the join, and nothing here touches a window, a file or the network: it turns what those two
 //! already answered into the two shapes a window can draw.
 //!
-//! One fact a window is handed alongside them is not the character's: [`Motion`], which the
-//! `general` domain stores (§5.2's 「跟随系统/应用设置」) and which a pet window may not read for
-//! itself — `capabilities/desktop-pet.json` holds no settings read. It rides the appearance
-//! because the drawing and the policy are what one frame needs together, which is the same
+//! Two facts a window is handed alongside them are not the character's: [`Motion`], which the
+//! `general` domain stores (§5.2's 「跟随系统/应用设置」), and [`BubbleOpacity`], which `message`
+//! stores (§5.2's 气泡与消息). Neither can a pet window read for itself —
+//! `capabilities/desktop-pet.json` holds no settings read — and both ride the appearance because
+//! the drawings and those two policies are what one frame needs together, which is the same
 //! argument this module's own caller makes for handing out the sheet and the size in one answer.
 //!
 //! Three rules are structural:
@@ -95,13 +96,19 @@ pub enum PetCharacterFiles {
 #[serde(tag = "status", rename_all = "kebab-case")]
 pub enum PetAppearance {
     /// No character is chosen. The window says so and draws nothing.
-    Unset { motion: Motion },
+    Unset {
+        motion: Motion,
+        #[serde(rename = "bubbleOpacity")]
+        bubble_opacity: f64,
+    },
     /// A character is chosen and cannot be produced, with the reason in the host's words.
     Missing {
         #[serde(rename = "characterId")]
         character_id: String,
         detail: String,
         motion: Motion,
+        #[serde(rename = "bubbleOpacity")]
+        bubble_opacity: f64,
     },
     /// Draw this.
     Ready {
@@ -128,6 +135,11 @@ pub enum PetAppearance {
         #[serde(rename = "idleIntervalMs")]
         idle_interval_ms: u64,
         motion: Motion,
+        /// The bubble's background alpha, which is not the character's either — see
+        /// [`BubbleOpacity`]. On every arm for the same reason `motion` is: the bubble is drawn by
+        /// this window in all three of them, a fresh install included.
+        #[serde(rename = "bubbleOpacity")]
+        bubble_opacity: f64,
     },
 }
 
@@ -193,6 +205,59 @@ pub fn stored_motion(store: &PetSettingsStore) -> Motion {
         .map_or(Motion::DEFAULT, Motion::of)
 }
 
+/// The bubble's background alpha, from `message.opacity` (§5.2's 气泡与消息).
+///
+/// The third fact that rides this read and is not the character's, and it rides it for the reason
+/// [`Motion`] does: the bubble is one of the surfaces in the window that draws the character
+/// (`DesktopPetRoot.vue`), `capabilities/desktop-pet.json` holds no settings read, and §5.2's
+/// opacity was a control whose value no window could act on until this carried it.
+///
+/// Upstream's own value and meaning: `ap_opacity`, a percentage the user picks on the Bubble page,
+/// whose alpha goes straight into the bubble's own `--bubble-bg` (`windows/src/main.ts:88-100`).
+/// Not the window's opacity — upstream has no such setting, and neither `tauri` nor `tao` exposes a
+/// call that could apply one.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct BubbleOpacity(f64);
+
+impl BubbleOpacity {
+    /// The member `settings::fields`' `MESSAGE` declares, and therefore the reading of every value
+    /// this build cannot act on: an absent field on a record an older build wrote, a value outside
+    /// the rule, and a `message` record from a newer build — which §10.2 keeps this build from
+    /// reading at all, and which cannot be guessed into a transparency the user never chose.
+    pub const DEFAULT: Self = Self(0.92);
+
+    /// The alpha a `message` record holds.
+    ///
+    /// The store normalized this record on the way out of the file (`settings::values`), so what
+    /// reaches the second arm is a record this build did not write — and the schema's own default
+    /// is the value the bubble was drawn with before the field existed.
+    pub fn of(record: &PetSettingsRecord) -> Self {
+        match record.value("opacity").and_then(serde_json::Value::as_f64) {
+            Some(value) => Self(value),
+            None => Self::DEFAULT,
+        }
+    }
+
+    pub fn value(self) -> f64 {
+        self.0
+    }
+}
+
+/// The alpha a store holds for the pet's bubble.
+///
+/// The second read `appearance`'s caller performs, and a function for the reason
+/// [`stored_motion`] is: a test asserting what a window is handed goes through the same arm.
+///
+/// A `message` record this build may not read is answered with [`BubbleOpacity::DEFAULT`] rather
+/// than guessed at — the `ReadOnly` arm of `store.read`, which §10.2 keeps this build from reading
+/// — because a transparency the user never chose is a change to what they see, not a default.
+pub fn stored_bubble_opacity(store: &PetSettingsStore) -> BubbleOpacity {
+    store
+        .read(PetSettingsDomain::Message)
+        .record()
+        .map_or(BubbleOpacity::DEFAULT, BubbleOpacity::of)
+}
+
 /// Every character the library holds, oldest install last.
 ///
 /// Sorted by install time, which is the order a page shows them in (D8's policy puts the newest
@@ -235,24 +300,32 @@ fn entry_of(entry: &LibraryEntry) -> PetCharacterEntry {
 ///
 /// `motion` is the `general` record's policy rather than a field of this one — see [`Motion`] for
 /// why a window is handed it with its drawing facts instead of asking for it, and
-/// `commands::desktop_pet::desktop_pet_appearance` for the read that supplies it.
+/// `commands::desktop_pet::desktop_pet_appearance` for the read that supplies it. `bubble` is the
+/// same arrangement one domain over: `message.opacity`, the bubble's background alpha, which the
+/// window draws with and may not read for itself.
 pub fn appearance(
     record: &PetSettingsRecord,
     motion: Motion,
+    bubble: BubbleOpacity,
     library: Option<&CharacterLibrary>,
 ) -> PetAppearance {
+    let bubble_opacity = bubble.value();
     let chosen = record
         .value("characterId")
         .and_then(serde_json::Value::as_str);
     let drawing = Drawing::of(record);
     let Some(chosen) = chosen else {
-        return PetAppearance::Unset { motion };
+        return PetAppearance::Unset {
+            motion,
+            bubble_opacity,
+        };
     };
     let Some(library) = library else {
         return PetAppearance::Missing {
             character_id: chosen.to_string(),
             detail: "this build has no character library to read it from".to_string(),
             motion,
+            bubble_opacity,
         };
     };
     let entry = match library.list() {
@@ -267,6 +340,7 @@ pub fn appearance(
                     refusal_sentence(&refusal)
                 ),
                 motion,
+                bubble_opacity,
             }
         }
     };
@@ -275,12 +349,14 @@ pub fn appearance(
             character_id: chosen.to_string(),
             detail: "it is not installed in the character library".to_string(),
             motion,
+            bubble_opacity,
         };
     };
     let unavailable = |detail: String| PetAppearance::Missing {
         character_id: chosen.to_string(),
         detail,
         motion,
+        bubble_opacity,
     };
     if let EntryState::Incomplete { missing } = &entry.state {
         return unavailable(format!(
@@ -325,6 +401,7 @@ pub fn appearance(
         idle_mode: drawing.idle_mode,
         idle_interval_ms: drawing.idle_interval_ms,
         motion,
+        bubble_opacity,
     }
 }
 
@@ -703,7 +780,12 @@ mod tests {
         let (library, _data) = library("cjk-ready");
         let sheet = install_named(&library, "喵喵", "喵喵", "精灵图.png");
 
-        let answer = appearance(&record(Some("喵喵"), 200), Motion::DEFAULT, Some(&library));
+        let answer = appearance(
+            &record(Some("喵喵"), 200),
+            Motion::DEFAULT,
+            BubbleOpacity::DEFAULT,
+            Some(&library),
+        );
 
         let PetAppearance::Ready {
             character_id,
@@ -774,9 +856,15 @@ mod tests {
         let (library, _data) = library("unset");
 
         assert_eq!(
-            appearance(&record(None, 200), Motion::DEFAULT, Some(&library)),
+            appearance(
+                &record(None, 200),
+                Motion::DEFAULT,
+                BubbleOpacity::DEFAULT,
+                Some(&library),
+            ),
             PetAppearance::Unset {
-                motion: Motion::DEFAULT
+                motion: Motion::DEFAULT,
+                bubble_opacity: BubbleOpacity::DEFAULT.value(),
             }
         );
     }
@@ -786,7 +874,12 @@ mod tests {
         let (library, _data) = library("ready");
         let sheet = install(&library, "kitty", "Kitty");
 
-        let answer = appearance(&record(Some("kitty"), 200), Motion::DEFAULT, Some(&library));
+        let answer = appearance(
+            &record(Some("kitty"), 200),
+            Motion::DEFAULT,
+            BubbleOpacity::DEFAULT,
+            Some(&library),
+        );
 
         let PetAppearance::Ready {
             character_id,
@@ -816,7 +909,12 @@ mod tests {
     fn a_character_that_is_not_installed_is_named_rather_than_emptied() {
         let (library, _data) = library("absent-character");
 
-        let answer = appearance(&record(Some("ghost"), 200), Motion::DEFAULT, Some(&library));
+        let answer = appearance(
+            &record(Some("ghost"), 200),
+            Motion::DEFAULT,
+            BubbleOpacity::DEFAULT,
+            Some(&library),
+        );
 
         let PetAppearance::Missing {
             character_id,
@@ -836,7 +934,12 @@ mod tests {
         let sheet = install(&library, "kitty", "Kitty");
         std::fs::remove_file(&sheet).expect("the sheet is there to remove");
 
-        let answer = appearance(&record(Some("kitty"), 200), Motion::DEFAULT, Some(&library));
+        let answer = appearance(
+            &record(Some("kitty"), 200),
+            Motion::DEFAULT,
+            BubbleOpacity::DEFAULT,
+            Some(&library),
+        );
 
         let PetAppearance::Missing { detail, .. } = answer else {
             panic!("the sheet is not there to draw");
@@ -858,7 +961,12 @@ mod tests {
         document["sheet"]["file"] = serde_json::Value::String("../outside.png".to_string());
         std::fs::write(&manifest, document.to_string()).expect("the manifest is writable");
 
-        let answer = appearance(&record(Some("kitty"), 200), Motion::DEFAULT, Some(&library));
+        let answer = appearance(
+            &record(Some("kitty"), 200),
+            Motion::DEFAULT,
+            BubbleOpacity::DEFAULT,
+            Some(&library),
+        );
 
         let PetAppearance::Missing { detail, .. } = answer else {
             panic!("a name that is a path is not a file");
@@ -870,7 +978,12 @@ mod tests {
     fn an_app_with_no_library_still_names_the_character_it_cannot_produce() {
         assert!(
             matches!(
-                appearance(&record(Some("kitty"), 200), Motion::DEFAULT, None),
+                appearance(
+                    &record(Some("kitty"), 200),
+                    Motion::DEFAULT,
+                    BubbleOpacity::DEFAULT,
+                    None
+                ),
                 PetAppearance::Missing { .. }
             ),
             "no library is a reason, not an absence of a choice"
@@ -956,16 +1069,106 @@ mod tests {
         // the surface this build has that moves, so a policy that only arrived with `Ready` would
         // leave exactly the state a new user is in unreduced.
         assert!(matches!(
-            appearance(&record(None, 200), reduced, Some(&library)),
-            PetAppearance::Unset { motion } if motion == reduced
+            appearance(&record(None, 200), reduced, BubbleOpacity::DEFAULT, Some(&library)),
+            PetAppearance::Unset { motion, .. } if motion == reduced
         ));
         assert!(matches!(
-            appearance(&record(Some("ghost"), 200), reduced, Some(&library)),
+            appearance(
+                &record(Some("ghost"), 200),
+                reduced,
+                BubbleOpacity::DEFAULT,
+                Some(&library)
+            ),
             PetAppearance::Missing { motion, .. } if motion == reduced
         ));
         assert!(matches!(
-            appearance(&record(Some("kitty"), 200), reduced, Some(&library)),
+            appearance(
+                &record(Some("kitty"), 200),
+                reduced,
+                BubbleOpacity::DEFAULT,
+                Some(&library)
+            ),
             PetAppearance::Ready { motion, .. } if motion == reduced
+        ));
+    }
+
+    /// A `message` record with one opacity written into it, or none.
+    fn message(opacity: Option<f64>) -> PetSettingsRecord {
+        let mut record = PetSettingsRecord::defaults(PetSettingsDomain::Message);
+        match opacity {
+            Some(value) => {
+                record
+                    .values
+                    .insert("opacity".to_string(), serde_json::Value::from(value));
+            }
+            // Removed rather than set to the default, because "absent" is a state of its own: a
+            // record an older build wrote carries no such field at all.
+            None => {
+                record.values.remove("opacity");
+            }
+        }
+        record
+    }
+
+    #[test]
+    fn an_alpha_a_window_cannot_act_on_is_read_as_the_schemas_default() {
+        // The store normalized this record on the way out of the file (`settings::values`), so a
+        // value that is *there* is a value the rule accepted — including the ends, which is what
+        // `assert_eq!(…, 1.0)` below is about. What a record cannot carry is a *missing* field
+        // (an older build's file, or one this build's schema has not written yet), and that arm is
+        // the schema's declared default rather than a guess. The one that matters: the value the
+        // user never chose must never be a *clearer* bubble than the one they did.
+        assert_eq!(BubbleOpacity::of(&message(Some(0.7))).value(), 0.7);
+        assert_eq!(
+            BubbleOpacity::of(&message(Some(1.0))).value(),
+            1.0,
+            "the rule's own ceiling is inside it, and a store read never hands out a value the \
+             rule refused — `bubble.rs` covers the file that carries one anyway"
+        );
+        assert_eq!(
+            BubbleOpacity::of(&message(None)).value(),
+            BubbleOpacity::DEFAULT.value()
+        );
+        assert_eq!(
+            BubbleOpacity::DEFAULT.value(),
+            PetSettingsRecord::defaults(PetSettingsDomain::Message)
+                .value("opacity")
+                .and_then(serde_json::Value::as_f64)
+                .expect("the schema declares a default for it"),
+            "the constant is the schema's own default, not a second copy of the number"
+        );
+    }
+
+    #[test]
+    fn the_bubble_alpha_rides_every_appearance_arm_because_the_bubble_is_drawn_in_all_of_them() {
+        let (library, _data) = library("bubble-arms");
+        install(&library, "kitty", "Kitty");
+        let alpha = BubbleOpacity::of(&message(Some(0.7)));
+
+        // The bubble is drawn above the notice and above a sprite alike — a window with no character
+        // is still a window the pet says things in — so an alpha that only arrived with `Ready`
+        // would leave a fresh install drawing a bubble the user never chose.
+        assert!(matches!(
+            appearance(&record(None, 200), Motion::DEFAULT, alpha, Some(&library)),
+            PetAppearance::Unset { bubble_opacity, .. } if bubble_opacity == 0.7
+        ));
+        assert!(matches!(
+            appearance(
+                &record(Some("ghost"), 200),
+                Motion::DEFAULT,
+                alpha,
+                Some(&library)
+            ),
+            PetAppearance::Missing { bubble_opacity, .. } if bubble_opacity == 0.7
+        ));
+        assert!(matches!(
+            appearance(
+                &record(Some("kitty"), 200),
+                Motion::DEFAULT,
+                alpha,
+                Some(&library)
+            ),
+            PetAppearance::Ready { bubble_opacity, .. } if bubble_opacity == 0.7
         ));
     }
 }

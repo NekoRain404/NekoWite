@@ -62,6 +62,7 @@
 use serde::Serialize;
 
 use super::ball::Ball;
+use super::settings::{PetSettingsDomain, PetSettingsStore};
 // The ball's policy moved to `ball.rs`; the path it was read by does not move with it. Every caller
 // that named `window_host::BALL_LABEL` — the command surface's tests among them — still resolves,
 // which is the property `state.rs` states for its own split: the split moved the code, not the
@@ -110,6 +111,12 @@ pub struct WindowStyle {
 }
 
 /// Upstream's flags together (`:461-469`), once.
+///
+/// The *default* presentation: what a pet window is opened with until a stored preference says
+/// otherwise, and what every flag but one stays for the life of the process. `always_on_top` is the
+/// one that is also a setting (§5.2's 窗口行为, `view.alwaysOnTop`), so the host holds the value and
+/// this constant is where it starts — a host with no readable record opens exactly what upstream
+/// opened.
 pub const PET_WINDOW_STYLE: WindowStyle = WindowStyle {
     transparent: true,
     decorations: false,
@@ -119,6 +126,31 @@ pub const PET_WINDOW_STYLE: WindowStyle = WindowStyle {
     shadow: false,
     focused: false,
 };
+
+/// Whether the pet's windows are kept above ordinary ones, as the `view` record holds it.
+///
+/// The one flag of [`PET_WINDOW_STYLE`] that is a stored preference (§5.2's 窗口行为), so this is
+/// where a host that has a store asks what to open with. Read once, at the two moments a window can
+/// appear — the launch (`feature_switch::restore`) and an applied `view` write
+/// (`desktop_pet_surface::apply_window_style`) — because the host holds the answer in between and a
+/// per-`open` file read would be a read per window for a value that only ever changes through one.
+///
+/// Every arm but a readable `false` answers `true`, which is what upstream asked for at all four of
+/// its builder sites (`lib.rs:295,368,463,557`): an absent record is a fresh install, an unreadable
+/// one is this build's defaults everywhere else, and §10.2's read-only arm is a record whose
+/// *choice* this build cannot read — and taking a pet out of the top of the stack on a guess is the
+/// direction that hides the pet the user asked for.
+pub fn stored_always_on_top(store: &PetSettingsStore) -> bool {
+    store
+        .read(PetSettingsDomain::View)
+        .record()
+        .and_then(|record| {
+            record
+                .value("alwaysOnTop")
+                .and_then(serde_json::Value::as_bool)
+        })
+        .unwrap_or(PET_WINDOW_STYLE.always_on_top)
+}
 
 /// A new window's position, logical px.
 #[derive(Clone, Copy, PartialEq, Debug, Serialize)]
@@ -194,6 +226,10 @@ pub enum WindowAction {
     Show,
     Hide,
     ClickThrough,
+    /// Changing which stack a window sits in (`view.alwaysOnTop`). A window operation and not a
+    /// settings one: the setting is stored whether or not it can be delivered, and this is what a
+    /// compositor refusing the change is reported under.
+    AlwaysOnTop,
 }
 
 /// Why the host refused.
@@ -244,6 +280,14 @@ pub trait PetSurfaces: Send {
     fn close(&mut self, label: &PetWindowLabel) -> Result<(), String>;
 
     fn set_visible(&mut self, label: &PetWindowLabel, visible: bool) -> Result<(), String>;
+
+    /// Put this window in the always-on-top stack, or take it out (§5.2's `view.alwaysOnTop`).
+    ///
+    /// A separate call rather than a re-open: the setting changes what an *existing* window is, and
+    /// a surface that could only be asked at creation would make the checkbox a preference about the
+    /// next pet rather than about the one on screen. What a compositor does with it is its own
+    /// business, which is why §7.2's 「置顶」 row exists at all.
+    fn set_always_on_top(&mut self, label: &PetWindowLabel, on_top: bool) -> Result<(), String>;
 
     /// §7.2's 鼠标穿透, system half: whether the compositor sends this window the clicks that
     /// land on it. Deliberately *not* the same claim as knowing which pixels of the sprite are
@@ -306,6 +350,9 @@ pub struct PetWindowHost {
     /// minted here and handed over, which is what keeps `PetWindowLabel`'s one constructor in this
     /// module (`ball.rs`'s header).
     ball: Ball,
+    /// What every window this host opens is asked for. [`PET_WINDOW_STYLE`] until a stored
+    /// preference replaces it — see [`Self::set_always_on_top`] for the one flag that moves.
+    style: WindowStyle,
     visible: bool,
 }
 
@@ -317,7 +364,54 @@ impl PetWindowHost {
             generation: 0,
             instances: Vec::new(),
             ball: Ball::new(PetWindowLabel::ball()),
+            style: PET_WINDOW_STYLE,
             visible: true,
+        }
+    }
+
+    /// The presentation every window is opened with, as the host currently holds it.
+    pub fn style(&self) -> WindowStyle {
+        self.style
+    }
+
+    /// Whether the pet's windows are kept above ordinary ones (`view.alwaysOnTop`, §5.2's 窗口行为).
+    ///
+    /// **The one window flag that is a setting, and the reason it is a method rather than a field a
+    /// caller writes.** Upstream hardcoded `.always_on_top(true)` at every builder site and had no
+    /// row for it, so nothing here is a port: §5.2's 常规与交互 offers the choice, the capability
+    /// report says whether this desktop can deliver it (§7.2's 「置顶」), and this is what makes the
+    /// choice mean something. Until it existed the stored value was read by nobody and the checkbox
+    /// wrote into a file — a control that lies, which §5.2 forbids and which only the capability
+    /// gate's `unverified` arm was hiding.
+    ///
+    /// Applies to the windows that are *already open*, not only to the next one: a user who unchecks
+    /// the box while the pet is on screen is asking about the pet they can see. Every open window is
+    /// asked before anything is reported — a compositor that refused one has not refused the others,
+    /// and stopping at the first would leave the rest in the stack the user just changed — and the
+    /// *first* refusal is what a caller reads, in the compositor's own words. The preference is kept
+    /// either way: it is the user's, and the next window opens with it.
+    pub fn set_always_on_top(&mut self, on_top: bool) -> Result<(), HostRefusal> {
+        self.style.always_on_top = on_top;
+        // The ball is included, and it is one of the pet's windows (§5.1's 悬浮球) — a rule that
+        // applied to the character window alone would leave a surface the user cannot put away.
+        let labels: Vec<PetWindowLabel> = self
+            .instances
+            .iter()
+            .map(|instance| instance.label.clone())
+            .chain(self.ball.label().cloned())
+            .collect();
+        let mut refusal: Option<HostRefusal> = None;
+        for label in &labels {
+            if let Err(detail) = self.surfaces.set_always_on_top(label, on_top) {
+                refusal.get_or_insert(HostRefusal::Window {
+                    action: WindowAction::AlwaysOnTop,
+                    detail,
+                });
+            }
+        }
+        match refusal {
+            Some(refused) => Err(refused),
+            None => Ok(()),
         }
     }
 
@@ -379,7 +473,8 @@ impl PetWindowHost {
     /// window the *caller* asked for did not come up either; the refusal names the action, and the
     /// next enable (or character pick) retries, since the ball is only recorded once it opened.
     pub fn open(&mut self, character_id: &str) -> Result<PetInstance, HostRefusal> {
-        self.ball.ensure(&mut *self.surfaces, self.visible)?;
+        self.ball
+            .ensure(&mut *self.surfaces, self.style, self.visible)?;
         if let Some(existing) = self
             .instances
             .iter()
@@ -403,7 +498,7 @@ impl PetWindowHost {
                 DESKTOP_PET_PAGE,
                 at,
                 CHARACTER_WINDOW_SIZE,
-                PET_WINDOW_STYLE,
+                self.style,
                 self.visible,
             )
             .map_err(|detail| HostRefusal::Window {
@@ -644,6 +739,16 @@ impl PetSurfaces for TauriSurfaces {
     fn set_click_through(&mut self, label: &PetWindowLabel, ignore: bool) -> Result<(), String> {
         self.window(label)?
             .set_ignore_cursor_events(ignore)
+            .map_err(|error| error.to_string())
+    }
+
+    fn set_always_on_top(&mut self, label: &PetWindowLabel, on_top: bool) -> Result<(), String> {
+        // `tao` sends this to the windowing system as a keep-above request (`WindowRequest::
+        // AlwaysOnTop` → `set_keep_above`), so on a session whose compositor ignores it this
+        // succeeds and changes nothing — which is exactly the state §7.2's 「置顶」 row describes
+        // and why the setting is offered only where that row has been verified.
+        self.window(label)?
+            .set_always_on_top(on_top)
             .map_err(|error| error.to_string())
     }
 

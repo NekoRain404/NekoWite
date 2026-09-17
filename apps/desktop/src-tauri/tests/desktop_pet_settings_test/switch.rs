@@ -292,6 +292,10 @@ impl PetSurfaces for RefusingSurfaces {
         Err("no compositor here".to_string())
     }
 
+    fn set_always_on_top(&mut self, _label: &PetWindowLabel, _on_top: bool) -> Result<(), String> {
+        Err("no compositor here".to_string())
+    }
+
     fn work_area(&self) -> Option<WorkArea> {
         None
     }

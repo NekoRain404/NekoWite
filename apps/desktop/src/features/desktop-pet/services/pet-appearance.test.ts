@@ -14,13 +14,25 @@
  * `tests/desktop_pet_settings_test/motion.rs` asserts the same field out of a real store.
  */
 import { describe, expect, it } from 'vitest'
-import { petAppearanceView } from './pet-appearance'
-import { PET_MOTION_DEFAULT, petMotionOf } from '../../../platform/gateways/pet-contracts'
+import { petAppearanceView, petBubbleOpacityOf } from './pet-appearance'
+import {
+  PET_MOTION_DEFAULT,
+  PET_NUMBER_RULES,
+  PET_SETTINGS_DEFAULTS,
+  petMotionOf,
+} from '../../../platform/gateways/pet-contracts'
 import type { PetAppearance } from '../../../platform/gateways/pet-contracts'
 
-/** One arm of the read, with the policy given or left off entirely. */
-function read(status: 'unset' | 'missing' | 'ready', motion?: 'system' | 'reduced'): PetAppearance {
-  const policy = motion === undefined ? {} : { motion }
+/** One arm of the read, with the policy and the bubble's alpha given or left off entirely. */
+function read(
+  status: 'unset' | 'missing' | 'ready',
+  motion?: 'system' | 'reduced',
+  bubbleOpacity?: number,
+): PetAppearance {
+  const policy = {
+    ...(motion === undefined ? {} : { motion }),
+    ...(bubbleOpacity === undefined ? {} : { bubbleOpacity }),
+  }
   if (status === 'unset') return { status, ...policy }
   if (status === 'missing') return { status, characterId: 'torn', detail: 'its files are gone', ...policy }
   return {
@@ -59,5 +71,42 @@ describe('the motion policy a window is handed', () => {
     // matches is one nothing wrote. It is not `reduced` — that is the reading that would invent a
     // restriction, and the one this case exists for.
     expect(petMotionOf({ motion: 'less' as 'system' })).toBe('system')
+  })
+})
+
+/**
+ * The bubble's background alpha, read the same way and for the same reason (§5.2's 气泡与消息).
+ *
+ * It is the value the settings page's slider writes, and before this read carried it the control
+ * stored a number nothing acted on. What is pinned here is that it arrives on every arm — a window
+ * with no character still draws the bubble — and that a value the rule refuses takes the schema's
+ * default rather than being drawn anyway.
+ */
+describe('the bubble alpha a window is handed', () => {
+  it('is the stored alpha on every arm, including the two that draw no character', () => {
+    for (const status of ['unset', 'missing', 'ready'] as const) {
+      expect(petAppearanceView(read(status, 'system', 0.7)).bubbleOpacity, status).toBe(0.7)
+      expect(petAppearanceView(read(status, 'system', 1)).bubbleOpacity, status).toBe(1)
+    }
+  })
+
+  it('reads an absent alpha, and one outside the rule, as the schema default', () => {
+    // The rule is the schema's own, so this test cannot drift from what the store enforces.
+    const rule = PET_NUMBER_RULES['message.opacity']
+    expect(rule.fallback).toBe(PET_SETTINGS_DEFAULTS.message.opacity)
+
+    // Absent: an answer that did not come from this host — a double, or a build from before the
+    // field existed — is the value the bubble was drawn with before the field existed.
+    expect(petBubbleOpacityOf({})).toBe(rule.fallback)
+    expect(petAppearanceView(read('unset')).bubbleOpacity).toBe(rule.fallback)
+
+    // Outside the rule: the floor exists so a stored value cannot leave a bubble whose text
+    // cannot be read, and a window is not the place to make an exception to it.
+    expect(petBubbleOpacityOf({ bubbleOpacity: rule.min - 0.01 })).toBe(rule.fallback)
+    expect(petBubbleOpacityOf({ bubbleOpacity: rule.max + 0.01 })).toBe(rule.fallback)
+    expect(petBubbleOpacityOf({ bubbleOpacity: '0.8' })).toBe(rule.fallback)
+    // The ends themselves are inside it — a rule is a range, not an advisory.
+    expect(petBubbleOpacityOf({ bubbleOpacity: rule.min })).toBe(rule.min)
+    expect(petBubbleOpacityOf({ bubbleOpacity: rule.max })).toBe(rule.max)
   })
 })

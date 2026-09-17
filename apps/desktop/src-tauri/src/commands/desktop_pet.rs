@@ -84,8 +84,8 @@ pub use super::desktop_pet_surface::{
     __cmd__desktop_pet_read_settings, __cmd__desktop_pet_update_settings,
     __tauri_command_name_desktop_pet_read_settings,
     __tauri_command_name_desktop_pet_update_settings, apply_feature_switch,
-    apply_notification_switch, desktop_pet_read_settings, desktop_pet_update_settings,
-    PET_SETTINGS_CHANGED_CHANNEL, UNSELECTED_CHARACTER,
+    apply_notification_switch, apply_window_style, desktop_pet_read_settings,
+    desktop_pet_update_settings, PET_SETTINGS_CHANGED_CHANNEL, UNSELECTED_CHARACTER,
 };
 
 /// The channel a pet window hears a change in the feature's state on (§7.1).
@@ -439,12 +439,15 @@ pub fn desktop_pet_tasks(
 /// which is the rule `commands/fs.rs` settled for the vault's images: one `allow_file` per
 /// resolved file, never a directory, and never a scope entry for the library.
 ///
-/// It reads two domains, and the second is the one a pet window cannot read for itself: `general`
-/// supplies the motion policy ([`crate::desktop_pet::Motion`]) — §5.2's 「跟随系统/应用设置」, which
-/// the 常规与交互 page writes and which nothing on the desktop followed until this read carried it.
-/// `capabilities/desktop-pet.json` deliberately holds no `desktop_pet_read_settings`, so a window
-/// that asked for a domain would be a window that could read every field of the pet's settings;
-/// what it is handed instead is the one policy it draws with, read here from the same store.
+/// It reads three domains, and two of them are the ones a pet window cannot read for itself:
+/// `general` supplies the motion policy ([`crate::desktop_pet::Motion`]) — §5.2's 「跟随系统/应用设置」,
+/// which the 常规与交互 page writes and which nothing on the desktop followed until this read carried
+/// it — and `message` supplies the bubble's background alpha
+/// ([`crate::desktop_pet::BubbleOpacity`]), which §5.2's 气泡与消息 writes and which the bubble in
+/// this window draws with. `capabilities/desktop-pet.json` deliberately holds no
+/// `desktop_pet_read_settings`, so a window that asked for a domain would be a window that could
+/// read every field of the pet's settings; what it is handed instead is the two policies it draws
+/// with, read here from the same store.
 #[tauri::command]
 pub fn desktop_pet_appearance<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -455,8 +458,11 @@ pub fn desktop_pet_appearance<R: tauri::Runtime>(
     // schema's own default rather than guessed at: the windows are told the policy this build was
     // built with, which is the arm every other unreadable field takes. The character record below
     // is the one that decides whether there is a window to draw at all, and *its* read-only arm is
-    // still an error — a choice exists there and cannot be honoured.
+    // still an error — a choice exists there and cannot be honoured. The `message` record takes the
+    // same arm as `general`: the bubble's alpha is a surface this window can draw with any value,
+    // and a schema this build cannot read is not a reason to refuse the character too.
     let motion = crate::desktop_pet::character_view::stored_motion(&store);
+    let bubble_opacity = crate::desktop_pet::character_view::stored_bubble_opacity(&store);
     let record = match store.read(PetSettingsDomain::Character) {
         PetSettingsLoad::Current { record } | PetSettingsLoad::Migrated { record, .. } => record,
         // No record: a fresh install. Nothing is chosen, which is a state the window draws as a
@@ -464,7 +470,12 @@ pub fn desktop_pet_appearance<R: tauri::Runtime>(
         PetSettingsLoad::Defaults {
             reason: DefaultsReason::Absent,
             ..
-        } => return Ok(crate::desktop_pet::PetAppearance::Unset { motion }),
+        } => {
+            return Ok(crate::desktop_pet::PetAppearance::Unset {
+                motion,
+                bubble_opacity: bubble_opacity.value(),
+            })
+        }
         // There is a file and it is not a record this build can read. Reported rather than read as
         // "nothing chosen": a corrupt record is not an empty one, and drawing nothing for one
         // would hide the corruption behind a state the user could not tell from a fresh install.
@@ -488,7 +499,8 @@ pub fn desktop_pet_appearance<R: tauri::Runtime>(
         }
     };
     let library = app.try_state::<CharacterLibrary>();
-    let appearance = crate::desktop_pet::appearance(&record, motion, library.as_deref());
+    let appearance =
+        crate::desktop_pet::appearance(&record, motion, bubble_opacity, library.as_deref());
     if let crate::desktop_pet::PetAppearance::Ready { sheet_path, .. } = &appearance {
         allow_character_sheet(&app, Path::new(sheet_path));
     }

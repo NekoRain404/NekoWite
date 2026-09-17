@@ -28,6 +28,7 @@
  *    to the composition, which owns where the menu goes.
  */
 import { computed } from 'vue'
+import { PET_SETTINGS_DEFAULTS } from '../../../platform/gateways/pet-contracts'
 import type { PetTaskProjection, PetTaskState } from '../../../platform/gateways/pet-contracts'
 import {
   PET_BUBBLE_MAX_WIDTH,
@@ -57,6 +58,15 @@ const props = withDefaults(
     line?: string | null
     /** The user asked for the list — the menu's "Show tasks" — even when there is nothing in it. */
     forceList?: boolean
+    /**
+     * The bubble's background alpha (§5.2's 气泡与消息, upstream `ap_opacity`).
+     *
+     * `message.opacity` as the host's store read it, or the schema's default when a caller has
+     * none: the same value `petBubbleOpacityOf` hands `DesktopPetRoot`, and the same rule the
+     * settings page's slider is bounded by, so the control cannot produce one this surface would
+     * draw differently from what the store would keep.
+     */
+    bubbleOpacity?: number
   }>(),
   {
     tasks: () => [],
@@ -68,6 +78,7 @@ const props = withDefaults(
     labels: () => ({}),
     line: null,
     forceList: false,
+    bubbleOpacity: PET_SETTINGS_DEFAULTS.message.opacity,
   },
 )
 
@@ -107,7 +118,27 @@ function onContextMenu(event: MouseEvent): void {
  */
 defineExpose({ visible })
 
-const surfaceStyle = { maxWidth: `${PET_BUBBLE_MAX_WIDTH}px`, boxSizing: 'border-box' } as const
+/**
+ * The surface's own box, and the one thing about it that is a *setting*: the background's alpha
+ * (§5.2's 气泡与消息, upstream `ap_opacity`).
+ *
+ * The alpha and not a colour: which colour the bubble is comes from the host's palette through
+ * `--app-elevated`, so this setting can never become a second place the theme is decided — which
+ * is upstream's own rule too, where `applyBubble` writes `rgba(<the theme's rgb>, op)` and nothing
+ * else (`windows/src/main.ts:88-100`).
+ *
+ * Handed over as a custom property for the stylesheet to mix, rather than as a `background` spelled
+ * out here: the colour belongs to the palette and the alpha belongs to the setting, and one
+ * declaration that knows both is a declaration that has to repeat the palette's fallback.
+ */
+const surfaceStyle = computed(
+  () =>
+    ({
+      maxWidth: `${PET_BUBBLE_MAX_WIDTH}px`,
+      boxSizing: 'border-box',
+      '--pet-bubble-alpha': `${Math.round(props.bubbleOpacity * 100)}%`,
+    }) as const,
+)
 
 /**
  * The line's own box: the wrapping rules, and the same height cap the rows get.
@@ -159,7 +190,14 @@ const lineStyle = { ...PET_BUBBLE_MESSAGE_STYLE, ...PET_BUBBLE_SCROLL_STYLE } as
   /* One radius for both shapes: the line and the list are the same surface at two sizes, and a
      capsule with a list in it is the giveaway that they were built as two. */
   border-radius: var(--app-radius, 10px);
-  background: var(--app-elevated, rgb(0 0 0 / 62%));
+  /* The palette's colour, mixed toward `transparent` at the setting's own alpha (`surfaceStyle`
+     carries the percentage, `petBubbleOpacity` came from the host's `message` record). The second
+     argument of `var()` is what a caller that renders the bubble without a setting gets. */
+  background: color-mix(
+    in srgb,
+    var(--app-elevated, rgb(0 0 0 / 62%)) var(--pet-bubble-alpha, 92%),
+    transparent
+  );
   box-shadow: var(--app-shadow-card, 0 2px 10px rgb(0 0 0 / 35%));
   color: var(--app-text, #fff);
   font-family: var(--app-font, system-ui, sans-serif);

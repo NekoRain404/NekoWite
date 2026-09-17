@@ -94,6 +94,14 @@ pub struct SurfaceState {
     pub opened: Vec<(String, String)>,
     pub live: Vec<String>,
     pub closed: Vec<String>,
+    /// The presentation each window was opened with, by label. Kept because one of its flags is a
+    /// setting (`view.alwaysOnTop`), and what a case has to be able to assert is the flag the host
+    /// *asked for* rather than the one this file assumed.
+    pub styles: std::collections::BTreeMap<String, WindowStyle>,
+    /// Every always-on-top change, as (label, value) in the order they were asked for.
+    pub on_top: Vec<(String, bool)>,
+    /// Labels this fake refuses to restack, so the host's handling of a real refusal is reachable.
+    pub refuse_on_top: Vec<String>,
 }
 
 impl FakeSurfaces {
@@ -133,6 +141,16 @@ impl FakeSurfaces {
     pub fn live(&self) -> Vec<String> {
         self.state().live.clone()
     }
+
+    /// Every always-on-top change the host asked for, in order.
+    pub fn on_top_changes(&self) -> Vec<(String, bool)> {
+        self.state().on_top.clone()
+    }
+
+    /// The presentation one window was opened with, or `None` when it was never opened.
+    pub fn style_of(&self, label: &str) -> Option<WindowStyle> {
+        self.state().styles.get(label).copied()
+    }
 }
 
 impl PetSurfaces for FakeSurfaces {
@@ -142,7 +160,7 @@ impl PetSurfaces for FakeSurfaces {
         page: &str,
         _at: Placement,
         _size: (f64, f64),
-        _style: WindowStyle,
+        style: WindowStyle,
         _visible: bool,
     ) -> Result<(), String> {
         let mut state = self.state();
@@ -150,6 +168,7 @@ impl PetSurfaces for FakeSurfaces {
             .opened
             .push((label.as_str().to_string(), page.to_string()));
         state.live.push(label.as_str().to_string());
+        state.styles.insert(label.as_str().to_string(), style);
         Ok(())
     }
 
@@ -165,6 +184,15 @@ impl PetSurfaces for FakeSurfaces {
     }
 
     fn set_click_through(&mut self, _label: &PetWindowLabel, _ignore: bool) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn set_always_on_top(&mut self, label: &PetWindowLabel, on_top: bool) -> Result<(), String> {
+        let mut state = self.state();
+        if state.refuse_on_top.contains(&label.as_str().to_string()) {
+            return Err("the compositor declined".to_string());
+        }
+        state.on_top.push((label.as_str().to_string(), on_top));
         Ok(())
     }
 

@@ -13,6 +13,12 @@
  *    The third option is «follow the app» rather than the system: NekoWite already made that
  *    choice for itself, and a bubble that made it a second time could disagree with the window
  *    it is drawn in.
+ *  - `ap_opacity` → the opacity control: the bubble's *background alpha*
+ *    (`windows/src/main.ts:88-100`, control at `settings.html:172-173`). It used to be drawn on
+ *    常规与交互 as a window opacity, which is a setting upstream never had and this build could not
+ *    have honoured — no crate in its tree exposes a window-opacity call — so the control wrote a
+ *    value nothing read. The ledger (`desktop-pet-port-ledger.md:112`) and the plan (「Bubble：主题、
+ *    透明度、字体……」) both file the key here, which is where upstream drew it.
  *  - `message.bubbleSeconds` → how long a bubble stays. This one is ours rather than upstream's
  *    (§6.3's suggested 6 seconds); its ends and its whole-number requirement come from
  *    `PET_NUMBER_RULES`, so the control can only produce a value the write accepts (§5.3
@@ -36,12 +42,11 @@
  *    idle-chatter switch): the schema holds all three since D7d, and the phrase *vocabulary* is
  *    still a set of words chosen elsewhere (`pet-message-template.ts`, D9) with no pool per theme
  *    to choose between — so once more a stored value and nothing that reads it.
- *  - `ap_opacity` and `ap_font_size` are *migrated*, on the 常规与交互 page
- *    (`PetGeneralSettings.vue` draws `view.opacity`; `ap_font_size` is `message.fontSize`, which
- *    no bubble reads yet); `ap_font_family` is read by the bubble window (`main.ts:105`) and
- *    upstream ships no control that writes it, so there is none to port. None of the four is
- *    duplicated here: one setting gets one control, and both pages share the container's single
- *    `view` session anyway.
+ *  - `ap_font_size` is `message.fontSize`, stored but not drawn: nothing reads it yet, and the
+ *    sentence above it says so rather than offering a control that would save a number no surface
+ *    acts on. `ap_font_family` is read by the bubble window (`main.ts:105`) and upstream ships no
+ *    control that writes it, so there is none to port. Neither is duplicated here: one setting gets
+ *    one control, and no other page draws a `message` field.
  *
  * The session is the container's (`DesktopPetSettings.vue` creates one per domain), so this page
  * never creates one and never calls `load()`: a page that is not on screen should not read. It
@@ -102,8 +107,28 @@ const THEME_KEYS: { [T in BubbleTheme]: string } = {
 /** The schema's own rule for the field, not a bound picked here (§5.3). */
 const DURATION_RULE = PET_NUMBER_RULES['message.bubbleSeconds']
 
+/**
+ * The opacity control's rule, and the same one the store will apply (§5.3).
+ *
+ * The stored value is the *alpha* — upstream's control is a 60–100 percent slider and the value it
+ * saves is `percent / 100` (`main.ts:93`) — so the control and the write meet at the percentage the
+ * user reads, and the ends come from the rule rather than from this page.
+ */
+const OPACITY_RULE = PET_NUMBER_RULES['message.opacity']
+const opacityPercent = computed(() => Math.round(values.value.opacity * 100))
+
 function setTheme(theme: BubbleTheme): void {
   message.edit('theme', theme)
+}
+
+/**
+ * The ends are applied here as well as on the input, for the reason `setDuration` states: this is
+ * the submit path, and it is where the write is trusted from.
+ */
+function setOpacity(percent: number): void {
+  if (!Number.isFinite(percent)) return
+  const rounded = Math.round(percent) / 100
+  message.edit('opacity', Math.min(OPACITY_RULE.max, Math.max(OPACITY_RULE.min, rounded)))
 }
 
 /**
@@ -161,6 +186,25 @@ defineExpose({ settle })
         </button>
       </div>
       <span class="settings-note">{{ t('settings.pet.bubble.themeNote') }}</span>
+
+      <label
+        class="settings-field"
+        for="pet-bubble-opacity"
+      >
+        <span>{{ t('settings.pet.bubble.opacity', { pct: opacityPercent }) }}</span>
+        <input
+          id="pet-bubble-opacity"
+          class="input range"
+          type="range"
+          :min="Math.round(OPACITY_RULE.min * 100)"
+          :max="Math.round(OPACITY_RULE.max * 100)"
+          step="1"
+          :value="opacityPercent"
+          data-test="pet-bubble-opacity"
+          @input="setOpacity(Number(($event.target as HTMLInputElement).value))"
+        >
+      </label>
+      <span class="settings-note">{{ t('settings.pet.bubble.opacityNote') }}</span>
 
       <span class="settings-label">{{ t('settings.pet.bubble.duration', { seconds: values.bubbleSeconds }) }}</span>
       <input
@@ -222,6 +266,8 @@ defineExpose({ settle })
    restated in the pages that render them, the way `PetGeneralSettings.vue` restates its own:
    a scoped block belongs to the component that renders the element. */
 .settings-section { display: flex; flex-direction: column; gap: 8px; }
+.settings-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--app-text); }
+.settings-field > span { color: var(--app-muted); font-size: 11px; }
 .settings-note { font-size: 11px; line-height: 1.5; color: var(--app-muted); }
 .settings-label {
   margin-top: 6px;

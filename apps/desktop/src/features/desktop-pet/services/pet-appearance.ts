@@ -13,7 +13,12 @@
  * re-checked them would be the second rule; the only judgement made below is about *what to say*
  * when the host has nothing to draw.
  */
-import { PET_SETTINGS_DEFAULTS, petMotionOf } from '../../../platform/gateways/pet-contracts'
+import {
+  PET_NUMBER_RULES,
+  PET_SETTINGS_DEFAULTS,
+  petMotionOf,
+  readPetNumber,
+} from '../../../platform/gateways/pet-contracts'
 import type { PetAppearance, PetMotion } from '../../../platform/gateways/pet-contracts'
 import type { AnimationConfig } from '../rendering/animation-bindings'
 
@@ -43,6 +48,15 @@ export interface PetAppearanceView {
    * asks its engine keeps the two from being confused for one another.
    */
   motion: PetMotion
+  /**
+   * The bubble's background alpha (`message.opacity`, §5.2's 气泡与消息).
+   *
+   * On every arm for the same reason `motion` is: the bubble is drawn by the window whether or not
+   * a character is chosen — `DesktopPetRoot.vue` shows it above the notice — and a value that only
+   * arrived with `Ready` would leave a fresh install's bubble at whatever this build's constant
+   * said. Already inside its rule: the host's store validated the domain it came from (§5.3).
+   */
+  bubbleOpacity: number
   /** What to say instead of drawing, or null when there is something to draw. */
   notice: string | null
 }
@@ -68,12 +82,17 @@ export function petAppearanceView(read: PetAppearance): PetAppearanceView {
   // moves (the ball's `unset` is a fresh install). `petMotionOf` is where an answer that carries
   // none becomes the schema's default, which is the reading of a value this build cannot act on.
   const motion = petMotionOf(read)
+  // The other fact that is not the character's, read once for every arm: the bubble is drawn in all
+  // of them, and `petBubbleOpacityOf` is where an answer that carries none becomes the schema's
+  // default — the value this build's bubble was drawn with before the field existed.
+  const bubbleOpacity = petBubbleOpacityOf(read)
   if (read.status === 'unset') {
     return {
       imageUrl: null,
       ...box(PET_SETTINGS_DEFAULTS.character.size),
       animation: {},
       motion,
+      bubbleOpacity,
       notice: 'No character is selected.',
     }
   }
@@ -83,6 +102,7 @@ export function petAppearanceView(read: PetAppearance): PetAppearanceView {
       ...box(PET_SETTINGS_DEFAULTS.character.size),
       animation: {},
       motion,
+      bubbleOpacity,
       notice: `The character "${read.characterId}" cannot be drawn: ${read.detail}.`,
     }
   }
@@ -96,8 +116,27 @@ export function petAppearanceView(read: PetAppearance): PetAppearanceView {
       idleIntervalMs: read.idleIntervalMs,
     },
     motion,
+    bubbleOpacity,
     notice: null,
   }
+}
+
+/**
+ * The bubble's background alpha a read carries, or the schema's default where it carries none.
+ *
+ * Through the schema's own rule and not a bound picked here (§5.3's 「界面和后端使用同一规则」): the
+ * same `PET_NUMBER_RULES['message.opacity']` the store validates a write against, so a window
+ * cannot draw an alpha the store would have refused. An absent field — a host from before this
+ * read carried one, or a double — takes the rule's fallback, which is the value the bubble was
+ * drawn with before the field existed; anything else the rule refuses is read the same way, which
+ * is why the floor holds here too.
+ *
+ * Resolved beside the props it becomes rather than inside the contract, the way
+ * `pet-bubble-layout.ts` resolves the bubble's other `message` fields: `pet-contracts/appearance.ts`
+ * carries the wire shape, and what a value the wire does not carry *means* is the drawing side's.
+ */
+export function petBubbleOpacityOf(read: { bubbleOpacity?: unknown }): number {
+  return readPetNumber(read.bubbleOpacity, PET_NUMBER_RULES['message.opacity'])
 }
 
 /** The sprite box for a size in CSS pixels, at the sheet's aspect. */

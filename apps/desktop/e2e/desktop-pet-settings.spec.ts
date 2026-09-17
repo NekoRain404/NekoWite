@@ -489,8 +489,8 @@ test('what a page writes is what it reads back when it is reopened', async ({ pa
   await openNote(page)
   await openPetSection(page)
 
-  // Three domains, three pages: do-not-disturb (`notification`), the window opacity (`view`) and
-  // the character's size (`character`).
+  // Three domains, three pages: do-not-disturb (`notification`), the bubble's opacity (`message`)
+  // and the character's size (`character`).
   //
   // The do-not-disturb switch is the sixth checkbox on its page by the page's own declaration: four
   // event switches, then the sound, then the do-not-disturb, then the task title. Positional rather
@@ -498,8 +498,8 @@ test('what a page writes is what it reads back when it is reopened', async ({ pa
   // alongside, so a page that reordered its controls fails here rather than passing silently.
   await openTab(page, 'notification')
   await page.locator('#e2e-pet-settings .settings-toggle input.checkbox').nth(5).check()
-  await openTab(page, 'general')
-  await slide(page.locator('#e2e-pet-settings input#pet-general-opacity'), 42)
+  await openTab(page, 'bubble')
+  await slide(page.locator('#e2e-pet-settings input#pet-bubble-opacity'), 70)
   await openTab(page, 'character')
   await page.locator('#e2e-pet-settings [data-test="pet-character-preset-125"]').click()
 
@@ -513,7 +513,8 @@ test('what a page writes is what it reads back when it is reopened', async ({ pa
   // read: this is the page's control showing a value the store held, which is the half a test of the
   // store alone cannot have.
   await expect(page.locator('#e2e-pet-settings .settings-toggle input.checkbox').first()).toBeChecked()
-  await expect(page.locator('#e2e-pet-settings input#pet-general-opacity')).toHaveValue('42')
+  await openTab(page, 'bubble')
+  await expect(page.locator('#e2e-pet-settings input#pet-bubble-opacity')).toHaveValue('70')
   await openTab(page, 'character')
   await expect(page.locator('#e2e-pet-settings [data-test="pet-character-size"]')).toHaveValue('200')
   await openTab(page, 'notification')
@@ -522,7 +523,7 @@ test('what a page writes is what it reads back when it is reopened', async ({ pa
   // …and the store agrees with the controls, which is what makes the three reads above a fact about
   // what was written rather than about what the page happened to render.
   expect(await stored(page, 'notification')).toMatchObject({ doNotDisturb: true })
-  expect(await stored(page, 'view')).toMatchObject({ opacity: 0.42 })
+  expect(await stored(page, 'message')).toMatchObject({ opacity: 0.7 })
   expect(await stored(page, 'character')).toMatchObject({ size: 200 })
 })
 

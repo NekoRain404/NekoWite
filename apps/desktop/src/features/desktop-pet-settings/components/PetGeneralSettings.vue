@@ -13,6 +13,13 @@
  * 窗口行为. The restored-defaults action is the two of them together and nothing else (§5.3
  * 「恢复本页默认只影响当前域」).
  *
+ * **不透明度 is not one of its rows, and that is a correction.** The control this page used to draw
+ * was filed as a *window* opacity, which is a setting upstream never had and this build cannot
+ * honour — no crate in its tree exposes a window-opacity call. Upstream's `ap_opacity` is the
+ * bubble's background alpha (`windows/src/main.ts:88-100`, control at `settings.html:172-173`), and
+ * the ledger and the plan both file it under 气泡与消息, so the control lives on that page and
+ * `message.opacity` carries it.
+ *
  * The ball's switch is *disabled while the pet is off*, and that is the honest treatment of a
  * preference about one of the pet's windows: it is still stored, still meaningful and still the
  * user's, but it can have no visible effect until 显示桌宠 is on — and §5.2 forbids a control that
@@ -27,7 +34,6 @@
 import { computed } from 'vue'
 import SelectMenu, { type SelectOption } from '../../../components/SelectMenu.vue'
 import { t } from '../../../i18n'
-import { PET_NUMBER_RULES } from '../../../platform/gateways/pet-contracts'
 import type { PetCapability, PetRoamMode } from '../../../platform/gateways/pet-contracts'
 import type { PetSettingsContext } from './DesktopPetSettings.vue'
 import { reportedCapabilities } from '../services/pet-capability-report'
@@ -41,14 +47,6 @@ const { general, view } = props.context.sessions
 
 const generalValues = computed(() => general.values.value)
 const viewValues = computed(() => view.values.value)
-
-/**
- * Both domains are read through the same rule the store will apply (§5.3
- * 「界面和后端使用同一规则」): the slider's ends are the schema's, not numbers this page picked,
- * so a value the control can produce is a value the write accepts.
- */
-const OPACITY_RULE = PET_NUMBER_RULES['view.opacity']
-const opacityPercent = computed(() => Math.round(viewValues.value.opacity * 100))
 
 /**
  * A store written by a newer build is read-only (§10.2), and the controls are not drawn at all
@@ -128,9 +126,6 @@ function setBall(value: boolean): void {
 function setMotion(value: string | number): void {
   general.edit('motion', value === 'reduced' ? 'reduced' : 'system')
 }
-function setOpacity(percent: number): void {
-  view.edit('opacity', percent / 100)
-}
 function setAlwaysOnTop(value: boolean): void {
   view.edit('alwaysOnTop', value)
 }
@@ -192,23 +187,6 @@ function resetPage(): void {
       <span class="settings-note">{{ t('settings.pet.general.motionNote') }}</span>
 
       <span class="settings-label">{{ t('settings.pet.general.window') }}</span>
-
-      <label
-        class="settings-field"
-        for="pet-general-opacity"
-      >
-        <span>{{ t('settings.pet.general.opacity', { pct: opacityPercent }) }}</span>
-        <input
-          id="pet-general-opacity"
-          class="input range"
-          type="range"
-          :min="Math.round(OPACITY_RULE.min * 100)"
-          :max="Math.round(OPACITY_RULE.max * 100)"
-          step="1"
-          :value="opacityPercent"
-          @input="setOpacity(Number(($event.target as HTMLInputElement).value))"
-        >
-      </label>
 
       <label class="settings-field settings-toggle">
         <span>{{ t('settings.pet.general.alwaysOnTop') }}</span>

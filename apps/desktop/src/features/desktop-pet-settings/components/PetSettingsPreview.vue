@@ -32,7 +32,6 @@ const { general, character, view, message } = props.context.sessions
 
 const generalValues = computed(() => general.values.value)
 const characterValues = computed(() => character.values.value)
-const viewValues = computed(() => view.values.value)
 const messageValues = computed(() => message.values.value)
 
 /**
@@ -47,8 +46,18 @@ const ready = computed(() =>
 const enabled = computed(() => generalValues.value.enabled)
 const size = computed(() => characterValues.value.size)
 const noCharacter = computed(() => characterValues.value.characterId === null)
-const opacity = computed(() => viewValues.value.opacity)
 const seconds = computed(() => messageValues.value.bubbleSeconds)
+
+/**
+ * The bubble's background alpha, as the bubble draws it (§5.2's 气泡与消息).
+ *
+ * It is on the *bubble* and not on the figure: the setting is the surface the words sit on
+ * (upstream `ap_opacity` → `--bubble-bg`'s alpha, `main.ts:88-100`), and a stage that dimmed the
+ * character instead would be showing a pet nobody's window draws. It applies to the theme
+ * overrides below too, because it is an alpha and not a colour — the colour is the theme's.
+ */
+const bubbleAlpha = computed(() => `${Math.round(messageValues.value.opacity * 100)}%`)
+const bubbleStyle = computed(() => ({ '--pet-bubble-alpha': bubbleAlpha.value }))
 
 /** The largest figure this panel can draw, in CSS pixels. */
 const STAGE_MAX_PX = 132
@@ -66,7 +75,6 @@ const scaledPercent = computed(() => (scale.value < 1 ? Math.round(scale.value *
 const figureStyle = computed(() => ({
   width: `${Math.round(size.value * scale.value)}px`,
   height: `${Math.round(size.value * scale.value)}px`,
-  opacity: String(opacity.value),
 }))
 
 /** The bubble's theme: the host's unless the user set an override (§5.2). */
@@ -74,6 +82,7 @@ const themeClass = computed(() => {
   const theme = messageValues.value.theme
   return theme === 'system' ? null : `is-${theme}`
 })
+
 
 /**
  * Whether the system asked for less motion. Read once — a preference change mid-session is not
@@ -151,6 +160,7 @@ onBeforeUnmount(() => {
               v-if="bubbleOpen"
               class="pet-preview__bubble"
               :class="themeClass"
+              :style="bubbleStyle"
             >
               {{ t('settings.pet.preview.bubbleText') }}
             </p>
@@ -234,15 +244,25 @@ onBeforeUnmount(() => {
   padding: 5px 8px;
   border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);
   border-radius: var(--app-radius-lg);
-  background: var(--app-elevated);
+  /* Each theme's own colour, mixed toward `transparent` at the alpha the setting holds — one
+     expression per colour, and the colour is never written twice. */
+  background: color-mix(in srgb, var(--app-elevated) var(--pet-bubble-alpha, 92%), transparent);
   color: var(--app-text);
   font-size: 11px;
   line-height: 1.4;
 }
-/* The two overrides §5.2 allows. No rule here is on the default path: with `system` the bubble
-   takes the host's own variables, which is what "follow the app" has to mean. */
-.pet-preview__bubble.is-light { background: #f7f7f5; color: #23211f; border-color: #d9d6d1; }
-.pet-preview__bubble.is-dark { background: #23211f; color: #f2f0ec; border-color: #3a3733; }
+/* The two theme overrides §5.2 allows. No rule here is on the default path: with `system` the
+   bubble takes the host's own variables, which is what "follow the app" has to mean. */
+.pet-preview__bubble.is-light {
+  background: color-mix(in srgb, #f7f7f5 var(--pet-bubble-alpha, 92%), transparent);
+  color: #23211f;
+  border-color: #d9d6d1;
+}
+.pet-preview__bubble.is-dark {
+  background: color-mix(in srgb, #23211f var(--pet-bubble-alpha, 92%), transparent);
+  color: #f2f0ec;
+  border-color: #3a3733;
+}
 
 .pet-preview__ask { align-self: flex-start; }
 

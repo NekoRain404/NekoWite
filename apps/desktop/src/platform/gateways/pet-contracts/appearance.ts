@@ -73,6 +73,7 @@ export function petMotionOf(read: { motion?: PetMotion }): PetMotion {
   return read.motion === 'reduced' ? 'reduced' : PET_MOTION_DEFAULT
 }
 
+
 /**
  * What the pet window draws, or why it draws nothing (`desktop_pet_appearance`).
  *
@@ -90,6 +91,21 @@ export function petMotionOf(read: { motion?: PetMotion }): PetMotion {
 export type PetAppearance = {
   /** The window's motion policy, from `general.motion`. See {@link petMotionOf} for an absent one. */
   motion?: PetMotion
+  /**
+   * The bubble's background alpha, from `message.opacity`.
+   *
+   * A `message` field riding this read for the reason {@link PetMotion} gives: the bubble is one of
+   * the surfaces in the window that draws the character, and `capabilities/desktop-pet.json` holds
+   * no settings read, so the window cannot ask for the domain itself. Without it the control on
+   * §5.2's 气泡与消息 page would store a number nothing acts on — which is the defect the field was
+   * moved out of `view` to end.
+   *
+   * Optional, and read through the field's own rule by whoever draws it
+   * (`features/desktop-pet/services/pet-appearance.ts`'s `petBubbleOpacityOf`, which uses
+   * `PET_NUMBER_RULES['message.opacity']`): an answer from a host that does not carry it — or from
+   * a double — is the schema's default rather than a guess.
+   */
+  bubbleOpacity?: number
 } & (
   /** No character is chosen. */
   | { status: 'unset' }

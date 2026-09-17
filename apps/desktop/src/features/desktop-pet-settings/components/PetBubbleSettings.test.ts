@@ -83,6 +83,12 @@ function durationSlider(): HTMLInputElement {
   return slider
 }
 
+function opacitySlider(): HTMLInputElement {
+  const slider = document.querySelector<HTMLInputElement>('[data-test="pet-bubble-opacity"]')
+  if (!slider) throw new Error('no opacity slider')
+  return slider
+}
+
 function themeButton(theme: string): HTMLButtonElement {
   const button = document.querySelector<HTMLButtonElement>(`[data-test="pet-bubble-theme-${theme}"]`)
   if (!button) throw new Error(`no theme button ${theme}`)
@@ -159,6 +165,65 @@ describe('the bubble theme', () => {
     mount(gateway)
     await flush()
     expect(activeTheme()).toBe('dark')
+  })
+})
+
+/**
+ * The bubble's own background alpha.
+ *
+ * These assertions were `PetGeneralSettings.test.ts`'s until the field moved: it used to be filed
+ * as a *window* opacity, which upstream never had and this build has no engine call for, so the
+ * control wrote a value nothing read. Upstream's `ap_opacity` is the bubble's `--bubble-bg` alpha,
+ * drawn on this page (`windows/settings.html:172-173`), and the check follows the control.
+ */
+describe('how opaque the bubble’s background is', () => {
+  it('starts the opacity slider and its ends at the schema’s own rule', async () => {
+    mount(createMemoryPetGateway())
+    await flush()
+
+    expect(opacitySlider().value).toBe('92')
+    // §5.3 「界面和后端使用同一规则」: the ends are `PET_NUMBER_RULES`, not numbers picked here, and
+    // the rule holds upstream's own percent slider — 60 to 100 — as the fraction the alpha is.
+    expect(opacitySlider().min).toBe('60')
+    expect(opacitySlider().max).toBe('100')
+    expect(PET_SETTINGS_DEFAULTS.message.opacity).toBe(0.92)
+  })
+
+  it('writes the fraction the percentage stands for, and cannot leave the rule', async () => {
+    const gateway = createMemoryPetGateway()
+    mount(gateway)
+    await flush()
+
+    opacitySlider().value = '70'
+    opacitySlider().dispatchEvent(new Event('input', { bubbles: true }))
+    await flush(DEBOUNCE_PLUS)
+    expect((await storedValues(gateway, 'message')).opacity).toBeCloseTo(0.7)
+
+    // Past the ends, which the input's own `min`/`max` already refuse for a gesture: what this
+    // pins is that the submit path applies the same rule rather than trusting the element.
+    opacitySlider().value = '10'
+    opacitySlider().dispatchEvent(new Event('input', { bubbles: true }))
+    await flush(DEBOUNCE_PLUS)
+    expect((await storedValues(gateway, 'message')).opacity).toBeCloseTo(0.6)
+
+    opacitySlider().value = '150'
+    opacitySlider().dispatchEvent(new Event('input', { bubbles: true }))
+    await flush(DEBOUNCE_PLUS)
+    expect((await storedValues(gateway, 'message')).opacity).toBeCloseTo(1)
+  })
+
+  it('reads the stored alpha back when the dialog is reopened', async () => {
+    const gateway = createMemoryPetGateway()
+    await seed(gateway, 'message', { opacity: 0.75 })
+    mount(gateway)
+    await flush()
+
+    expect(opacitySlider().value).toBe('75')
+
+    unmountAll()
+    mount(gateway)
+    await flush()
+    expect(opacitySlider().value).toBe('75')
   })
 })
 

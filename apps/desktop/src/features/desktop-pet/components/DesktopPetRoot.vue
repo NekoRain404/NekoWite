@@ -161,6 +161,10 @@ const clickThrough = props.connection
  * orb is the surface that moves, so `PetBallWindow.vue` is where the policy is applied; a
  * `reduce-motion` rule added here without a surface to apply it to would be a class nothing could
  * see.
+ *
+ * `appearance.bubbleOpacity` *is* read here, and it is the same test in the other direction: the
+ * bubble is in this window, so §5.2's 气泡与消息 opacity has something to change on this surface —
+ * and without this line the control on that page would write a value nothing draws.
  */
 const appearance = computed<PetAppearanceView | null>(() => window_?.appearance.value ?? null)
 const imageUrl = computed(() => appearance.value?.imageUrl ?? props.imageUrl)
@@ -257,6 +261,7 @@ defineExpose({ lifecycle })
       :tasks="tasks"
       :now="window_?.now.value ?? 0"
       :force-list="listOpen"
+      :bubble-opacity="appearance?.bubbleOpacity"
       @select="selectTask"
       @menu="openMenu"
     />

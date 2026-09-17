@@ -16,6 +16,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, type App as VueApp } from 'vue'
+import { PET_SETTINGS_DEFAULTS } from '../../../platform/gateways/pet-contracts'
 import type { PetTaskKey, PetTaskProjection, PetTaskState } from '../../../platform/gateways/pet-contracts'
 import { PET_BUBBLE_MAX_HEIGHT, PET_BUBBLE_MAX_WIDTH } from '../services/pet-bubble-layout'
 import PetBubble from './PetBubble.vue'
@@ -121,6 +122,45 @@ describe('what the bubble shows', () => {
 
     expect(bubble()?.dataset.mode).toBe('line')
     expect(lines()).toEqual([IDLE_LINE])
+  })
+})
+
+/**
+ * The one setting that reaches this surface's own appearance: the background's alpha (§5.2's
+ * 气泡与消息, upstream `ap_opacity`).
+ *
+ * Asserted through the custom property the surface carries, because the *background* is a
+ * `color-mix()` the stylesheet owns — the colour is the palette's and the alpha is the setting's,
+ * and this component decides only the second.
+ */
+describe('how opaque the bubble is', () => {
+  it('draws the alpha the host read carried', () => {
+    mount({ line: IDLE_LINE, bubbleOpacity: 0.7 })
+
+    expect(bubble()?.style.getPropertyValue('--pet-bubble-alpha')).toBe('70%')
+  })
+
+  it('falls back to the schema’s own default when the caller has no alpha to give', () => {
+    // A window with no host read — the state `DesktopPetRoot` renders for — still draws a bubble,
+    // and what it draws is the value this build was built with rather than nothing at all.
+    mount({ line: IDLE_LINE })
+
+    expect(bubble()?.style.getPropertyValue('--pet-bubble-alpha')).toBe(
+      `${Math.round(PET_SETTINGS_DEFAULTS.message.opacity * 100)}%`,
+    )
+  })
+
+  it('draws the same surface whatever it is showing, list or line', () => {
+    // Both shapes are one surface (§5.2's bubble), so a setting about its background cannot apply
+    // to one of them. Two mounts rather than one so the assertion is about the shape each is in.
+    mount({ tasks: [task('working', 'a')], layout: { grouping: 'flat' }, bubbleOpacity: 0.6 })
+    expect(bubble()?.dataset.mode).toBe('list')
+    expect(bubble()?.style.getPropertyValue('--pet-bubble-alpha')).toBe('60%')
+
+    document.body.innerHTML = ''
+    mount({ line: IDLE_LINE, bubbleOpacity: 0.6 })
+    expect(bubble()?.dataset.mode).toBe('line')
+    expect(bubble()?.style.getPropertyValue('--pet-bubble-alpha')).toBe('60%')
   })
 })
 

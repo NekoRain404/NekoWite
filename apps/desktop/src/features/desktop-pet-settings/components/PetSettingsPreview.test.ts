@@ -14,6 +14,8 @@ import { t } from '../../../i18n'
 import { createMemoryPetGateway, type MemoryPetGateway } from '../../../platform/gateways/memory-pet'
 import type { PetSettingsDomain, PetSettingsWrite } from '../../../platform/gateways/pet-contracts'
 import DesktopPetSettings from './DesktopPetSettings.vue'
+import type { PetSettingsContext } from './DesktopPetSettings.vue'
+import PetBubbleSettings from './PetBubbleSettings.vue'
 
 let mounted: VueApp[] = []
 let warnSpy: ReturnType<typeof vi.spyOn>
@@ -54,6 +56,31 @@ function mount(gateway: MemoryPetGateway): void {
   mounted.push(app)
 }
 
+/**
+ * The same container, opened on the bubble page and given that page's component as slot content.
+ *
+ * The bubble's controls are another task's page (`PetBubbleSettings.vue`), and the container
+ * offers a page only when something is behind it — so a test that wants to *move* the opacity
+ * control has to supply it, which is also how the app mounts it.
+ */
+function mountOnBubblePage(gateway: MemoryPetGateway): void {
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const app = createApp({
+    render: () =>
+      h(
+        DesktopPetSettings,
+        { gateway, page: 'bubble' },
+        {
+          bubble: (slotProps: Record<string, unknown>) =>
+            h(PetBubbleSettings, { context: slotProps.context as PetSettingsContext }),
+        },
+      ),
+  })
+  app.mount(host)
+  mounted.push(app)
+}
+
 async function flush(ms = 0): Promise<void> {
   await vi.advanceTimersByTimeAsync(ms)
   await nextTick()
@@ -75,6 +102,19 @@ function askForBubble(): void {
   const ask = document.querySelector<HTMLButtonElement>('.pet-preview__ask')
   if (!ask) throw new Error('no bubble button')
   ask.click()
+}
+
+/**
+ * The alpha the stage's bubble is drawn at.
+ *
+ * Read off the custom property the surface carries rather than off `style.background`: the
+ * background is a `color-mix()` expression the *stylesheet* owns (the colour is the theme's, the
+ * alpha is the setting's), and the binding is what this component decides.
+ */
+function bubbleAlpha(): string {
+  const el = document.querySelector<HTMLElement>('.pet-preview__bubble')
+  if (!el) throw new Error('no preview bubble')
+  return el.style.getPropertyValue('--pet-bubble-alpha')
 }
 
 async function storedValues(
@@ -103,23 +143,30 @@ async function seed(
 }
 
 describe('the stage follows the draft', () => {
-  it('moves with the opacity slider before anything is written', async () => {
+  it('moves the bubble with the opacity slider before anything is written', async () => {
     const gateway = createMemoryPetGateway()
     const write = vi.spyOn(gateway, 'updateSettings')
-    mount(gateway)
+    mountOnBubblePage(gateway)
     await flush()
 
-    expect(figure().style.opacity).toBe('1')
+    // The stage draws the bubble on request (§6.3 keeps a bubble from appearing on its own), and
+    // it opens on the schema's default alpha.
+    askForBubble()
+    await flush()
+    expect(bubbleAlpha()).toBe('92%')
 
-    const slider = document.querySelector<HTMLInputElement>('#pet-general-opacity')
+    const slider = document.querySelector<HTMLInputElement>('#pet-bubble-opacity')
     if (!slider) throw new Error('no opacity slider')
-    slider.value = '40'
+    slider.value = '70'
     slider.dispatchEvent(new Event('input', { bubbles: true }))
     await nextTick()
 
-    // Still inside the debounce window: nothing has been saved, and the stage has moved.
+    // Still inside the debounce window: nothing has been saved, and the stage has moved — on the
+    // *bubble*, which is the surface the setting is about. The figure keeps the character's size
+    // and is not dimmed, because upstream's alpha is `--bubble-bg`'s and nothing else's.
     expect(write).not.toHaveBeenCalled()
-    expect(figure().style.opacity).toBe('0.4')
+    expect(bubbleAlpha()).toBe('70%')
+    expect(figure().style.opacity).toBe('')
   })
 
   it('takes the bubble away after the setting’s own life, not a number of its own', async () => {

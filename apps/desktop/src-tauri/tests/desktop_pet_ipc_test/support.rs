@@ -40,6 +40,13 @@ pub struct SurfaceState {
     pub hidden: BTreeMap<String, bool>,
     pub click_through: BTreeMap<String, bool>,
     pub closed: Vec<String>,
+    /// Every always-on-top change, as (label, value) in the order they were asked for. A list
+    /// rather than a map: what a case asserts about is usually *that the change was asked for at
+    /// all*, and a map of the current values cannot tell that from a window that was opened that
+    /// way already.
+    pub always_on_top: Vec<(String, bool)>,
+    /// Labels this fake refuses to restack, so the host's handling of a real refusal is reachable.
+    pub refuse_always_on_top: Vec<String>,
     /// Labels the window system refuses to close, so the host's handling of a real failure has a
     /// way to be reached without inventing one.
     pub refuse_close: Vec<String>,
@@ -110,6 +117,11 @@ impl FakeSurfaces {
             .expect("the ball was never opened")
     }
 
+    /// Every always-on-top change the host asked for, in order.
+    pub fn on_top_changes(&self) -> Vec<(String, bool)> {
+        self.state().always_on_top.clone()
+    }
+
     /// The live windows that are not the ball's.
     pub fn live_characters(&self) -> Vec<String> {
         self.live()
@@ -164,6 +176,20 @@ impl PetSurfaces for FakeSurfaces {
         self.state()
             .click_through
             .insert(label.as_str().to_string(), ignore);
+        Ok(())
+    }
+
+    fn set_always_on_top(&mut self, label: &PetWindowLabel, on_top: bool) -> Result<(), String> {
+        let mut state = self.state();
+        if state
+            .refuse_always_on_top
+            .contains(&label.as_str().to_string())
+        {
+            return Err("the compositor declined".to_string());
+        }
+        state
+            .always_on_top
+            .push((label.as_str().to_string(), on_top));
         Ok(())
     }
 

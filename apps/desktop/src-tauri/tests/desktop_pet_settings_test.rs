@@ -15,6 +15,10 @@
 //!   window, and the switch going off closes every one of them without deleting anything.
 //! - `motion.rs` — §5.2's 动效 as a pet window receives it: the policy the `general` record holds
 //!   rides the appearance read, because a pet window may not read a settings domain for itself.
+//! - `bubble.rs` — §5.2's 气泡与消息 the same way: the bubble's background alpha, which `message`
+//!   stores and the window draws with, needs the same road into a window that cannot read it.
+//! - `window_style.rs` — §5.2's 窗口行为 the same way again: `view.alwaysOnTop` is the one window
+//!   flag that is a setting, and the windows are what have to follow it.
 //! - `schema.rs` — the mirror itself, compared against `pet-contracts/config.ts` and
 //!   `pet-settings-values.ts`, so a field or a rule added on one side alone fails a test.
 //!
@@ -30,6 +34,8 @@
 //! One target and one command: `cargo test --test desktop_pet_settings_test` runs all of them,
 //! because a test in a file nobody runs is not evidence.
 
+#[path = "desktop_pet_settings_test/bubble.rs"]
+mod bubble;
 #[path = "desktop_pet_settings_test/motion.rs"]
 mod motion;
 #[path = "desktop_pet_settings_test/record.rs"]
@@ -44,3 +50,5 @@ mod support;
 mod switch;
 #[path = "desktop_pet_settings_test/values.rs"]
 mod values;
+#[path = "desktop_pet_settings_test/window_style.rs"]
+mod window_style;

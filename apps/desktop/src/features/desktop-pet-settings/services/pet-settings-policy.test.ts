@@ -80,7 +80,7 @@ describe('a stored object: version policy', () => {
   it('reports a record written by a newer build as read-only, values and all', () => {
     const outcome = readPetSettingsDomain(
       'view',
-      stored('view', { opacity: 0.5, alwaysOnTop: false, roam: 'stay' }, { version: PET_SETTINGS_SCHEMA_VERSION + 1 }),
+      stored('view', { alwaysOnTop: false, roam: 'stay' }, { version: PET_SETTINGS_SCHEMA_VERSION + 1 }),
     )
     expect(outcome.status).toBe('read-only')
     if (outcome.status !== 'read-only') return
@@ -239,16 +239,19 @@ describe('numeric rules: finiteness, range, integer-ness', () => {
         petSettingsValueProblems('character', { ...PET_SETTINGS_DEFAULTS.character, size: raw }),
       ).toEqual([{ path: 'character.size', kind: 'out-of-range' }])
     }
-    // A fractional rule has no integer requirement, and its bounds are not integers.
-    const opacity = PET_NUMBER_RULES['view.opacity']
-    expect(petSettingsValueProblems('view', { ...PET_SETTINGS_DEFAULTS.view, opacity: 0.5 })).toEqual([])
+    // A fractional rule has no integer requirement, and the bubble's alpha is the schema's only
+    // one: `message.opacity`, whose bounds are upstream's own percent slider.
+    const opacity = PET_NUMBER_RULES['message.opacity']
     expect(
-      petSettingsValueProblems('view', { ...PET_SETTINGS_DEFAULTS.view, opacity: opacity.min }),
+      petSettingsValueProblems('message', { ...PET_SETTINGS_DEFAULTS.message, opacity: 0.7 }),
+    ).toEqual([])
+    expect(
+      petSettingsValueProblems('message', { ...PET_SETTINGS_DEFAULTS.message, opacity: opacity.min }),
     ).toEqual([])
     for (const raw of [opacity.min - 0.01, opacity.max + 0.01]) {
-      expect(petSettingsValueProblems('view', { ...PET_SETTINGS_DEFAULTS.view, opacity: raw })).toEqual([
-        { path: 'view.opacity', kind: 'out-of-range' },
-      ])
+      expect(
+        petSettingsValueProblems('message', { ...PET_SETTINGS_DEFAULTS.message, opacity: raw }),
+      ).toEqual([{ path: 'message.opacity', kind: 'out-of-range' }])
     }
   })
 
@@ -384,45 +387,52 @@ describe('the member fields', () => {
   })
 
   it('reports fields in schema order, so two implementations print the same message', () => {
-    const problems = petSettingsValueProblems('view', { opacity: 9, alwaysOnTop: 'yes', roam: 'fly' })
+    const problems = petSettingsValueProblems('message', {
+      ...PET_SETTINGS_DEFAULTS.message,
+      // Written out of order on purpose: the answer is the *schema's* order, so a field that
+      // moved in the schema and not in this list fails here.
+      opacity: 9,
+      theme: 'sepia',
+      bubbleSeconds: 0,
+    })
     expect(problems.map((problem) => problem.path)).toEqual([
-      'view.opacity',
-      'view.alwaysOnTop',
-      'view.roam',
+      'message.bubbleSeconds',
+      'message.theme',
+      'message.opacity',
     ])
   })
 })
 
 describe('the write decision: revision', () => {
-  const view: PetSettingsValues['view'] = { opacity: 1, alwaysOnTop: true, roam: 'off' }
+  const view: PetSettingsValues['view'] = { alwaysOnTop: true, roam: 'off' }
 
   it('applies a write at the revision that was read, and moves the revision by one', () => {
     const outcome = decidePetSettingsWrite(
       record('view', view, 4),
-      petSettingsWrite('view', 4, { ...view, opacity: 0.6 }),
+      petSettingsWrite('view', 4, { ...view, alwaysOnTop: false }),
     )
     expect(outcome.status).toBe('applied')
     if (outcome.status !== 'applied') return
     expect(outcome.record.revision).toBe(5)
-    expect(outcome.record.values).toEqual({ ...view, opacity: 0.6 })
+    expect(outcome.record.values).toEqual({ ...view, alwaysOnTop: false })
     expect(outcome.record.schemaVersion).toBe(PET_SETTINGS_SCHEMA_VERSION)
   })
 
   it('refuses a stale revision outright, and hands back what is actually stored', () => {
-    const nowStored = record('view', { ...view, alwaysOnTop: false }, 2)
-    const outcome = decidePetSettingsWrite(nowStored, petSettingsWrite('view', 1, { ...view, opacity: 0.3 }))
+    const nowStored = record('view', { ...view, roam: 'stay' }, 2)
+    const outcome = decidePetSettingsWrite(nowStored, petSettingsWrite('view', 1, { ...view, alwaysOnTop: false }))
     expect(outcome.status).toBe('conflict')
     if (outcome.status !== 'conflict') return
     // The caller reloads from this record. The edit it wanted is nowhere in it: a merge
     // is how the value the other window changed gets undone (§5.3).
     expect(outcome.current).toEqual(nowStored)
-    expect(outcome.current.values).not.toEqual({ ...view, opacity: 0.3 })
+    expect(outcome.current.values).not.toEqual({ ...view, alwaysOnTop: false })
   })
 
   it('refuses a revision ahead of the store as well: a window cannot skip the counter', () => {
     const outcome = decidePetSettingsWrite(
       record('view', view, 2),
-      petSettingsWrite('view', 9, { ...view, opacity: 0.3 }),
+      petSettingsWrite('view', 9, { ...view, alwaysOnTop: false }),
     )
     expect(outcome.status).toBe('conflict')
     if (outcome.status !== 'conflict') return
@@ -431,9 +441,12 @@ describe('the write decision: revision', () => {
 
   it('leaves the revision alone when it refuses, so the same write is still the right one', () => {
     const storedRecord = record('view', view, 3)
-    const bad = decidePetSettingsWrite(storedRecord, petSettingsWrite('view', 3, { ...view, opacity: 42 }))
+    const bad = decidePetSettingsWrite(
+      storedRecord,
+      petSettingsWrite('view', 3, { ...view, roam: 'fly' } as unknown as PetSettingsValues['view']),
+    )
     expect(bad.status).toBe('refused')
-    const good = decidePetSettingsWrite(storedRecord, petSettingsWrite('view', 3, { ...view, opacity: 0.4 }))
+    const good = decidePetSettingsWrite(storedRecord, petSettingsWrite('view', 3, { ...view, roam: 'stay' }))
     expect(good.status).toBe('applied')
   })
 
@@ -475,11 +488,14 @@ describe('the write decision: schema, atomicity', () => {
   })
 
   it('applies nothing when one field of a submission is unusable', () => {
-    const before = record('view', { opacity: 1, alwaysOnTop: true, roam: 'off' }, 7)
+    const before = record('view', { alwaysOnTop: true, roam: 'off' }, 7)
     const snapshot = JSON.parse(JSON.stringify(before)) as PetSettingsRecord
     const outcome = decidePetSettingsWrite(
       before,
-      petSettingsWrite('view', 7, { opacity: 42, alwaysOnTop: false, roam: 'stay' }),
+      petSettingsWrite('view', 7, {
+        alwaysOnTop: 'yes',
+        roam: 'stay',
+      } as unknown as PetSettingsValues['view']),
     )
     expect(outcome.status).toBe('refused')
     // No record to store, so no subset of the submission can have been applied, and the
@@ -520,7 +536,13 @@ describe('the write decision: schema, atomicity', () => {
     const inputs: unknown[][] = [
       [record('view', PET_SETTINGS_DEFAULTS.view, 1), petSettingsWrite('view', 1, PET_SETTINGS_DEFAULTS.view)],
       [record('view', PET_SETTINGS_DEFAULTS.view, 1), petSettingsWrite('view', 2, PET_SETTINGS_DEFAULTS.view)],
-      [record('view', PET_SETTINGS_DEFAULTS.view, 1), petSettingsWrite('view', 1, { ...PET_SETTINGS_DEFAULTS.view, opacity: -3 })],
+      [
+        record('view', PET_SETTINGS_DEFAULTS.view, 1),
+        petSettingsWrite('view', 1, {
+          ...PET_SETTINGS_DEFAULTS.view,
+          roam: 'fly',
+        } as unknown as PetSettingsValues['view']),
+      ],
     ]
     for (const [storedRecord, write] of inputs) {
       const outcome = decidePetSettingsWrite(
@@ -588,10 +610,14 @@ describe('the scoped reset', () => {
 
 describe('samePetSettingsValues', () => {
   it('ignores key order and sees a changed field', () => {
-    expect(samePetSettingsValues('view', { opacity: 1, alwaysOnTop: true, roam: 'off' }, PET_SETTINGS_DEFAULTS.view)).toBe(true)
-    const reordered = { roam: 'off', alwaysOnTop: true, opacity: 1 }
+    expect(
+      samePetSettingsValues('view', { alwaysOnTop: true, roam: 'off' }, PET_SETTINGS_DEFAULTS.view),
+    ).toBe(true)
+    const reordered = { roam: 'off', alwaysOnTop: true }
     expect(samePetSettingsValues('view', reordered, PET_SETTINGS_DEFAULTS.view)).toBe(true)
-    expect(samePetSettingsValues('view', { ...PET_SETTINGS_DEFAULTS.view, opacity: 0.9 }, PET_SETTINGS_DEFAULTS.view)).toBe(false)
+    expect(
+      samePetSettingsValues('view', { ...PET_SETTINGS_DEFAULTS.view, roam: 'stay' }, PET_SETTINGS_DEFAULTS.view),
+    ).toBe(false)
   })
 
   it('does not treat two non-objects, or a stray key, as equal', () => {

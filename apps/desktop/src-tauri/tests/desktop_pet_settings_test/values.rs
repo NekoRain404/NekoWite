@@ -226,10 +226,11 @@ fn the_number_rules_read_the_range_before_integer_ness() {
         kind_of(json!({ "size": 200.5 }), "size"),
         ProblemKind::NotInteger
     );
-    // A rule that does not require whole numbers takes the value between the two.
-    let mut opacity = defaults(PetSettingsDomain::View);
-    opacity.insert("opacity".to_string(), json!(0.5));
-    assert!(problems(PetSettingsDomain::View, &Value::Object(opacity)).is_empty());
+    // A rule that does not require whole numbers takes a value between the two: the bubble's
+    // alpha, which is the schema's only fractional rule (`message.opacity`).
+    let mut opacity = defaults(PetSettingsDomain::Message);
+    opacity.insert("opacity".to_string(), json!(0.7));
+    assert!(problems(PetSettingsDomain::Message, &Value::Object(opacity)).is_empty());
 
     // The one arm JSON cannot carry. `NotFinite` is in the vocabulary because the TypeScript half's
     // numbers include `NaN` and `Infinity`; a `serde_json::Number` cannot be built from either, so

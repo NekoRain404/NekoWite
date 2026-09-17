@@ -519,7 +519,10 @@ describe('the settings schemas', () => {
 
   it('repairs a stored number by one rule for both the interface and the backend', () => {
     const size = PET_NUMBER_RULES['character.size']
-    const opacity = PET_NUMBER_RULES['view.opacity']
+    // The bubble's background alpha, which is the schema's only fractional rule. Its bounds are
+    // upstream's percent slider held as the *fraction* the alpha is (0.6 to 1.0), so a value
+    // strictly inside them is what the assertion below has to use.
+    const opacity = PET_NUMBER_RULES['message.opacity']
 
     expect(readPetNumber(200, size)).toBe(200)
     // Upstream reads these with `parseInt` and no finiteness guard
@@ -533,7 +536,9 @@ describe('the settings schemas', () => {
     // Range and integer-ness, on a field that is not an integer and a field that is.
     expect(readPetNumber(0.5, size)).toBe(size.fallback)
     expect(readPetNumber(2, opacity)).toBe(opacity.fallback)
-    expect(readPetNumber(0.5, opacity)).toBe(0.5)
+    // Taken from the rule rather than written as a literal: a number this test made up would go
+    // stale the day the rule moves, and it would still pass while doing it.
+    expect(readPetNumber(opacity.min + 0.01, opacity)).toBe(opacity.min + 0.01)
     // §7.1's cap is a rule and not a suggestion.
     expect(readPetNumber(9, PET_NUMBER_RULES['project.maxCharacters'])).toBe(3)
   })

@@ -34,7 +34,7 @@
 use serde_json::Value;
 
 use super::settings::{PetSettingsDomain, PetSettingsLoad, PetSettingsRecord, PetSettingsStore};
-use super::window_host::PetWindowHost;
+use super::window_host::{stored_always_on_top, PetWindowHost};
 
 /// The identity the pet's window is opened under while the character domain names none.
 ///
@@ -120,6 +120,13 @@ pub fn apply(host: &mut PetWindowHost, record: &PetSettingsRecord, character: &s
 /// exists and no window does. A store nothing can be read from is not an error here: the windows
 /// stay closed and the app runs without a pet, exactly as it does when the switch is off.
 pub fn restore(host: &mut PetWindowHost, store: &PetSettingsStore) {
+    // The window style first, and before any window exists: one of its flags is a stored preference
+    // (`view.alwaysOnTop`, §5.2's 窗口行为) and the windows below are opened *with* it. Nothing is
+    // open yet at a launch, so this only writes the host's own value — the applied-write path is
+    // where open windows are moved.
+    if let Err(refusal) = host.set_always_on_top(stored_always_on_top(store)) {
+        eprintln!("the pet's window style could not be applied at startup: {refusal:?}");
+    }
     let Some(record) = stored(store) else {
         return;
     };

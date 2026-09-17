@@ -27,7 +27,7 @@
 //! window for yet (a restored position, and the snap that would write one).
 
 use super::window_host::{
-    HostRefusal, PetSurfaces, PetWindowLabel, Placement, WindowAction, PET_WINDOW_STYLE,
+    HostRefusal, PetSurfaces, PetWindowLabel, Placement, WindowAction, WindowStyle,
 };
 
 /// The floating ball's window label. Fixed, and not a generation: there is one ball (upstream's
@@ -108,9 +108,16 @@ impl Ball {
     /// **The switch is read here and not by the caller.** The host's `open` is what the enable path
     /// calls, and it is also what a character pick calls — the ball comes up with either, which is
     /// what makes "the ball is on" mean "the pet is on and the ball is wanted" in one place.
+    ///
+    /// The presentation is the *host's* ([`PetWindowHost::style`]) rather than this file's
+    /// constant, because one of its flags is a setting (`view.alwaysOnTop`) and the ball is one of
+    /// the windows that setting is about. `ball-window.md`'s rule that this module owns "what the
+    /// ball's window is" still holds: what it *is* does not change with a preference, and which
+    /// stack it sits in does.
     pub(super) fn ensure(
         &mut self,
         surfaces: &mut dyn PetSurfaces,
+        style: WindowStyle,
         visible: bool,
     ) -> Result<(), HostRefusal> {
         if !self.enabled || self.open {
@@ -123,7 +130,7 @@ impl Ball {
                 DESKTOP_PET_BALL_PAGE,
                 at,
                 BALL_WINDOW_SIZE,
-                PET_WINDOW_STYLE,
+                style,
                 visible,
             )
             .map_err(|detail| HostRefusal::Window {
