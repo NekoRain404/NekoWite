@@ -81,6 +81,7 @@ pub mod events;
 pub mod fs_capability;
 pub mod live_notes;
 pub mod native_terminal;
+pub mod permission_grants;
 pub mod permissions;
 pub mod profile;
 pub mod registry;
@@ -107,6 +108,7 @@ pub use live_notes::{
     LiveNoteReply, LiveNoteTable, LiveNoteWindows, LiveNotes, LIVE_NOTE_ANSWER_CHANNEL,
     LIVE_NOTE_ATTACH_CHANNEL, LIVE_NOTE_BOUND, LIVE_NOTE_REQUEST_CHANNEL,
 };
+pub use permission_grants::{EngineHttp, GrantsReadout, SavedGrant};
 pub use process::{env_pairs, isolated_profile_env, EngineLaunch, SYSTEM_CA_BUNDLE};
 pub use session::{
     AgentRuntime, AgentRuntimeEvents, RuntimeEvent, SessionError, SessionInfo, INITIALIZE_BOUND,

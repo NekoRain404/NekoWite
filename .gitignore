@@ -113,3 +113,9 @@ Thumbs.db
 # working state is not this project's state, and a snapshot directory is not a
 # source file. It grows with each failed run, so a stray copy is also a large one.
 /.tmp-fs-write/
+
+# The permission-grants surface's scratch: the profile tree and the engine database a
+# live grants run writes through, so the readout is measured against the engine that
+# produced it rather than against a fixture. Never committed, for the reason every rule
+# above gives — the engine's working state is not this project's state.
+/.tmp-permission-grants/

@@ -105,6 +105,7 @@ export function permissionLabels(): AgentPermissionLabels {
  *    believing a workspace restriction is enforcement — is silent.
  */
 import { computed, onMounted, ref } from 'vue'
+import AgentPermissionGrants from './AgentPermissionGrants.vue'
 import type { SettingOrigin } from '../index'
 import type { PermissionState } from '../services/agent-settings-policy'
 import type {
@@ -231,6 +232,11 @@ onMounted(load)
           </li>
         </ul>
       </div>
+
+      <!-- The grants the user actually gave, directly under the rules they are an answer to:
+           "what the engine will ask" and "what you have already answered for good" are the two
+           halves of the same question, and this is the half that can be taken back. -->
+      <AgentPermissionGrants :client="props.client" />
 
       <div class="permission-group">
         <span class="settings-label">{{ labels.options.title }}</span>

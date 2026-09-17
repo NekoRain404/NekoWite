@@ -42,10 +42,18 @@ import {
   createTauriAgentProfileCommands,
   type AgentProfileCommands,
 } from '../platform/gateways/tauri-agent/profile'
+import {
+  createTauriAgentPermissionGrantCommands,
+  type AgentPermissionGrantCommands,
+} from '../platform/gateways/tauri-agent/grants'
 import { createAgentRegistryClient } from '../features/agent-settings/services/agent-registry-ipc'
 import type { AgentRegistryClient } from '../features/agent-settings/services/agent-registry-policy'
 import { createAgentProviderClient } from '../features/agent-settings/services/agent-profile-ipc'
 import type { AgentProviderClient } from '../features/agent-settings/services/agent-profile-ipc'
+import {
+  createAgentPermissionClient,
+  type AgentPermissionClient,
+} from '../features/agent-settings/services/agent-permission-ipc'
 
 /**
  * What the settings tree calls.
@@ -57,6 +65,17 @@ import type { AgentProviderClient } from '../features/agent-settings/services/ag
 export interface AgentSettingsClients {
   readonly registry: AgentRegistryClient
   readonly provider: AgentProviderClient
+  /**
+   * The permission page's client, built for one engine/profile pair.
+   *
+   * A builder rather than a value, and the pair is its argument, because the page's own port binds
+   * the pair at construction (`agent-permission-ipc.ts` says why: a permission page is about one
+   * profile, and a client that could be asked about another is a value appearing under an engine
+   * it does not belong to). The registry readout is what names that pair, and it is read by the
+   * section rather than here — so this site can choose the implementation without also owning the
+   * identity, which is the division §8.1 asks for.
+   */
+  readonly permission: (agentId: string, profileId: string) => AgentPermissionClient
 }
 
 /**
@@ -66,14 +85,24 @@ export interface AgentSettingsClients {
 export interface AgentSettingsDeps {
   registryCommands?: AgentRegistryCommands
   profileCommands?: AgentProfileCommands
+  grantCommands?: AgentPermissionGrantCommands
 }
 
 /** Build the settings tree's clients over the window's own commands. */
 export function createAgentSettingsClients(deps: AgentSettingsDeps = {}): AgentSettingsClients {
+  const profileCommands = deps.profileCommands ?? createTauriAgentProfileCommands()
+  const grantCommands = deps.grantCommands ?? createTauriAgentPermissionGrantCommands()
   return {
     registry: createAgentRegistryClient(
       deps.registryCommands ?? createTauriAgentRegistryCommands(),
     ),
-    provider: createAgentProviderClient(deps.profileCommands ?? createTauriAgentProfileCommands()),
+    provider: createAgentProviderClient(profileCommands),
+    permission: (agentId: string, profileId: string) =>
+      createAgentPermissionClient({
+        wire: profileCommands,
+        grants: grantCommands,
+        agentId,
+        profileId,
+      }),
   }
 }

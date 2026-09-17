@@ -183,6 +183,12 @@
           "markdownDescription": "Enables the agent_cancel_run command without any pre-configured scope."
         },
         {
+          "description": "Enables the agent_catalogue_read command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-catalogue-read",
+          "markdownDescription": "Enables the agent_catalogue_read command without any pre-configured scope."
+        },
+        {
           "description": "Enables the agent_config_document command without any pre-configured scope.",
           "type": "string",
           "const": "allow-agent-config-document",
@@ -211,6 +217,18 @@
           "type": "string",
           "const": "allow-agent-permission-answer",
           "markdownDescription": "Enables the agent_permission_answer command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_permission_grant_revoke command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-permission-grant-revoke",
+          "markdownDescription": "Enables the agent_permission_grant_revoke command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_permission_grants command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-permission-grants",
+          "markdownDescription": "Enables the agent_permission_grants command without any pre-configured scope."
         },
         {
           "description": "Enables the agent_profile_read command without any pre-configured scope.",
@@ -591,6 +609,12 @@
           "markdownDescription": "Denies the agent_cancel_run command without any pre-configured scope."
         },
         {
+          "description": "Denies the agent_catalogue_read command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-catalogue-read",
+          "markdownDescription": "Denies the agent_catalogue_read command without any pre-configured scope."
+        },
+        {
           "description": "Denies the agent_config_document command without any pre-configured scope.",
           "type": "string",
           "const": "deny-agent-config-document",
@@ -619,6 +643,18 @@
           "type": "string",
           "const": "deny-agent-permission-answer",
           "markdownDescription": "Denies the agent_permission_answer command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_permission_grant_revoke command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-permission-grant-revoke",
+          "markdownDescription": "Denies the agent_permission_grant_revoke command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_permission_grants command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-permission-grants",
+          "markdownDescription": "Denies the agent_permission_grants command without any pre-configured scope."
         },
         {
           "description": "Denies the agent_profile_read command without any pre-configured scope.",

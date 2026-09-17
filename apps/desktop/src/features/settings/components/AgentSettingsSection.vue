@@ -37,7 +37,12 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { t } from '../../../i18n'
-import { AGENT_SETTINGS_SECTIONS, AgentProviderSettings, AgentRegistrySettings } from '../../agent-settings'
+import {
+  AGENT_SETTINGS_SECTIONS,
+  AgentPermissionSettings,
+  AgentProviderSettings,
+  AgentRegistrySettings,
+} from '../../agent-settings'
 import { defaultEngineIdentity } from '../../agent-settings/services/agent-registry-policy'
 import type { EngineIdentity } from '../../agent-settings/services/agent-registry-policy'
 import type { AgentSettingsClients } from '../../../app/agent-settings-composition'
@@ -86,7 +91,22 @@ const showing = computed(() =>
  * different facts (`mounts` names the component; a section's id is what a navigation binds), and
  * the test that reads this file's rendering is what keeps the two in step.
  */
-const MOUNTED = new Set(['registry', 'provider'])
+const MOUNTED = new Set(['registry', 'provider', 'permission'])
+
+/**
+ * The permission page's client, built for the pair the registry answered with.
+ *
+ * `null` while the registry is unread, which is the same gate the provider page sits behind and
+ * for the same reason: the page is about one engine and one profile, and it is not mounted with a
+ * guessed pair. A `computed` rather than a call in the template, so the client is one object for
+ * as long as the identity is — a page whose client changed identity on every render would reload
+ * on every render.
+ */
+const permissionClient = computed(() =>
+  identity.value === null
+    ? null
+    : props.clients.permission(identity.value.agentId, identity.value.profileId),
+)
 
 /**
  * One sentence per section that is not mounted, keyed by the list's own ids.
@@ -101,7 +121,6 @@ const SENTENCES: Readonly<Record<string, string>> = {
   skills: t('agent.settings.agents.gaps.skills'),
   commands: t('agent.settings.agents.gaps.commands'),
   mcp: t('agent.settings.agents.gaps.mcp'),
-  permission: t('agent.settings.agents.gaps.permission'),
 }
 
 /**
@@ -169,6 +188,13 @@ const gaps = [
         :client="props.clients.provider"
         :agent-id="identity.agentId"
         :profile-id="identity.profileId"
+      />
+      <!-- The pair is the page's own, so it is built from the registry's answer rather than from
+           anything this section decides. The grants half of it reads the running engine, which is
+           why the page draws "no agent is running" as a state of its own rather than as a gap. -->
+      <AgentPermissionSettings
+        v-if="permissionClient"
+        :client="permissionClient"
       />
     </div>
 

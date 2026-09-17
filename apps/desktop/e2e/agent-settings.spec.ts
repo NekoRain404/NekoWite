@@ -64,6 +64,7 @@ import type {
 } from '/src/features/agent-settings/components/AgentMcpSettings.vue'
 import type {
   AgentPermissionClient,
+  GrantsReadout,
   PermissionReadout,
 } from '/src/features/agent-settings/services/agent-permission-ipc'
 
@@ -150,6 +151,17 @@ async function open(page: Page, section: SectionName, payload: unknown): Promise
         mcp: { read: readOnce(initial as unknown as AgentMcpReadout) } satisfies AgentMcpClient,
         permission: {
           read: readOnce(initial as unknown as PermissionReadout),
+          // The grant half, driven from the same payload so one object describes the whole page.
+          // The list is *rewritten* on revoke, which is what makes "the next read reflects the
+          // engine" true here as it is with the real backend — and the arm is the payload's, so a
+          // test can put the page in `unsupported` or `not-running` without a second switch.
+          grants: async () => (initial.grants ?? { kind: 'not-running' }) as GrantsReadout,
+          revoke: async (grantId) => {
+            record('revoke', grantId)
+            const answer = (initial.grants ?? { kind: 'not-running' }) as GrantsReadout
+            if (answer.kind !== 'listed') return answer
+            return { kind: 'listed', grants: answer.grants.filter((grant) => grant.id !== grantId) }
+          },
         } satisfies AgentPermissionClient,
         skills: {
           read: async () => {
@@ -592,6 +604,9 @@ test.describe('what a permission prompt can and cannot promise', () => {
       // page is read with no session running.
       optionKinds: [],
       limits: ['not-a-sandbox', 'no-isolation', 'stale-requests', 'no-silent-approval'],
+      // The engine's own answer that it holds nothing. Drawn as that statement, and it is the one
+      // arm where this page has nothing to press.
+      grants: { kind: 'listed', grants: [] },
     })
 
     await expect(row(page, '[data-test="permission-state"]')).toContainText('asks before it changes your files')
@@ -601,6 +616,59 @@ test.describe('what a permission prompt can and cannot promise', () => {
     // §6.3's closing paragraph, on screen: an unbuilt sandbox must not be displayed as one.
     await expect(row(page, '[data-test="permission-limit-not-a-sandbox"]')).toContainText('not a sandbox')
     await expect(row(page, '[data-test="permission-limit-no-isolation"]')).toContainText('nothing here is isolated')
+    // Nothing to take back, so nothing to press: the only control on this page is a row's own
+    // revoke, and there are no rows.
+    await expect(row(page, '[data-test="grants-empty"]')).toContainText('holds no lasting permission')
     expect(await page.locator(`#${SECTIONS.permission.host} button`).count()).toBe(0)
+  })
+
+  test('never draws "cannot ask" as "you have granted nothing"', async ({ page }) => {
+    // The two arms that are not a list. Either one rendered as an empty list would be this page
+    // claiming consent it never established, which is the defect this surface exists to remove.
+    await open(page, 'permission', {
+      state: 'written',
+      rules: [],
+      optionKinds: [],
+      limits: ['not-a-sandbox'],
+      grants: { kind: 'unsupported' },
+    })
+    await expect(row(page, '[data-test="grants-unsupported"]')).toContainText('does not report the permissions')
+    await expect(page.locator('[data-test="grants-empty"]')).toHaveCount(0)
+
+    await open(page, 'permission', {
+      state: 'written',
+      rules: [],
+      optionKinds: [],
+      limits: ['not-a-sandbox'],
+      grants: { kind: 'not-running' },
+    })
+    await expect(row(page, '[data-test="grants-not-running"]')).toContainText('No agent is running')
+    await expect(page.locator('[data-test="grants-empty"]')).toHaveCount(0)
+  })
+
+  test('revokes one grant and shows what the engine holds afterwards', async ({ page }) => {
+    await open(page, 'permission', {
+      state: 'written',
+      rules: [],
+      optionKinds: [],
+      limits: ['not-a-sandbox'],
+      grants: {
+        kind: 'listed',
+        grants: [
+          { id: 'psv_1', projectId: 'global', action: 'edit', resource: '*' },
+          { id: 'psv_2', projectId: 'global', action: 'bash', resource: '*' },
+        ],
+      },
+    })
+
+    await expect(row(page, '[data-test="grant-psv_1"]')).toContainText('edit')
+    await expect(row(page, '[data-test="grant-psv_1"]')).toContainText('global')
+    await page.click('[data-test="grant-revoke-psv_1"]')
+
+    // The list is the engine's own answer after the removal, not this page's edit of a copy.
+    await expect(page.locator('[data-test="grant-psv_1"]')).toHaveCount(0)
+    await expect(row(page, '[data-test="grant-psv_2"]')).toContainText('bash')
+    const calls = await page.evaluate(() => window.__agentSettings?.calls ?? [])
+    expect(calls.some((call) => call.method === 'revoke' && call.args[0] === 'psv_1')).toBe(true)
   })
 })

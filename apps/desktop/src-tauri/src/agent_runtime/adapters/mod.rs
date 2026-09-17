@@ -34,6 +34,37 @@ pub trait AgentAdapter: Sync {
 
     /// The session config option that selects a model, when the engine has one.
     fn model_option_id(&self) -> Option<&'static str>;
+
+    /// The engine's own HTTP surface, when this adapter has verified one.
+    ///
+    /// Some of what an engine knows is reachable only here. The sharpest case is the permission a
+    /// user granted "always": the engine writes it into its own database, its ACP surface has no
+    /// method that lists or removes one, and the process this host is already talking to over ACP
+    /// is the same process that serves the routes below. `None` is the answer for an engine this
+    /// build has no verified adapter for — and it is what lets a settings page say "this agent
+    /// cannot report its grants" instead of drawing an empty list, which is the same sentence as
+    /// "you have granted nothing".
+    fn http_api(&self) -> Option<HttpApi> {
+        None
+    }
+}
+
+/// One engine's own HTTP surface, as its verified adapter measured it.
+///
+/// The routes are data rather than a name check at the call site: §3.4 forbids the rest of the app
+/// from branching on an engine id, and a grants client that spelled `/api/permission/saved` itself
+/// would be that branch in a different spelling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HttpApi {
+    /// The flag that makes this engine's own server bind the port this host chose. Without it the
+    /// engine binds whatever the kernel hands out, and nothing outside it can learn which.
+    pub port_flag: &'static str,
+    /// The route that lists what the engine has written down. Read with `GET`; answers
+    /// `{"data":[{"id","projectID","action","resource"}]}`.
+    pub saved_permissions: &'static str,
+    /// The route one of those is addressed by, with its id appended after a `/`. Written with
+    /// `DELETE`; answers `204`.
+    pub saved_permission: &'static str,
 }
 
 /// A capability the host may have to gate on.

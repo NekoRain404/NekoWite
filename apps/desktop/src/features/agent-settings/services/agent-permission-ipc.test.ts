@@ -23,9 +23,34 @@ function wire(permissions: unknown): AgentProfileWire {
   }
 }
 
+/**
+ * The grant half, as `agent_permission_grants` / `agent_permission_grant_revoke` answer.
+ *
+ * `answer` is what the list command returns; a removal returns whatever `after` says, so a test can
+ * drive "the engine's list after the removal" separately from "the list before it" — which is the
+ * whole point of the client trusting the backend's answer rather than editing its own copy.
+ */
+function grantsWire(answer: unknown, after: unknown = answer) {
+  return {
+    list: vi.fn(async () => answer),
+    revoke: vi.fn(async () => after),
+  }
+}
+
 function client(permissions: unknown) {
   return createAgentPermissionClient({
     wire: wire(permissions),
+    grants: grantsWire({ kind: 'not-running' }),
+    agentId: 'opencode',
+    profileId: 'default',
+  })
+}
+
+/** The same client, with the grants answer under the caller's control. */
+function grantClient(answer: unknown, after?: unknown) {
+  return createAgentPermissionClient({
+    wire: wire(WRITTEN),
+    grants: grantsWire(answer, after),
     agentId: 'opencode',
     profileId: 'default',
   })
@@ -114,5 +139,40 @@ describe('the permission readout', () => {
 
   it('refuses a record with no permissions member at all', async () => {
     await expect(client(undefined).read()).rejects.toThrow(/permissions/)
+  })
+})
+
+describe('the grants readout', () => {
+  it('narrows the engine’s own four fields, verbatim', async () => {
+    const client = grantClient({
+      kind: 'listed',
+      grants: [{ id: 'psv_1', projectId: 'global', action: 'edit', resource: '*' }],
+    })
+    expect(await client.grants()).toEqual({
+      kind: 'listed',
+      grants: [{ id: 'psv_1', projectId: 'global', action: 'edit', resource: '*' }],
+    })
+  })
+
+  it('keeps the two non-answers apart from an empty list', async () => {
+    // The defect this whole surface exists to remove: either of these drawn as `listed` with no
+    // rows would be this app claiming the user has granted nothing, from a question it never put.
+    expect(await grantClient({ kind: 'unsupported' }).grants()).toEqual({ kind: 'unsupported' })
+    expect(await grantClient({ kind: 'not-running' }).grants()).toEqual({ kind: 'not-running' })
+  })
+
+  it('answers a removal with the engine’s list afterwards, not the row struck out', async () => {
+    // The authority's answer and the page's belief about it must not be two different things.
+    const client = grantClient({ kind: 'listed', grants: [{ id: 'psv_1', projectId: 'g', action: 'edit', resource: '*' }] }, { kind: 'listed', grants: [] })
+    expect(await client.revoke('psv_1')).toEqual({ kind: 'listed', grants: [] })
+  })
+
+  it('refuses a kind this build has never heard of', async () => {
+    // A newer backend is not a statement that the agent cannot report grants, so guessing
+    // `unsupported` here would be inventing an answer out of a shape this window cannot read.
+    await expect(grantClient({ kind: 'something-new' }).grants()).rejects.toThrow(/kind/)
+    await expect(grantClient({ kind: 'listed', grants: [{ id: 'psv_1' }] }).grants()).rejects.toThrow(
+      /grants\[0\]\.projectId/,
+    )
   })
 })

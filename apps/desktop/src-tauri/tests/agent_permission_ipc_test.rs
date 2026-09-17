@@ -863,6 +863,9 @@ async fn the_ipc_state_carries_the_runtime_and_the_prompt_snapshot() {
             REPLAY_WINDOW,
         )),
         model_option_id: Some("model".to_string()),
+        // This fixture's engine is a script with no HTTP surface, which is the `Unsupported`
+        // arm the grants readout reports rather than an empty list.
+        http: None,
     });
 
     let session = state.session().expect("a session is running");

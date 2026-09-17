@@ -590,6 +590,22 @@ export const agent = {
             staleRequests: 'A request belongs to one runtime, library, session and run. Answering a request that has already been resolved, or that belongs to a session that has ended, is refused rather than applied to whatever is in front of the user now.',
             noSilentApproval: 'A dangerous request that is never answered is never approved. Waiting is not consent, and nothing here grants a permission because a prompt was left alone.',
           },
+          /* The grants the user actually gave. `unsupported` and `notRunning` are separate
+             sentences on purpose: either one drawn as an empty list would be this page claiming
+             "you have granted nothing" from a question it never managed to ask. */
+          grants: {
+            title: 'Lasting permissions you have given',
+            hint: 'Each row is one "Always allow" you answered. The engine wrote it down itself, keyed by the tool it covers, what that answer applies to, and the engine’s own project key — so it outlives the session you gave it in and the engine stops asking. This list is the engine’s, read from the engine; revoking asks the engine to drop the row, and it asks again from the next tool call on.',
+            loading: 'Reading the engine’s saved permissions...',
+            unreadable: 'The engine was asked for its saved permissions and did not answer. Nothing is being claimed about them here — try again, or check that the agent is still running.',
+            unsupported: 'This agent does not report the permissions it has written down, so this page cannot list or revoke them. That is not the same as having given none: nothing here has asked.',
+            notRunning: 'No agent is running, so there is nothing to ask. Start a session and this list is read from the engine itself — a profile’s saved permissions live in the engine’s own database, not in this app.',
+            empty: 'The engine holds no lasting permission for this profile. This is the engine’s own answer, not an empty list standing in for one it could not give.',
+            project: 'Project',
+            revoke: 'Revoke',
+            revoking: 'Revoking...',
+            failed: 'The engine did not remove it:',
+          },
         },
         /* The tree's own page (T16): the one control that reaches the shell — which panel the
            right rail shows — and the statements for the parts of this tree that have no host
@@ -624,7 +640,6 @@ export const agent = {
             skills: 'Skills — discovery, preview, import and the switch that moves one out of the engine’s reach. `skills.rs` does all of that and has its own tests, but nothing builds a library from it and no command exposes one, so there is no state to read and nothing a window could install.',
             commands: 'Commands — the list an engine publishes for a session. It reaches the agent panel as it arrives and belongs to that one session, and there is no read of it a settings page can make.',
             mcp: 'MCP servers — the list, the configuration and the transports. Nothing was built for MCP in this build at all.',
-            permission: 'Permissions — what the engine asks about and where those settings come from. Nothing reads the configuration those rules live in.',
             capabilities: 'What a model takes and what a session may do. A capability report belongs to one running session — the installation’s claim joined with what that runtime negotiated — so a settings page is not a place it can be shown: it has no session, and the answer would stop being true the moment the runtime changed.',
             engine: 'Choosing the engine a new session starts on. Engines can be added and switched off above, but a session always starts on the default one: the backend’s start call takes a folder and nothing else, so nothing in this window opens a session on another engine yet.',
             other: 'This section needs a host half this build does not have.',
@@ -1164,6 +1179,19 @@ export const agent = {
             staleRequests: '一次请求属于某一个运行时、库、会话与任务。回答一个已经处理过的请求，或属于已经结束会话的请求，会被拒绝，而不是套用到用户眼前的东西上。',
             noSilentApproval: '危险请求如果始终无人回答，就永远不会被批准。等待不是同意，这里也不会因为提示被放着不管就授予权限。',
           },
+          grants: {
+            title: '你已给出的长期授权',
+            hint: '每一行都是你回答过的一次「始终允许」。引擎自己把它记了下来，以它覆盖的工具、该授权适用的范围和引擎自己的项目键为索引——因此它比你给出它的那次会话活得更久，引擎也不再询问。这份列表是引擎的，从引擎读来；撤销即是请引擎删掉那一行，此后下一次工具调用它就会重新询问。',
+            loading: '正在读取引擎保存的授权…',
+            unreadable: '已向引擎询问它保存的授权，但没有得到回答。这里对它们不做任何断言——请重试，或确认智能体仍在运行。',
+            unsupported: '这个智能体不上报它记录下来的授权，因此本页无法列出或撤销它们。这与「你什么都没给过」不是一回事：这里什么都没问到。',
+            notRunning: '没有智能体在运行，无处可问。开始一次会话后，这份列表会从引擎本身读来——配置档案的授权保存在引擎自己的数据库里，不在本应用里。',
+            empty: '引擎在这个配置档案下没有任何长期授权。这是引擎自己的回答，不是用一个空列表来代替它给不出的答案。',
+            project: '项目',
+            revoke: '撤销',
+            revoking: '正在撤销…',
+            failed: '引擎没有删掉它：',
+          },
         },
         agents: {
           section: {
@@ -1185,7 +1213,6 @@ export const agent = {
             skills: 'Skills——发现、预览、导入，以及把某个 Skill 移出引擎视野的开关。`skills.rs` 这些都有，也有自己的测试，但没有任何地方用它建起库，也没有命令暴露它，因此没有可读的状态，也没有窗口能装下的东西。',
             commands: '命令——引擎为某个会话发布的列表。它随发布到达智能体面板，且只属于那一个会话，设置页没有可以调用的读取。',
             mcp: 'MCP 服务器——列表、配置与传输方式。当前构建里完全没有为 MCP 实现任何东西。',
-            permission: '权限——引擎会就什么发问、这些设置来自哪里。没有读取这些规则所在配置的入口。',
             capabilities: '模型接受什么、一个会话能做哪些事。能力报告属于某一个运行中的会话——安装声明与那次运行时协商出的结果合并而成——因此设置页不是显示它的地方：设置页没有会话，而那个答案在运行时变化的一刻就不再成立。',
             engine: '选择新会话使用哪个引擎。上面已经可以添加引擎、停用引擎，但会话总是启动在默认引擎上：后端的启动调用只接收一个文件夹，因此这个窗口目前无法在另一个引擎上打开会话。',
             other: '这一节需要的后端一半，当前构建还没有。',

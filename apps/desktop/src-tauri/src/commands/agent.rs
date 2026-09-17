@@ -32,6 +32,7 @@ use tauri::Manager;
 
 use crate::agent_runtime::driver::Session;
 use crate::agent_runtime::events::AgentIdentity;
+use crate::agent_runtime::permission_grants::{self, GrantsReadout};
 use crate::agent_runtime::permissions::{
     cancel_run, PermissionAnswer, PermissionPrompt, PermissionRefusal, PermissionTable,
 };
@@ -88,6 +89,17 @@ impl AgentIpcState {
     /// its turns and answer its prompts, and it must do that before the runtime goes.
     pub fn clear(&self) -> Option<Session> {
         self.session.lock().ok().and_then(|mut slot| slot.take())
+    }
+
+    /// The same slot, read as a *state* rather than as a refusal.
+    ///
+    /// [`session`](Self::session) answers the sentence for a caller that cannot proceed without
+    /// one. The grants readout is the opposite case: "no engine is running" is one of its own
+    /// answers — a page must be able to draw it — so a caller that turned it into an error would
+    /// have to reconstruct the state it threw away. A poisoned lock is still `None` here, because
+    /// a panic on another task is not a session either.
+    pub fn session_or_none(&self) -> Option<Session> {
+        self.session.lock().ok().and_then(|slot| slot.clone())
     }
 }
 
@@ -428,4 +440,46 @@ pub async fn agent_session_snapshot(
         .snapshots
         .snapshot(&session_id, &pending)
         .ok_or_else(|| format!("session {session_id} is not one this app opened"))
+}
+
+/// The permissions the engine has written down because the user answered "always".
+///
+/// **Why this is a command and not a profile read.** `permission.saved.list` is the engine's own
+/// route, and the engine is the only thing holding the table: it is written per project into the
+/// engine's database (`permission-configured.md` §5) and every later evaluation loads it, so a
+/// second copy anywhere in this app would be a second answer to "will the engine ask me" that
+/// could disagree with the one the engine acts on. There is no filter and no projection here
+/// either — the engine's own four fields travel as they arrived, because a page that renamed or
+/// grouped them would be describing a rule that is not the one being evaluated.
+///
+/// **The three answers are the point.** `not-running` is no engine, `unsupported` is an agent
+/// whose adapter has no verified HTTP surface, and `listed` with no rows is the engine itself
+/// saying it has written nothing down. A page that drew the third as the first would be claiming
+/// consent it never established — the failure this whole surface exists to remove.
+#[tauri::command]
+pub async fn agent_permission_grants(
+    ipc: tauri::State<'_, AgentIpcState>,
+) -> Result<GrantsReadout, String> {
+    match ipc.session_or_none() {
+        None => Ok(GrantsReadout::NotRunning),
+        Some(session) => permission_grants::list(session.http).await,
+    }
+}
+
+/// Takes one lasting permission back, and answers what the engine holds afterwards.
+///
+/// The removal goes to the engine rather than to its database: only the engine knows what it has
+/// cached for the project it is serving, and its own `remove` is what the next evaluation reads.
+/// What comes back is the list *after* the removal, re-read from the engine — not the caller's row
+/// struck out — for the reason the catalogued commands answer with the refreshed option list:
+/// the authority's answer and the page's belief about it must not be two different things.
+#[tauri::command]
+pub async fn agent_permission_grant_revoke(
+    ipc: tauri::State<'_, AgentIpcState>,
+    grant_id: String,
+) -> Result<GrantsReadout, String> {
+    match ipc.session_or_none() {
+        None => Ok(GrantsReadout::NotRunning),
+        Some(session) => permission_grants::remove(session.http, &grant_id).await,
+    }
 }

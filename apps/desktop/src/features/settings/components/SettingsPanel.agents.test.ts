@@ -1,20 +1,22 @@
 /**
- * The agents section, in the dialog it was added to: the navigation row, the switch, the two pages
+ * The agents section, in the dialog it was added to: the navigation row, the switch, the pages
  * whose host half this build really has, and the absences.
  *
  * T16's settings half is one page in the settings tree, and §12's acceptance is that the switch on
  * it can be rolled back. What this file is really here for, though, is the boundary — which pages
  * are mounted, and which are only described:
  *
- *  - **The two pages with a backend are mounted, over the window's own commands.** The registry
- *    (`agent_registry_read` / `_add` / `_set_enabled`) and the profile (`agent_profile_read` /
- *    `_write`) are registered in `R/src/lib.rs`, so the section mounts both and the test drives
- *    them through a mocked IPC layer — the same shape `SettingsPanel.pet.test.ts` uses. The
- *    commands asked for on open are asserted as an exact set, so a page that starts calling
- *    something nobody backs fails here rather than in a user's face.
- *  - **The pages with no backend are stated, not drawn.** Runtime, commands, MCP and permission
- *    have no client in this build, and Skills has a library with no command in front of it. The
- *    gaps are text: a list item, and no control of this page's own but the switch.
+ *  - **Every page with a backend is mounted, over the window's own commands.** The registry
+ *    (`agent_registry_read` / `_add` / `_set_enabled`), the profile (`agent_profile_read` /
+ *    `_write`) and the permission page (`agent_profile_read` for the rules, plus
+ *    `agent_permission_grants` / `_grant_revoke` for the grants the engine has written down) are
+ *    registered in `R/src/lib.rs`, so the section mounts all three and the test drives them
+ *    through a mocked IPC layer — the same shape `SettingsPanel.pet.test.ts` uses. The commands
+ *    asked for on open are asserted as an exact set, so a page that starts calling something
+ *    nobody backs fails here rather than in a user's face.
+ *  - **The pages with no backend are stated, not drawn.** Runtime, commands and MCP have no client
+ *    in this build, and Skills has a library with no command in front of it. The gaps are text: a
+ *    list item, and no control of this page's own but the switch.
  *  - **The engine switch is not offered where nothing can carry it out.** The dialog has no gateway
  *    and `agent_start` takes a folder and nothing else, so the registry page is told
  *    `can-start-session="false"` and draws no select and no button.
@@ -115,6 +117,9 @@ beforeEach(() => {
         return registryReadout()
       case 'agent_profile_read':
         return profileReadout(revision)
+      case 'agent_permission_grants':
+        // No engine in this test, which is the state the grants page draws as its own sentence.
+        return { kind: 'not-running' }
       case 'agent_profile_write': {
         // The backend's own behaviour, in three lines: the write is applied at the revision the
         // form read, and applying it moves the revision — which is what makes a stale form's next
@@ -242,7 +247,7 @@ describe('the agents section in the settings dialog', () => {
     expect(store.agentPanel).toBe(false)
   })
 
-  it('mounts the two pages whose host half exists, over the window’s own commands', async () => {
+  it('mounts the pages whose host half exists, over the window’s own commands', async () => {
     await openAgents()
     await untilDom(() => el('provider-identity') !== null, 'the profile page')
 
@@ -252,9 +257,18 @@ describe('the agents section in the settings dialog', () => {
     expect(el('provider-identity')?.textContent).toContain('bundled-engine')
     expect(el('provider-identity')?.textContent).toContain('default')
     expect(el('provider-credential-ANTHROPIC_API_KEY')).not.toBeNull()
+    // And the permission page, mounted on the same pair: its rules readout is drawn, and its
+    // grants half drew the backend's own "no engine is running" rather than an empty list.
+    expect(el('permission-state')?.textContent).toContain('asks before it changes your files')
+    expect(el('grants-not-running')).not.toBeNull()
+    expect(el('grants-empty')).toBeNull()
 
     // The exact set, so a page that starts asking for a command nobody registered fails here.
-    expect([...new Set(asked)].sort()).toEqual(['agent_profile_read', 'agent_registry_read'])
+    expect([...new Set(asked)].sort()).toEqual([
+      'agent_permission_grants',
+      'agent_profile_read',
+      'agent_registry_read',
+    ])
   })
 
   it('states the merges it does not close, one named surface per row', async () => {
@@ -298,10 +312,10 @@ describe('the agents section in the settings dialog', () => {
   it('states the absences as text, one per section it does not mount, and draws nothing else', async () => {
     await openAgents()
     const gaps = [...section().querySelectorAll<HTMLElement>('.agent-gap')]
-    // Five sections without a client, plus the two rows that are not sections: the capability
+    // Four sections without a client, plus the two rows that are not sections: the capability
     // join and the engine switch. Derived from `AGENT_SETTINGS_SECTIONS` in the section, so this
     // count moves when a page is mounted — or when one is added to the tree.
-    expect(gaps).toHaveLength(5 + 2)
+    expect(gaps).toHaveLength(4 + 2)
     for (const gap of gaps) expect(gap.textContent?.trim().length ?? 0).toBeGreaterThan(0)
     // The Skills row names the missing half, and it names it from the catalogue: a key that moved
     // would print the key itself here.

@@ -22,6 +22,7 @@
 use std::sync::Arc;
 
 use super::events::{AgentEventEnvelope, AgentIdentity};
+use super::permission_grants::EngineHttp;
 use super::permissions::PermissionTable;
 use super::registry::AgentInstance;
 use super::session::{AgentRuntime, AgentRuntimeEvents, RuntimeEvent};
@@ -50,6 +51,10 @@ pub struct Session {
     /// The config option that selects the model, from the adapter (§3.4: no component may guess
     /// an engine's option id, and the renderer is told rather than left to look for one).
     pub model_option_id: Option<String>,
+    /// The engine's own HTTP surface for this incarnation, when its adapter verified one. Read
+    /// from the instance rather than passed in: it is a property of the process this session is
+    /// talking to, and a caller that supplied it could supply another engine's port.
+    pub http: Option<EngineHttp>,
 }
 
 /// Takes a started instance apart into the state the commands address, and starts the one task
@@ -85,6 +90,7 @@ where
         permissions,
         snapshots,
         model_option_id,
+        http: instance.http(),
     })
 }
 

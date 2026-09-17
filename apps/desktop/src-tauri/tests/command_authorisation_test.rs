@@ -111,6 +111,22 @@ async fn agent_stop() -> Result<(), String> {
     Ok(())
 }
 
+/// The two commands that read and remove a lasting permission, as stand-ins.
+///
+/// Stand-ins for the reason `agent_stop` is: a refusal proves something about the ACL only when
+/// the command would have answered, and what is being asserted here is that a pet window cannot
+/// reach the surface that takes a permission back. A body that called the library would need a
+/// live engine to say anything, and would be measuring that instead.
+#[tauri::command]
+async fn agent_permission_grants() -> Result<Value, String> {
+    Ok(json!({ "reached": "agent_permission_grants" }))
+}
+
+#[tauri::command]
+async fn agent_permission_grant_revoke(grant_id: String) -> Result<Value, String> {
+    Ok(json!({ "reached": "agent_permission_grant_revoke", "grantId": grant_id }))
+}
+
 /// The pet's five granted commands, each answering whether it was reached.
 #[tauri::command]
 async fn desktop_pet_state() -> Result<Value, String> {
@@ -200,6 +216,8 @@ fn app() -> App {
             system_accent_color,
             read_file,
             agent_stop,
+            agent_permission_grants,
+            agent_permission_grant_revoke,
             desktop_pet_state,
             desktop_pet_set_visible,
             desktop_pet_close_own,
@@ -325,6 +343,10 @@ fn a_pet_window_cannot_stop_or_start_the_users_agent() {
         "agent_profile_read",
         "agent_config_document",
         "agent_config_edit",
+        // The grant surface. A decoration that could revoke the user's own answers would be
+        // acting on the consent record itself rather than on the work it decorates.
+        "agent_permission_grants",
+        "agent_permission_grant_revoke",
     ] {
         is_not_allowed_on(&pet, cmd, "pet-1");
     }
@@ -725,8 +747,8 @@ fn the_capability_files_are_the_policy_and_nothing_else() {
     };
     assert_eq!(
         declared.len(),
-        67,
-        "the declared surface is sixty-seven commands"
+        70,
+        "the declared surface is seventy commands"
     );
 
     let pet: Vec<String> = allows(&read("desktop-pet.json"));

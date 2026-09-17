@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 
 use super::super::registry::{AgentRegistration, EnvPolicy, InstallSource};
-use super::{AgentAdapter, Capability, ConfigAuthoring, HostFeature};
+use super::{AgentAdapter, Capability, ConfigAuthoring, HostFeature, HttpApi};
 
 /// The adapter id a registration names to reach this file.
 pub const ADAPTER_ID: &str = "opencode";
@@ -50,6 +50,32 @@ pub const CONFIG_FORMAT: &str = "opencode-jsonc";
 /// again with every `session/set_config_option`, and §6.3 is explicit that the
 /// option ids are the engine's to define.
 pub const MODEL_OPTION_ID: &str = "model";
+
+/// The pinned engine's own HTTP surface, read out of the artifact rather than guessed.
+///
+/// `opencode acp` does not only speak ACP on stdin: the handler starts the engine's own server
+/// first (`Server.listen` in the `acp` command's handler) and the ACP agent talks to *that* over
+/// `http://127.0.0.1:<port>`. The port comes from `--port` when it is given and from the kernel
+/// otherwise, which is why this host passes it.
+///
+/// The three routes are the engine's own, taken from the artifact's route table and its generated
+/// OpenAPI document (`GET /doc`, served by the same process): `v2.permission.saved.list` —
+/// "Retrieve saved permissions, optionally filtered by project" — and `v2.permission.saved.remove`
+/// — "Remove a saved permission by ID". Its own settings page reads them through the same client
+/// (`client.v2.permission.saved.list({projectID})`), which is the corroboration that they are the
+/// supported path and not an internal one.
+///
+/// **What a removal removes**, measured against 1.18.29: the row in the engine's own `permission`
+/// table keyed by `(project_id, action, resource)`. The engine then evaluates its rules without
+/// it, so the next tool call that matched the grant is asked about again — in the same process,
+/// with no restart. That is the whole reason this app offers the route: without it, one
+/// `Always allow` outlives every session the user will ever open in this profile (§5 of
+/// `permission-configured.md`) and nothing in this app could take it back.
+pub const HTTP_API: HttpApi = HttpApi {
+    port_flag: "--port",
+    saved_permissions: "/api/permission/saved",
+    saved_permission: "/api/permission/saved",
+};
 
 pub struct OpenCode;
 
@@ -100,6 +126,10 @@ impl AgentAdapter for OpenCode {
 
     fn model_option_id(&self) -> Option<&'static str> {
         Some(MODEL_OPTION_ID)
+    }
+
+    fn http_api(&self) -> Option<HttpApi> {
+        Some(HTTP_API)
     }
 }
 

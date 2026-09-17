@@ -25,6 +25,7 @@ use super::adapters::{self, AgentAdapter, Capability, HostFeature};
 use super::events::{AgentIdentity, TransportError};
 use super::fs_capability::VaultFiles;
 use super::live_notes::LiveNotes;
+use super::permission_grants::EngineHttp;
 use super::process::{env_pairs, isolated_profile_env, EngineLaunch};
 use super::profile::Credentials;
 use super::secret::Secret;
@@ -756,7 +757,13 @@ impl AgentRegistry {
             .ok_or_else(|| RegistryError::UnknownAdapter {
                 adapter_id: registration.adapter_id.clone(),
             })?;
-        let launch = registration.launch(managed_root, credentials);
+        // The engine's own HTTP surface, when its adapter has one: the port is chosen here and
+        // the flag appended to the launch, so the routes in [`super::permission_grants`] address
+        // the process this session is about to talk to over ACP. `None` means this engine has no
+        // such surface, which the grants readout reports as its own state rather than as an empty
+        // list.
+        let mut launch = registration.launch(managed_root, credentials);
+        let http = super::permission_grants::pin_http(&mut launch, adapter.http_api());
         let epoch = self
             .live
             .lock()
@@ -786,6 +793,7 @@ impl AgentRegistry {
         Ok(AgentInstance {
             identity,
             adapter,
+            http,
             // `Arc` rather than a value, and only because of what the IPC layer has to do with
             // it: the commands that answer a session take the runtime out of a managed state on
             // another task, so they must hold a share of it rather than the thing itself. The
@@ -809,6 +817,11 @@ impl AgentRegistry {
 pub struct AgentInstance {
     identity: AgentIdentity,
     adapter: &'static dyn AgentAdapter,
+    /// The engine's own HTTP surface for *this* launch, when its adapter has one. It is a fact
+    /// about the incarnation rather than about the registration — the port belongs to the process
+    /// this instance started — and it is read through [`Session`](super::driver::Session) by the
+    /// one command that needs it.
+    http: Option<EngineHttp>,
     runtime: Arc<AgentRuntime>,
     /// The reading half, until the driver takes it. `None` afterwards — see
     /// [`AgentInstance::take_events`].
@@ -826,6 +839,13 @@ impl AgentInstance {
     /// needs, and it is a share rather than a borrow because the command runs on another task.
     pub fn runtime(&self) -> &Arc<AgentRuntime> {
         &self.runtime
+    }
+
+    /// The engine's own HTTP surface for this launch, when its adapter has one. `None` is a fact
+    /// about the engine rather than about this instance's state: an engine with no verified
+    /// adapter has no routes this host may call, and the grants readout says so.
+    pub fn http(&self) -> Option<EngineHttp> {
+        self.http
     }
 
     /// The reading half, taken once, by whoever drives this runtime.

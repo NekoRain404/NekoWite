@@ -56,6 +56,11 @@ mod agent_runtime {
     // serves, and what it refuses to serve, are one question now.
     #[allow(dead_code)]
     pub mod live_notes;
+    // Included because `registry` names it through `super::`: the port the engine's own HTTP
+    // surface is pinned to is decided at launch, and the module that decides it is a sibling of
+    // the module that launches.
+    #[allow(dead_code)]
+    pub mod permission_grants;
     #[allow(dead_code)]
     pub mod permissions;
     #[allow(dead_code)]

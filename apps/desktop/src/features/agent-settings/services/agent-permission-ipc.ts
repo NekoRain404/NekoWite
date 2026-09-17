@@ -67,9 +67,53 @@ export interface PermissionReadout {
   limits: readonly PermissionLimitId[]
 }
 
+/**
+ * One permission the engine wrote down when the user answered "always".
+ *
+ * The engine's own four fields, verbatim — including `projectId` and `resource`, which are its own
+ * keys for what a grant covers. They are carried rather than translated: a page that relabelled
+ * them would be describing a rule the engine is not evaluating.
+ */
+export interface SavedGrantView {
+  id: string
+  projectId: string
+  action: string
+  resource: string
+}
+
+/**
+ * What the backend can say about those grants.
+ *
+ * **Three arms, and the page must draw all three differently.** `listed` with no rows is the
+ * engine saying it has written nothing down; `unsupported` is an agent whose adapter has no route
+ * to ask, and `not-running` is an engine that is not there to be asked. Rendering either of the
+ * last two as an empty list would be this app claiming "you have granted nothing" from a question
+ * it never put.
+ */
+export type GrantsReadout =
+  | { kind: 'listed'; grants: SavedGrantView[] }
+  | { kind: 'unsupported' }
+  | { kind: 'not-running' }
+
+/**
+ * The wire the grants half of the page calls.
+ *
+ * A second wire rather than a widening of {@link AgentPermissionWire}'s neighbour, because the two
+ * address different things: the rules readout is about one *profile* and is bound to its pair, and
+ * this is about the engine that is running now.
+ */
+export interface AgentGrantsWire {
+  list(): Promise<unknown>
+  revoke(grantId: string): Promise<unknown>
+}
+
 /** The page's port, structurally — `AgentPermissionClient` in the component. */
 export interface AgentPermissionClient {
   read(): Promise<PermissionReadout>
+  /** What the engine holds now, or the reason it cannot be asked. */
+  grants(): Promise<GrantsReadout>
+  /** Takes one back, answering what the engine holds afterwards. */
+  revoke(grantId: string): Promise<GrantsReadout>
 }
 
 /**
@@ -81,6 +125,7 @@ export interface AgentPermissionClient {
  */
 export function createAgentPermissionClient(request: {
   wire: AgentProfileWire
+  grants: AgentGrantsWire
   agentId: string
   profileId: string
 }): AgentPermissionClient {
@@ -97,6 +142,42 @@ export function createAgentPermissionClient(request: {
         limits: PERMISSION_LIMITS,
       }
     },
+    async grants(): Promise<GrantsReadout> {
+      return grantsOf(await request.grants.list())
+    },
+    async revoke(grantId: string): Promise<GrantsReadout> {
+      return grantsOf(await request.grants.revoke(grantId))
+    },
+  }
+}
+
+/**
+ * The grants answer, checked rather than assumed.
+ *
+ * The wire is `unknown` for the reason {@link permissionsOf} gives, and a shape this build cannot
+ * read is a rejection: the page renders its unreadable state with a retry rather than an empty
+ * list, which is the one reading that would turn a broken answer into a false claim about consent.
+ * An unrecognised `kind` is malformed rather than "unsupported", for the same reason — a newer
+ * backend saying something this build has never heard of is not a statement that the agent cannot
+ * report grants.
+ */
+function grantsOf(value: unknown): GrantsReadout {
+  const answer = asRecord(value, 'the grants answer')
+  const kind = asString(answer['kind'], 'the grants answer.kind')
+  if (kind === 'unsupported') return { kind: 'unsupported' }
+  if (kind === 'not-running') return { kind: 'not-running' }
+  if (kind !== 'listed') return malformed('the grants answer.kind')
+  return {
+    kind: 'listed',
+    grants: asList(answer['grants'], 'the grants answer.grants').map((row, index) => {
+      const entry = asRecord(row, `the grants answer.grants[${index}]`)
+      return {
+        id: asString(entry['id'], `grants[${index}].id`),
+        projectId: asString(entry['projectId'], `grants[${index}].projectId`),
+        action: asString(entry['action'], `grants[${index}].action`),
+        resource: asString(entry['resource'], `grants[${index}].resource`),
+      }
+    }),
   }
 }
 

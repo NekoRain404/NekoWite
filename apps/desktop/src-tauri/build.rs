@@ -18,7 +18,7 @@
 //!
 //! | Window | Capability | May call |
 //! | --- | --- | --- |
-//! | `main` | `capabilities/default.json` | all sixty-seven below, except the two that are the pet window's own |
+//! | `main` | `capabilities/default.json` | all seventy below, except the two that are the pet window's own |
 //! | `pet-*` | `capabilities/desktop-pet.json` | `desktop_pet_state`, `desktop_pet_set_visible`, `desktop_pet_close_own`, `desktop_pet_set_click_through`, `desktop_pet_open_settings`, `desktop_pet_tasks`, `desktop_pet_appearance`, `desktop_pet_open_task`, and the two `core:event` permissions it already held |
 //!
 //! Two consequences worth knowing before editing either list:
@@ -91,11 +91,20 @@ const COMMANDS: &[&str] = &[
     "agent_session_snapshot",
     "agent_session_capabilities",
     "agent_permission_answer",
+    // The permissions the engine has written down because the user answered "always": read from
+    // the engine's own route, and removed through it.
+    "agent_permission_grants",
+    "agent_permission_grant_revoke",
     "agent_cancel_run",
     // The engine registry.
     "agent_registry_read",
     "agent_registry_add",
     "agent_registry_set_enabled",
+    // The ACP catalogue: what the public registry publishes, which other clients support many
+    // engines from. Declared here like any other command — a handler registered without a
+    // declaration is a command no window can reach, and the refusal names a permission that
+    // does not exist.
+    "agent_catalogue_read",
     // The agent's settings documents.
     "agent_profile_read",
     "agent_profile_write",
