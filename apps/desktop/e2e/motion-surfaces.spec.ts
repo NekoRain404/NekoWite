@@ -364,7 +364,30 @@ test('settings dialog: closed and reopened inside its own exit', async ({ page }
   await ensureProbe(page)
   const done = probe(page, '.settings-overlay', 1200)
   await page.keyboard.press('Escape')
-  await page.waitForTimeout(40)
+  // **Wait for the leave to be under way, rather than guessing how long it takes to get there.**
+  //
+  // This was `waitForTimeout(40)`, and it raced the exit: on a slow frame the dialog had finished
+  // leaving before the reopen landed, so it came back at full opacity and `back` below was empty.
+  // The failure then *read* as "the reopen restarted the animation" — the thing this test exists to
+  // catch — when what had happened was that there was no exit left to continue from. It failed
+  // roughly half the time, and four separate agents each spent part of a run proving it was not
+  // their change.
+  //
+  // The sidebar test further down already waits on the condition it needs, for the same reason and
+  // in its own words ("wait for the leave to *start* rather than guessing how long the click takes
+  // to land"). This is that pattern, and the condition is the one the assertion below depends on:
+  // by the time the click lands the overlay is part-way out, so there are frames for it to climb
+  // back through.
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector<HTMLElement>('.settings-overlay')
+      if (el === null) return false
+      const opacity = Number(getComputedStyle(el).opacity)
+      return opacity > 0 && opacity < 0.95
+    },
+    undefined,
+    { timeout: 3000 },
+  )
   await page.locator('.status-btn').last().click()
   const frames = await done()
   report('settings dialog — Escape, then reopened inside its own exit', frames)
