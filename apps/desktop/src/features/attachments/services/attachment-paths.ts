@@ -31,6 +31,31 @@ export const ATTACHMENT_EXTENSIONS = [
 
 export type AttachmentExtension = (typeof ATTACHMENT_EXTENSIONS)[number]
 
+/**
+ * Image extensions a vault may hold that this build has no reader for.
+ *
+ * The two lists answer two different questions and neither is wrong: the host's
+ * `IMPORT_IMAGE_EXTENSIONS` (`apps/desktop/src-tauri/src/storage/attachment_store.rs`) is the set
+ * the app is willing to COPY into a vault — these plus {@link ATTACHMENT_EXTENSIONS} — because a
+ * vault is the reader's own folder and a `.tiff` in it is a legitimate file; this list is what this
+ * build can display and attach. The delta is spelled out rather than derived: the Rust constant is
+ * on the far side of the IPC boundary and cannot be read from here, so a change there has to be
+ * mirrored here by hand — the same manual mirror `platform/gateways/memory.ts` keeps of the MIME
+ * table.
+ *
+ * It exists so a caller can tell the two apart *before* reading anything. A `.tiff` is an image,
+ * and handing it to the text reader is what made the app call a file it had imported itself
+ * "unreadable": `read_to_string` refuses every image, so the reason it reported was the reader's
+ * own shape rather than the file's format.
+ */
+export const UNSUPPORTED_IMAGE_EXTENSIONS = ['ico', 'tiff', 'tif'] as const
+
+/** A path's extension, lowercased, with no dot. `''` when it has none. */
+function fileExtension(path: string): string {
+  const name = path.split(/[\\/]/).pop() ?? path
+  return name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? ''
+}
+
 const MIME_TO_EXTENSION: Record<string, AttachmentExtension> = {
   'image/png': 'png',
   'image/jpeg': 'jpg',
@@ -69,9 +94,8 @@ export function mimeFromExtension(extension: string): string {
 }
 
 export function extensionFromFileName(fileName: string): AttachmentExtension | null {
-  const match = fileName.toLowerCase().match(/\.([a-z0-9]+)$/)
-  if (!match) return null
-  return isAttachmentExtension(match[1]) ? match[1] : null
+  const extension = fileExtension(fileName)
+  return isAttachmentExtension(extension) ? extension : null
 }
 
 export function isImageFile(file: { name: string; type: string }): boolean {
@@ -80,6 +104,12 @@ export function isImageFile(file: { name: string; type: string }): boolean {
 
 export function isImagePath(path: string): boolean {
   return Boolean(extensionFromFileName(path.split(/[\\/]/).pop() ?? path))
+}
+
+/** True for a path whose extension is an image this build does not read — see
+ *  {@link UNSUPPORTED_IMAGE_EXTENSIONS}. False for a supported image and for everything else. */
+export function isUnsupportedImagePath(path: string): boolean {
+  return (UNSUPPORTED_IMAGE_EXTENSIONS as readonly string[]).includes(fileExtension(path))
 }
 
 export function sanitizeAttachmentFileName(name: string): string {

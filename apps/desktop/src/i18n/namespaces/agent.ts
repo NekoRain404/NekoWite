@@ -87,6 +87,19 @@ export const agent = {
             seconds: '{s}s',
           },
         },
+        /* The panel's options menu: the control in the bar and the box it opens, which carry the
+           same name because they are one thing. `label` is the accessible name of both — the
+           trigger's (`AgentSessionBar`) and the menu's (`AgentPanelMenu`) — so there is one place
+           to write it and no way for the two to disagree.
+
+           `settings` is the door the panel had none of: it is the only way to the agents tree
+           that starts from the session whose engine is wrong. It is not `agent.settings....`'s
+           section title reused, because what the row says is where the press goes, and the
+           section's own title is what the page is called once you are there. */
+        menu: {
+          label: 'Agent options',
+          settings: 'Agent settings',
+        },
         /* The session history menu (T17): the rows an engine's `session/list` answer draws.
            Every row is the engine's own facts — its title, its folder, its last-activity stamp —
            and the sentences here are only what this app can say *of* them: which one is open,
@@ -319,6 +332,13 @@ export const agent = {
             tooLarge: '{name} is larger than the {max} one attachment may be.',
             noRoom: 'This message already holds {max} of attachments; {name} did not fit.',
             unreadable: '{name} could not be read, so there is nothing to send in it.',
+            /* An image of a format this build attaches nothing of. `{formats}` is the allowlist
+               itself, spelled from it rather than retyped, so the list a reader is asked to convert
+               to cannot go stale. `unreadable` said this sentence's job once, about a file the app
+               had imported itself: the bytes were there and the reason was the format, so the
+               format is what is named now — with the one thing that does work, and the note that
+               pasting and dropping read the same list (so it is not the way round it). */
+            unsupportedImage: '{name} was not attached: this app attaches only the image formats it can read ({formats}), and this file is not one of them. Convert it to one of them and attach it again — pasting and dropping take the same list.',
             /* The one refusal that is not about this message: the shared intake's own budgets —
                how many files a paste may bring, how many bytes it may weigh, the session's running
                total — which are spent before the message is consulted at all. Said as the budget
@@ -1290,6 +1310,17 @@ export const agent = {
             seconds: '{s}秒',
           },
         },
+        /* 面板的选项菜单：状态栏里的控件和它打开的盒子，两者同名，因为它们是同一件事。`label`
+           同时是两者的无障碍名称——触发器（`AgentSessionBar`）和菜单（`AgentPanelMenu`）——
+           所以这句话只有一个地方可写，也不会互相对不上。
+
+           `settings` 是面板以前没有的那扇门：它是唯一一条从「引擎配置不对的那次会话」出发、
+           通往智能体设置树的路径。它没有复用 `agent.settings....` 的节标题，因为这行说的是
+           按下去会去哪里，而节标题是到了那里之后那一页叫什么。 */
+        menu: {
+          label: '智能体选项',
+          settings: '智能体设置',
+        },
         /* 会话历史菜单（T17）：引擎对 `session/list` 的回答所画出的行。每一行都是引擎自己的
            事实——它的标题、它所在的文件夹、它的最后活动时间——这里的话只是本应用对这些事实能
            说的部分：哪一个是当前打开的、哪一个记录在别处、某个会话上次被碰是什么时候，以及为什
@@ -1447,6 +1478,12 @@ export const agent = {
             tooLarge: '{name} 超过了单个附件允许的 {max}。',
             noRoom: '这条消息已持有 {max} 的附件，{name} 放不下。',
             unreadable: '无法读取 {name}，里面没有可发送的内容。',
+            /* 本版本根本附加不了的图片格式。{formats} 就是那份允许清单本身，从清单拼出来而不是
+               另抄一遍，免得让读者转格式的那份名单和真正拦下他的判据各说各话。这句话以前归
+               unreadable 管，说的却是本应用自己刚导入的文件：字节一直在，原因是格式，所以现在
+               点名的是格式——附带唯一管用的做法，并说明粘贴和拖入读的是同一份名单，省得读者
+               再试一遍才知道。 */
+            unsupportedImage: '{name} 没有附加：本应用只能附加自己读得了的图片格式（{formats}），这个文件不在其中。把它转成其中的一种再附加——粘贴和拖入读的是同一份名单。',
             /* 唯一一条不是在说这条消息的拒绝：共享入口自己的额度——一次粘贴能带几个文件、能有多
                重、本次会话累计多少——在这些问题上根本还没轮到这条消息。写成额度已用尽而不是写成
                一个数字，因为它覆盖的三个上限各自不同，写任何一个都会有三分之二是错的。 */

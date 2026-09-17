@@ -129,6 +129,13 @@ describe('what is refused', () => {
       key: 'unreadable',
       params: { name: 'a.png' },
     })
+    // The formats slot is the allowlist itself, not a copy of it: this list is what the sentence
+    // tells a reader to convert to, and a reader sent to convert to something this build still
+    // cannot read is worse off than one who was told nothing.
+    expect(describeRefusal({ reason: 'unsupported-image', name: 'scan.tiff' })).toEqual({
+      key: 'unsupportedImage',
+      params: { name: 'scan.tiff', formats: 'PNG, JPG, JPEG, GIF, WEBP, BMP, AVIF, SVG' },
+    })
     // Every arm has a sentence behind it: a refusal with no key would render as nothing at all,
     // which is the failure mode the code-not-sentence rule exists to keep visible.
     for (const refusal of [
@@ -136,6 +143,7 @@ describe('what is refused', () => {
       { reason: 'too-large', name: 'a.png', limit: 10 },
       { reason: 'no-room', limit: 10 },
       { reason: 'unreadable', name: 'a.png' },
+      { reason: 'unsupported-image', name: 'a.tiff' },
     ] as const) {
       expect(describeRefusal(refusal).key).toBeTruthy()
     }

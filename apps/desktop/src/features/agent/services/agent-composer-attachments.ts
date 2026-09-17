@@ -20,6 +20,7 @@
  */
 
 import {
+  ATTACHMENT_EXTENSIONS,
   collectClipboardImages,
   fileToBase64,
   formatAttachmentBytes,
@@ -99,6 +100,18 @@ export type AgentAttachmentRefusal =
   | { reason: 'too-large'; name: string; limit: number }
   | { reason: 'no-room'; limit: number }
   | { reason: 'unreadable'; name: string }
+  /**
+   * An image of a format this build has no reader for (`.tiff`, `.tif`, `.ico`): a file the app's
+   * own importer copies into a vault, because the vault's allowlist and this build's reader list
+   * answer two different questions.
+   *
+   * Its own arm rather than `unreadable`, and that is the whole of why it exists. The bytes were
+   * never in doubt — the file is in the reader's own folder and the host would serve it — and the
+   * old route asked the *text* reader about an image, which refuses every one of them, so the
+   * reader was told a file the app had imported itself "could not be read". A refusal that names a
+   * reason is only worth having if the reason is the reason.
+   */
+  | { reason: 'unsupported-image'; name: string }
   /**
    * The shared intake's own gesture budgets refused it, before this module ever weighed it: more
    * files than one paste may bring, more bytes than one paste may weigh, or the session's running
@@ -239,10 +252,21 @@ export function roomFor(
   return null
 }
 
+/**
+ * The formats this build attaches, as the refusal sentence spells them.
+ *
+ * Derived from the allowlist rather than written out, so the sentence a reader is given and the
+ * predicate that refused them cannot disagree: widening what this build reads moves the list the
+ * reader is told to convert to on the same change.
+ */
+const ATTACHABLE_IMAGE_FORMATS = ATTACHMENT_EXTENSIONS.map((extension) =>
+  extension.toUpperCase(),
+).join(', ')
+
 /** The sentence a refusal is shown as. Here rather than in a component because three intakes and
  *  one chip strip all report the same reasons, and a copy each is a chance to disagree. */
 export function describeRefusal(refusal: AgentAttachmentRefusal): {
-  key: 'tooMany' | 'tooLarge' | 'noRoom' | 'unreadable' | 'intake'
+  key: 'tooMany' | 'tooLarge' | 'noRoom' | 'unreadable' | 'unsupportedImage' | 'intake'
   params: Record<string, string | number>
 } {
   switch (refusal.reason) {
@@ -257,6 +281,11 @@ export function describeRefusal(refusal: AgentAttachmentRefusal): {
       return { key: 'noRoom', params: { max: formatAttachmentBytes(refusal.limit) } }
     case 'unreadable':
       return { key: 'unreadable', params: { name: refusal.name } }
+    case 'unsupported-image':
+      return {
+        key: 'unsupportedImage',
+        params: { name: refusal.name, formats: ATTACHABLE_IMAGE_FORMATS },
+      }
     case 'intake':
       return { key: 'intake', params: { name: refusal.name } }
   }

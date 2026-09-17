@@ -23,7 +23,12 @@ import { promptAttachmentLabel } from '../../../platform/gateways/agent-contract
 import { notifyError } from '../../../services/errors'
 import { t } from '../../../i18n'
 import { fsService } from '../../../platform/gateways/fs'
-import { collectClipboardImages, isImagePath, readVaultImageBase64 } from '../../attachments'
+import {
+  collectClipboardImages,
+  isImagePath,
+  isUnsupportedImagePath,
+  readVaultImageBase64,
+} from '../../attachments'
 import { baseName } from '../../../services/paths'
 import {
   attachmentKey,
@@ -195,11 +200,44 @@ export function useAgentComposerAttachments(
    * image nor text fails the text read and is named as unreadable. That is not an oversight — the
    * media channel serves only files on the app's own image allowlist, deliberately (see
    * `readVaultImageBase64`), so there is no reader here for a binary and none is invented.
+   *
+   * The fourth kind is an image of a format this build has no reader for — and it is *asked about
+   * before the text reader*, which is the one thing the old route got wrong. See
+   * {@link attachUnsupportedImage}.
    */
   async function attachFile(path: string): Promise<AgentPickOutcome> {
     const vault = options.vault()
     if (vault === null) return 'refused'
-    return isImagePath(path) ? await attachImage(vault, path) : await attachText(vault, path)
+    if (isImagePath(path)) return await attachImage(vault, path)
+    if (isUnsupportedImagePath(path)) return attachUnsupportedImage(path)
+    return await attachText(vault, path)
+  }
+
+  /**
+   * An image the vault may hold and this build cannot attach.
+   *
+   * The vault's allowlist and this build's reader list are two lists, and deliberately so: the
+   * importer copies `.tiff`, `.tif` and `.ico` into a vault (`attachment_store.rs`'s
+   * `IMPORT_IMAGE_EXTENSIONS`) because a vault is the reader's own folder and a file in it does not
+   * have to be something this window draws. What went wrong was the routing: not an image by this
+   * build's predicate, the pick went to the *text* reader, `read_to_string` refused it — as it
+   * refuses every image — and the reader was told a file the app had imported itself was
+   * "unreadable". The bytes were never the problem and nobody ever established they were.
+   *
+   * So the format is named instead, and nothing is read: the reason is a fact about the path the
+   * reader picked. The sentence points at the one thing that works — converting the file — and says
+   * outright that pasting and dropping read the same list, so the reader does not spend a gesture
+   * finding that out.
+   *
+   * **The engine's answer comes first**, as in both arms above and for the same reason: where the
+   * report licenses no image block at all, this pick has always travelled as its path and a `.tiff`
+   * is no different there from a `.png`. Owed a sentence about a format that never mattered to the
+   * turn would be this window talking about itself when nothing was refused.
+   */
+  function attachUnsupportedImage(path: string): AgentPickOutcome {
+    if (standingFor('image').kind !== 'allowed') return 'path-in-message'
+    reportRefusal({ reason: 'unsupported-image', name: path })
+    return 'refused'
   }
 
   async function attachImage(vault: string, path: string): Promise<AgentPickOutcome> {

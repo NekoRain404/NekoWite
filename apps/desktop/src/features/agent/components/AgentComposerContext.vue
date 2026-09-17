@@ -189,6 +189,15 @@ const rows = computed((): AgentReferenceRow[] => {
   if (held.parent !== null) {
     list.push({ id: UP, label: labels.value.up, icon: CornerLeftUp })
   }
+  // One icon per file, and it is deliberate rather than unfinished. The app does draw an image
+  // icon elsewhere — `AgentComposerAttachments.vue`'s chips and `AgentTimeline.vue`'s attachment
+  // rows both pick `Image` over `FileText` — but both decide it from an attachment that already
+  // exists, whose `kind` the app has *already* settled. A row here is a file in a folder, one
+  // decision short of that: whether it travels as an image block depends on the engine's report
+  // (`attachFile`) and, for an image this build cannot read, on the format. An image icon would be
+  // this list promising an outcome it holds nothing to promise with — and it would put the `+` at
+  // odds with the file tree it walks, which draws the same `FileText` for every file
+  // (`FileTreeRow.vue`) because a listing names files.
   for (const entry of held.entries) {
     list.push({
       id: idOf(entry),

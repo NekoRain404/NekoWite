@@ -5,19 +5,26 @@
  * the run, scrolling up is not stolen, and IME input does not send (§10.2, T6's row). Each is a
  * rule about a *moment* rather than about a shape, which is why none of them is a unit test:
  * the collapse has to be a real unmount of a real Vue tree, the scroll has to be a real scroll
- * container, and the composition has to be a real input method.
+ * container, and the composition has to be a real input method. The composer's own payload is
+ * here for the same reason one step further in: what the message is *holding* is on screen, and
+ * what it *crossed to the engine with* is only observable at the call.
  *
  * ## Why the panel is mounted here rather than found in the rail
  *
- * The panel's slot is the right rail, and moving the rail onto it is T16's change to
- * `InfoRail.vue` / `AppShell.vue` — not this task's, and not something a spec may do for it.
- * Until that wiring exists there is no panel in the running application to drive, so this spec
- * mounts the component itself against the memory runtime from T1, in the page the dev server is
- * already serving. Every assertion below is about the component's behaviour and stays true
- * unchanged once the rail hosts it; what this file deliberately does not cover is the wiring.
+ * The panel's slot is the right rail and the rail does host it now: `AppShell.vue` fills
+ * `InfoRail`'s `body` slot with `AgentRailBody.vue`, which mounts `AgentPanel` on the runtime the
+ * shell opened — a real engine, a real folder, and whatever the registry reported. That wiring
+ * is what this spec still does not drive, and the reason is the assertions rather than a gap:
+ * every rule below is about the component under a *scripted* runtime, which the memory double
+ * from T1 is and the shell's own panel is not. So the component is mounted directly against the
+ * double, in the page the dev server is already serving — the same panel, the same store, one
+ * layer of setup removed.
  *
  * The page is opened with no Tauri stub, so the application boots on its browser path and
- * nothing in it competes with the panel for the store, the runtime or the keyboard.
+ * nothing in it competes with the panel for the store, the runtime or the keyboard — the rail
+ * draws the panel only while the `agentPanel` setting says so, and that setting is off until a
+ * reader turns it on (`stores/settings-agent.ts`'s default, which is what the app is booting
+ * with here).
  *
  * Vue and Pinia are imported by URL rather than by name: a page has no import map, and the
  * panel has to be built by the *same* Vue instance the components it renders were compiled
@@ -29,7 +36,12 @@ import { expect, test, type Page } from '@playwright/test'
 import type { Pinia } from 'pinia'
 import type { App } from 'vue'
 import type { AgentPanelLabels } from '/src/features/agent/index.ts'
-import type { AgentSession } from '/src/platform/gateways/agent-contracts.ts'
+import type {
+  AgentCapabilityFeature,
+  AgentCapabilityFinding,
+  AgentPromptAttachment,
+  AgentSession,
+} from '/src/platform/gateways/agent-contracts.ts'
 import type { MemoryAgentGateway, MemoryRunScript } from '/src/platform/gateways/memory-agent.ts'
 
 /**
@@ -115,6 +127,29 @@ const LABELS: AgentPanelLabels = {
     gap: 'Part of this session’s record was never received',
     resync: 'Resync',
   },
+  // The options menu's sentences. Every caller of the panel supplies them, because
+  // `AgentPanelLabels` is required in full: a caller that forgot one would otherwise ship a
+  // trigger with no accessible name, which is the blank-instead-of-a-sentence failure the
+  // required shape exists to make impossible. The rows themselves are not drawn here — this
+  // panel is mounted with no caller behind it, so `settingsOpenable`/`chatOpenable` are absent.
+  menu: {
+    label: 'Agent options',
+    settings: 'Agent settings',
+    chat: 'Use the chat panel',
+  },
+}
+
+/**
+ * One turn the panel handed the engine, as the spy below recorded it.
+ *
+ * Both halves, because a send is both: the words and what rode along with them. A spy that kept
+ * only `text` could not tell a turn carrying a screenshot from one carrying nothing, and the
+ * composer's attachments are exactly the payload this spec has no other way to see — the chip
+ * strip proves what the reader is shown, not what crossed to the engine.
+ */
+interface PromptCall {
+  text: string
+  attachments: readonly AgentPromptAttachment[]
 }
 
 /** What the spec keeps on the page between mounts: the runtime it drives, the one session on
@@ -127,8 +162,9 @@ interface PanelHarness {
   pinia: Pinia
   app: App | null
   /** Every prompt the panel handed the engine, in order. The composer's sends are the only
-   *  thing that feeds it, which is what makes "nothing was sent" an assertion about a call. */
-  prompts: string[]
+   *  thing that feeds it, which is what makes "nothing was sent" an assertion about a call — and
+   *  each entry is the whole call, attachments included, so "it sent the file" is one too. */
+  prompts: PromptCall[]
   /** Every answer the panel handed the engine, as `[requestId, optionId]` — the same trick for
    *  the other decision: a permission that was answered rather than merely rendered. */
   answers: Array<[string, string]>
@@ -189,14 +225,26 @@ async function viewDeps(page: Page): Promise<{ vue: string; pinia: string }> {
 }
 
 /**
+ * What a case asks of the double it mounts.
+ *
+ * The capability report is the one thing here, and it is opt-in for the reason the double has an
+ * empty default: nothing in it has talked to an engine, so every feature is `unverified` until a
+ * case that drives one says otherwise. A case that pastes a screenshot has to say so — a control
+ * gated on the report is not drawn at all without it.
+ */
+interface MountOptions {
+  capabilities?: Partial<Record<AgentCapabilityFeature, AgentCapabilityFinding>>
+}
+
+/**
  * Put the panel on screen. The runtime, the session and the store are made once and kept across
  * mounts: a collapse is the panel going away, not the session, and a spec that rebuilt the
  * runtime would be testing a restart instead.
  */
-async function mount(page: Page): Promise<void> {
+async function mount(page: Page, options: MountOptions = {}): Promise<void> {
   const deps = await viewDeps(page)
   await page.evaluate(
-    async ({ deps: urls, labels, hostId, width, height }) => {
+    async ({ deps: urls, labels, hostId, width, height, capabilities }) => {
       const vue = (await import(/* @vite-ignore */ urls.vue)) as typeof import('vue')
       const pinia = (await import(/* @vite-ignore */ urls.pinia)) as typeof import('pinia')
       const { AgentPanel } = await import('/src/features/agent/index.ts')
@@ -208,15 +256,18 @@ async function mount(page: Page): Promise<void> {
       const answers = previous?.answers ?? []
       const gateway =
         previous?.gateway ??
-        createMemoryAgentGateway({ agentId: 'memory-e2e', profileId: 'e2e' })
+        createMemoryAgentGateway({ agentId: 'memory-e2e', profileId: 'e2e', capabilities })
       if (previous === undefined) {
         await gateway.start()
-        // Count what the composer actually hands over. "No row appeared" would also hold if a
-        // send were swallowed on the way, and the rule this file checks is about the call.
+        // Count what the composer actually hands over — the whole call, not just its words.
+        // "No row appeared" would also hold if a send were swallowed on the way, and the rule
+        // this file checks is about the call; the attachments are recorded for the same reason
+        // one step further in, because they are a decision the composer makes on the reader's
+        // behalf and nothing else on the page reports it.
         const prompt = gateway.prompt.bind(gateway)
-        gateway.prompt = (target, text) => {
-          prompts.push(text)
-          return prompt(target, text)
+        gateway.prompt = (target, text, attachments) => {
+          prompts.push({ text, attachments: [...(attachments ?? [])] })
+          return prompt(target, text, attachments)
         }
         // …and the same for the other decision the panel makes on the reader's behalf: an
         // authorization that was answered, rather than one that was merely drawn.
@@ -272,7 +323,14 @@ async function mount(page: Page): Promise<void> {
         },
       }
     },
-    { deps, labels: LABELS, hostId: HOST_ID, width: PANEL_WIDTH, height: PANEL_HEIGHT },
+    {
+      deps,
+      labels: LABELS,
+      hostId: HOST_ID,
+      width: PANEL_WIDTH,
+      height: PANEL_HEIGHT,
+      capabilities: options.capabilities,
+    },
   )
   await expect(page.locator('[data-agent-panel]')).toBeVisible()
 }
@@ -339,7 +397,7 @@ const state = (page: Page): Promise<string> =>
 const engineState = (page: Page): Promise<string> =>
   page.evaluate(async () => (await window.__agentPanel?.engineState()) ?? 'none')
 
-const prompts = (page: Page): Promise<string[]> =>
+const prompts = (page: Page): Promise<PromptCall[]> =>
   page.evaluate(() => window.__agentPanel?.prompts ?? [])
 
 const answers = (page: Page): Promise<Array<[string, string]>> =>
@@ -919,7 +977,7 @@ test.describe('agent panel — the composer', () => {
     await page.waitForTimeout(100)
     await page.keyboard.press('Enter')
     await expect.poll(async () => prompts(page), { timeout: 5000 }).toHaveLength(1)
-    expect((await prompts(page))[0]).toContain('你好')
+    expect((await prompts(page))[0]?.text).toContain('你好')
     await expect(page.locator('.agent-row-user')).toHaveCount(1)
     await expect(page.locator('.agent-row-user')).toContainText('你好')
     await expect(field).toHaveValue('')
@@ -941,7 +999,42 @@ test.describe('agent panel — the composer', () => {
     await page.keyboard.press('Enter')
     await expect.poll(async () => prompts(page), { timeout: 5000 }).toHaveLength(1)
     // The ends are trimmed and nothing inside them is touched.
-    expect((await prompts(page))[0]).toBe('first line\nsecond line')
+    const [sent] = await prompts(page)
+    expect(sent?.text).toBe('first line\nsecond line')
+    // …and the turn carried nothing: the spy records the whole call now, so a message with no
+    // attachment says so rather than leaving it unsaid.
+    expect(sent?.attachments).toEqual([])
     expect(await rowCount(page)).toBeGreaterThan(1)
+  })
+
+  test('an image pasted into the field crosses to the engine with the turn', async ({ page }) => {
+    // The payload this spec could not see before: the chip strip shows the reader what the message
+    // is holding, and what actually crossed was only readable in a unit test. A paste is the route
+    // that needs no vault — the clipboard hands the page a `File` — and it is gated on the report
+    // like every other attachment, so the double has to say this engine takes images.
+    await mount(page, { capabilities: { 'image-attachments': { status: 'available' } } })
+
+    await page.locator('.agent-composer-field').evaluate((field) => {
+      const data = new DataTransfer()
+      data.items.add(new File([new Uint8Array([137, 80, 78, 71])], 'shot.png', { type: 'image/png' }))
+      field.dispatchEvent(
+        new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }),
+      )
+    })
+    // What the reader is shown: the file, as a chip, before anything is sent.
+    const chip = page.locator('[data-test="composer-attachments"] .agent-composer-attachment')
+    await expect(chip).toHaveCount(1)
+    await expect(chip).toHaveAttribute('data-kind', 'image')
+
+    await sendAndWait(page, 'what is in this screenshot?')
+
+    const [sent] = await prompts(page)
+    expect(sent?.text).toBe('what is in this screenshot?')
+    // The bytes are the file's own, base64 and with no `data:` prefix — `iVBORw==` is the four
+    // bytes above — and the media type is the app's own reading of the file's extension rather
+    // than whatever the clipboard guessed.
+    expect(sent?.attachments).toEqual([
+      { kind: 'image', name: 'shot.png', mediaType: 'image/png', data: 'iVBORw==' },
+    ])
   })
 })

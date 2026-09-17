@@ -15,6 +15,7 @@ import type {
   AgentCapabilityFeature,
   AgentCapabilityReport,
 } from '../../../platform/gateways/agent-contracts'
+import { setLocale } from '../../../i18n'
 import { onNotify } from '../../../services/errors'
 import { useAgentComposerAttachments } from './use-agent-composer-attachments'
 
@@ -160,6 +161,66 @@ describe('a picked image', () => {
     expect(attachments.held.value).toEqual([])
     expect(notices).toHaveLength(1)
     expect(notices[0]).toContain('shot.png')
+  })
+})
+
+describe('a picked image this app has no reader for', () => {
+  // The assertions below are on the *sentence*, because the sentence is the whole of what was
+  // wrong: the route was refused either way, and only the reason the reader was given was false.
+  // Read in English so the assertion can name the words; the catalogue's other language carries
+  // the same key (see `i18n.test.ts`).
+  beforeEach(() => {
+    setLocale('en')
+  })
+
+  it('is refused for its format, and the text reader is never asked about it', async () => {
+    // `attachments/scan.tiff` is a file the app itself puts in a vault: the importer's allowlist
+    // (`apps/desktop/src-tauri/src/storage/attachment_store.rs`'s `IMPORT_IMAGE_EXTENSIONS`) is
+    // wider than this window's, deliberately — a vault is the reader's own folder. The picker's
+    // routing predicate reads only this window's list, so it sent the file down the TEXT arm,
+    // whose reader is `read_to_string`: the app told the reader a file it had just imported was
+    // "unreadable", naming a reason that was not the reason.
+    readMock.mockRejectedValue(new Error('stream did not contain valid UTF-8'))
+    const attachments = intake('image-attachments', 'embedded-context')
+
+    await expect(attachments.attachFile('attachments/scan.tiff')).resolves.toBe('refused')
+
+    // Not read at all. The reason is the file's *format*, and the path the reader picked carries
+    // it, so asking a reader that refuses every image is how the wrong sentence was written.
+    expect(readMock).not.toHaveBeenCalled()
+    expect(attachments.held.value).toEqual([])
+    expect(notices).toEqual([
+      'attachments/scan.tiff was not attached: this app attaches only the image formats it can read (PNG, JPG, JPEG, GIF, WEBP, BMP, AVIF, SVG), and this file is not one of them. Convert it to one of them and attach it again — pasting and dropping take the same list.',
+    ])
+  })
+
+  it('still travels as its path where the engine reads no images', async () => {
+    // The other engine: the report licenses no image block, so the pick has always travelled as
+    // its path and a `.tiff` is no different from a `.png` there. A sentence about a format the
+    // reader never needed would be this window's own opinion rather than a fact about the turn.
+    readMock.mockRejectedValue(new Error('stream did not contain valid UTF-8'))
+    const attachments = intake('embedded-context')
+
+    await expect(attachments.attachFile('attachments/scan.tiff')).resolves.toBe('path-in-message')
+
+    expect(attachments.held.value).toEqual([])
+    expect(readMock).not.toHaveBeenCalled()
+    expect(notices).toEqual([])
+  })
+
+  it('leaves a binary that is not an image refused as unreadable, which is true of it', async () => {
+    // The guard on the new arm: it is about images. A `.pdf` is neither an image nor text, and
+    // the window has no reader for it — "unreadable" is the honest sentence there, so the new
+    // reason must not swallow every unknown extension.
+    readMock.mockRejectedValue(new Error('stream did not contain valid UTF-8'))
+    const attachments = intake('image-attachments', 'embedded-context')
+
+    await expect(attachments.attachFile('attachments/paper.pdf')).resolves.toBe('refused')
+
+    expect(attachments.held.value).toEqual([])
+    expect(notices).toEqual([
+      'attachments/paper.pdf could not be read, so there is nothing to send in it.',
+    ])
   })
 })
 

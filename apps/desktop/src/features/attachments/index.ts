@@ -29,6 +29,7 @@ export {
   isImageFile,
   isImagePath,
   isPathWithinVault,
+  isUnsupportedImagePath,
   markdownImageBlock,
   mimeFromExtension,
   noteDirectory,
@@ -37,6 +38,7 @@ export {
   resolveRelativePath,
   sanitizeAttachmentFileName,
   suggestedPasteFileName,
+  UNSUPPORTED_IMAGE_EXTENSIONS,
   vaultRelativeFromNote,
   vaultRelativeFromNoteVault,
 } from './services/attachment-paths'

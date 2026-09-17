@@ -8,6 +8,7 @@ import {
   extensionFromMime,
   isImageFile,
   isPathWithinVault,
+  isUnsupportedImagePath,
   markdownImageBlock,
   mimeFromExtension,
   noteDirectory,
@@ -55,6 +56,21 @@ describe('mime ↔ extension mapping', () => {
     expect(isImageFile(fileFrom('x.txt', 'text/plain'))).toBe(false)
     expect(extensionFromFileName('a.jpeg')).toBe('jpeg')
     expect(extensionFromFileName('noext')).toBeNull()
+  })
+
+  it('tells an image this build cannot read from one it can, and from everything else', () => {
+    // The three the vault's importer takes and this build's reader list does not
+    // (`attachment_store.rs`'s `IMPORT_IMAGE_EXTENSIONS`): routing one of them to the text reader
+    // is what had the app call a file it imported itself "unreadable". The predicate is by
+    // extension alone, in any case, and answers false for both of the things it is not about —
+    // a supported image, and a file that is not an image at all.
+    expect(isUnsupportedImagePath('attachments/scan.tiff')).toBe(true)
+    expect(isUnsupportedImagePath('scan.TIF')).toBe(true)
+    expect(isUnsupportedImagePath('C:\\pics\\icon.ico')).toBe(true)
+    expect(isUnsupportedImagePath('shot.png')).toBe(false)
+    expect(isUnsupportedImagePath('a.tifx')).toBe(false)
+    expect(isUnsupportedImagePath('notes/welcome.md')).toBe(false)
+    expect(isUnsupportedImagePath('noext')).toBe(false)
   })
 })
 
