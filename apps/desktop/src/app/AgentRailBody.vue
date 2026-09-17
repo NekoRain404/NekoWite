@@ -111,6 +111,13 @@ export function agentPanelLabels(engineName: string): AgentPanelLabels {
       gap: t('agent.panel.notice.gap'),
       resync: t('agent.panel.notice.resync'),
     },
+    menu: {
+      label: t('agent.panel.menu.label'),
+      settings: t('agent.panel.menu.settings'),
+      // The same sentence as the refused arm's 用对话面板 button, and deliberately the same key:
+      // the two controls ask for one thing, and two strings would be two places for it to drift.
+      chat: t('agent.rail.useChat'),
+    },
   }
 }
 </script>
@@ -147,6 +154,14 @@ const emit = defineEmits<{
    * call can be made, and this file is the caller that says so.
    */
   (e: 'new-session'): void
+  /**
+   * The reader asked for the agent settings from the panel's options menu (row 43).
+   *
+   * Declared here and handled by the shell, which is the layer that owns the dialog — the same
+   * hop `new-session` takes, and for the same reason: the gesture is drawn by a component this
+   * file mounts, and the thing it asks for belongs to a layer above it.
+   */
+  (e: 'open-settings'): void
 }>()
 
 /** The engine's own name, and only while a session is live — the one arm that mounts the panel. */
@@ -165,9 +180,13 @@ const labels = computed(() => agentPanelLabels(engineName.value))
     :session="state.session"
     :cwd="state.cwd"
     :openable="true"
-    @new-session="emit('new-session')"
+    :settings-openable="true"
+    :chat-openable="true"
     :labels="labels"
+    @new-session="emit('new-session')"
     @resume="emit('resume', $event)"
+    @open-settings="emit('open-settings')"
+    @use-chat="emit('use-chat')"
   />
   <div
     v-else-if="state.kind === 'refused'"

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { FolderOpen, PanelRightClose, PanelRightOpen, Settings } from 'lucide-vue-next'
 import TitleBar from '../ui/TitleBar.vue'
 import { AppSidebar } from '../features/sidebar'
@@ -33,9 +33,11 @@ import type { PluginIntegrityRequest, PluginPermissionRequest } from '../service
 import { notifyError } from '../services/errors'
 import { getLocale, t } from '../i18n'
 import { attachAgentRail, failureSentence } from './agent-rail'
+import { attachPetHostAppearanceLink } from './pet-host-appearance-link'
 import { attachPetSettingsLink } from './pet-settings-link'
 import { attachPetTaskLink } from './pet-task-link'
 import AgentRailBody from './AgentRailBody.vue'
+import type { SettingsOpenTarget } from '../features/settings'
 
 // AppShell is the presentational root layout only. It owns no Tauri calls, no
 // file-path walking and no business logic. Appearance-driven layout (theme,
@@ -168,10 +170,88 @@ const agentForEditor = computed(() => {
 // sidebar's gear emits. The listener, its lifetime and how long one request is remembered are
 // `pet-settings-link.ts`'s, for the reason that file gives: the shell supplies the two values it
 // alone has and nothing else.
+//
+// It is one of **two** producers of that landing place. The other is the agent panel's own
+// options menu, a few lines below, and it is a click in this window rather than a request from
+// another one — which is the whole of row 43: until it existed, the only way into the agents
+// tree was to know that the settings dialog had one.
 const { target: petSettingsTarget } = attachPetSettingsLink({
   open: () => props.showSettings,
-  onOpen: () => emit('open-settings'),
+  onOpen: () => {
+    // The newest request wins, and it is written here rather than left to the `??` below: the
+    // pet's right-click *can* arrive while the dialog is open (its own watcher exists for that
+    // case), and a landing place that outlived its request would answer it with the section
+    // nobody just asked for. The reverse cannot happen — the panel is behind the dialog's overlay
+    // while the dialog is up — which is why this is the only direction that needs writing down.
+    agentSettingsTarget.value = null
+    emit('open-settings')
+  },
 })
+
+/**
+ * Where the dialog was asked to open by the agent panel's options menu, or `null`.
+ *
+ * The panel does not name the section: `agents` is a fact about where this app keeps the agent
+ * pages, so it is written once, here, beside the shell's other use of that vocabulary. The panel
+ * emits `open-settings` and means "the agent settings" — this is the layer that knows what that
+ * is called in the navigation.
+ */
+const agentSettingsTarget = ref<SettingsOpenTarget | null>(null)
+
+/**
+ * Open the agents tree, from the panel that feels the misconfiguration (§8.1).
+ *
+ * Two writes and an emit, in that order: the target has to be in place before the dialog mounts,
+ * because the panel reads its landing place once, in `setup`. `App.vue` owns `showSettings` and
+ * flips it on the event below.
+ */
+function openAgentSettings(): void {
+  petSettingsTarget.value = null
+  agentSettingsTarget.value = { section: 'agents' }
+  emit('open-settings')
+}
+
+// ---- The pet follows this window's appearance (§1's 「保留现有主题、强调色」) --------------
+//
+// The pet's windows are pages of their own and may not read this window's store (§7.1), so the
+// appearance this shell draws with is *published*: the four attributes and the body size are the
+// same four and the same one the root below carries, read from the same getters, so the pet cannot
+// be told about an appearance this window is not showing. `pet-host-appearance-link.ts` owns when
+// that happens; the shell supplies the getters only it has.
+attachPetHostAppearanceLink({
+  appearance: () => ({
+    // The *setting* and not `theme.value`: `system` is resolved by each page against its own engine
+    // — the same engine, in the same process — so a pet window keeps following a desktop theme flip
+    // on a machine whose app is following it too. The accent is the resolved one, because resolving
+    // *that* needs the OS read only the backend has (`stores/appearance.ts`'s `effectiveAccent`).
+    theme: appearance.theme,
+    colorScheme: colorScheme.value,
+    accent: accent.value,
+    highContrast: appearance.highContrast,
+    bodyFontSize: appearance.bodyFontSize,
+  }),
+})
+
+// One request is remembered for as long as the dialog it opened. Without this, the toolbar's
+// gear and the panel's row would keep opening on the section the *last* request named, because
+// the panel reads its landing place on every mount — the same rule the pet's link states for its
+// own ref, and the reason the two are cleared in the same breath as they are set.
+watch(
+  () => props.showSettings,
+  (open) => {
+    if (!open) agentSettingsTarget.value = null
+  },
+)
+
+/**
+ * What the dialog is told to open on.
+ *
+ * At most one of the two is ever set — each producer clears the other as it writes — so this is
+ * a join of two mutually exclusive facts rather than a precedence rule.
+ */
+const settingsTarget = computed<SettingsOpenTarget | null>(
+  () => agentSettingsTarget.value ?? petSettingsTarget.value,
+)
 
 // ---- The pet's click on a task (§6.2's 点击返回任务) -------------------------
 //
@@ -344,6 +424,7 @@ const shellStyle = computed<Record<string, string>>(() => ({
                 @retry="retryAgentRail()"
                 @resume="resumeAgentSession($event)"
                 @new-session="newAgentSession()"
+                @open-settings="openAgentSettings()"
                 @use-chat="settings.agentPanel = false"
               />
             </template>
@@ -391,7 +472,7 @@ const shellStyle = computed<Record<string, string>>(() => ({
          the component for why they moved out of this template together. -->
     <AppDialogs
       :show-settings="showSettings"
-      :settings-target="petSettingsTarget"
+      :settings-target="settingsTarget"
       :conflict="conflict"
       :plugin-permission="pluginPermission"
       :plugin-integrity="pluginIntegrity"

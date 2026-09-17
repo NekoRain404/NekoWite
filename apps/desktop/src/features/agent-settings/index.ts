@@ -79,37 +79,46 @@ export type SettingOrigin =
 /**
  * One section of the tree, in the order a navigation should offer it.
  *
- * A list rather than seven imports at the call site, because the order and the identity of the pages
- * are one fact and T16's navigation would otherwise keep its own copy of it. This file declares
- * *what exists*; T16 decides what is shown, and whether a page with nothing behind it is hidden.
- * `mounts` is the component's own name so a navigation can bind it without a second lookup table.
+ * A list rather than seven imports at the call site, because the order and the identity of the
+ * pages are one fact and T16's navigation would otherwise keep its own copy of it. This file
+ * declares *what exists*; T16 decides what is shown, and whether a page with nothing behind it is
+ * hidden.
+ *
+ * **An entry is its id, and nothing else, and that is a decision rather than an unfinished
+ * shape.** Two fields used to sit beside it — `mounts`, the component's own export name, and
+ * `needsRuntime`, whether the section could do anything with no engine running — and nothing read
+ * either of them. The first was a second spelling of the export names twenty lines above it that
+ * nothing checked, kept "so a navigation can bind it without a second lookup table" by a
+ * navigation that was never built; the second was worse than unused, because it was a *claim*, and
+ * the pages answer it in the opposite direction from the one the field asserted: the permission
+ * page draws the backend's own 「no engine is running」 rather than a gap
+ * (`AgentPermissionGrants.vue` → `SettingsPanel.agents.test.ts:442`), and `skills` carries the
+ * note that a navigation hiding it while the rail is off "would be hiding the page in the state it
+ * is built for". §13.11's rule for this file's *exports* — a name is exported when a second real
+ * caller exists, rather than in case one appears — is the same rule, applied to a field.
+ * `index.test.ts` is where that stays true.
  */
 export interface AgentSettingsSection {
   id: string
-  /** The component's export name in this file. */
-  mounts: string
-  /** Whether the section can do anything at all when the runtime is not running. */
-  needsRuntime: boolean
 }
 
 export const AGENT_SETTINGS_SECTIONS: readonly AgentSettingsSection[] = [
-  { id: 'runtime', mounts: 'AgentRuntimeSettings', needsRuntime: true },
-  { id: 'provider', mounts: 'AgentProviderSettings', needsRuntime: true },
+  { id: 'runtime' },
+  { id: 'provider' },
   // The engine's own configuration document. Beside `provider` rather than at the end, because
   // §8.1 puts provider credentials, model ids and *configuration files* in one row: they are all
   // per engine, and the two pages are about the same (engine, profile) pair.
-  { id: 'configuration', mounts: 'AgentConfigurationSettings', needsRuntime: false },
-  // `false`, and it is the one entry here whose runtime half was ever in question: §8.2's page
-  // reads and changes *directories* — the profile's own and the two another tool owns — so it does
-  // everything it does with no engine running at all. A navigation that hid it while the rail is
-  // off would be hiding the page in the state it is built for.
-  { id: 'skills', mounts: 'AgentSkillsSettings', needsRuntime: false },
-  { id: 'commands', mounts: 'AgentCommandsSettings', needsRuntime: true },
-  { id: 'mcp', mounts: 'AgentMcpSettings', needsRuntime: true },
-  { id: 'permission', mounts: 'AgentPermissionSettings', needsRuntime: true },
-  { id: 'registry', mounts: 'AgentRegistrySettings', needsRuntime: false },
+  { id: 'configuration' },
+  // §8.2's page reads and changes *directories* — the profile's own and the two another tool
+  // owns — so it does everything it does with no engine running at all, which is the case the
+  // deleted `needsRuntime` flag got wrong by saying otherwise.
+  { id: 'skills' },
+  { id: 'commands' },
+  { id: 'mcp' },
+  { id: 'permission' },
+  { id: 'registry' },
   // Last, and it is the one section that is not about a profile: what the public ACP registry
   // publishes, which is what the add form above it registers. It reads a network-backed catalogue
   // and owns nothing, so it needs neither a runtime nor a vault.
-  { id: 'catalogue', mounts: 'AgentCatalogueBrowser', needsRuntime: false },
+  { id: 'catalogue' },
 ]

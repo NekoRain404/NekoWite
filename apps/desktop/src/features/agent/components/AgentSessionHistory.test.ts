@@ -94,6 +94,16 @@ const LABELS: AgentPanelLabels = {
     gap: 'Part of this session’s record was never received',
     resync: 'Resync',
   },
+  // The options menu's sentences. Every caller of the panel supplies them, because
+  // `AgentPanelLabels` is required in full: a caller that forgot one would otherwise ship a
+  // trigger with no accessible name, which is the blank-instead-of-a-sentence failure the
+  // required shape exists to make impossible. The rows themselves are not drawn here — this
+  // panel is mounted with no caller behind it, so `settingsOpenable`/`chatOpenable` are absent.
+  menu: {
+    label: 'Agent options',
+    settings: 'Agent settings',
+    chat: 'Use the chat panel',
+  },
 }
 
 /**

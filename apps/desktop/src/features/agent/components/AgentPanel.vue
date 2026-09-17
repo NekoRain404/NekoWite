@@ -33,6 +33,21 @@ export interface AgentPanelLabels {
   empty: {
     line: string
   }
+  /**
+   * The options menu — the panel's one place from which the actions that live outside it are
+   * reached.
+   *
+   * `label` names both the control in the bar and the box it opens, because they are one
+   * sentence; the panel hands it down rather than the bar keeping its own copy for the reason
+   * {@link AgentSessionBar}'s `menuLabel` gives.
+   */
+  menu: {
+    label: string
+    /** The door to the agents tree in the settings dialog (row 43). */
+    settings: string
+    /** Put the rail back on the chat panel — the way out the live panel had nowhere to offer. */
+    chat: string
+  }
 }
 </script>
 
@@ -127,6 +142,7 @@ import type { AgentToolEntry } from '../services/agent-timeline'
 import { useAgentSessionStore } from '../stores/agent-session'
 import AgentCommandMenu from './AgentCommandMenu.vue'
 import AgentComposer from './AgentComposer.vue'
+import AgentPanelMenu, { type AgentPanelMenuRow } from './AgentPanelMenu.vue'
 import AgentPermissionPrompt from './AgentPermissionPrompt.vue'
 import AgentSessionBar from './AgentSessionBar.vue'
 import AgentSessionHistoryMenu, {
@@ -156,6 +172,24 @@ const props = defineProps<{
    * over a gateway with no rail at all) has no control that could be pressed and do nothing.
    */
   openable?: boolean
+  /**
+   * Whether the caller can open the settings dialog on the agents tree — the options menu's door,
+   * and the same rule as {@link openable}.
+   *
+   * The dialog is not this component's and never becomes it: `showSettings` is the window root's
+   * and the landing section travels with the request (`features/settings/types.ts`,
+   * `SettingsOpenTarget`). A panel whose caller says no here draws no such row, rather than one
+   * that emits into nothing.
+   */
+  settingsOpenable?: boolean
+  /**
+   * Whether the caller can put the rail back on the chat panel — the same rule again.
+   *
+   * The rail already offers this way out from its refused state (`AgentRailBody.vue`'s 用对话面板
+   * action), and the live panel had no equivalent: a reader who wanted the chat back had to find
+   * the switch in the settings dialog, or close and reopen the rail on the other tab.
+   */
+  chatOpenable?: boolean
   labels: AgentPanelLabels
 }>()
 
@@ -177,6 +211,25 @@ const emit = defineEmits<{
    * to itself (`AgentRailBody.vue` → `agent-rail.ts`'s `newSession`).
    */
   'new-session': []
+  /**
+   * The reader asked for the agent settings.
+   *
+   * An event, and an unparameterised one: the *landing place* — the `agents` section — is a fact
+   * about where this app keeps the agent pages rather than something a panel decides, so it is
+   * the shell that names it (`AppShell.vue`'s `openAgentSettings`). A panel that carried the
+   * section id would be a second place the navigation's vocabulary is written down.
+   */
+  'open-settings': []
+  /**
+   * The reader asked for the chat panel instead of this one.
+   *
+   * An event for the reason `resume` is one, one rung out: the switch belongs to
+   * `stores/settings-agent.ts`, and the thing it does is unmount *this* panel — a component
+   * cannot take itself off the rail, and the session behind it outlives the surface either way.
+   * The name is the rail's own (`AgentRailBody.vue` emits it from the refused state), so the two
+   * gestures that ask for the chat panel are one word rather than two.
+   */
+  'use-chat': []
 }>()
 
 const store = useAgentSessionStore()
@@ -541,6 +594,7 @@ onMounted(async () => {
 
 const barEl = ref<InstanceType<typeof AgentSessionBar> | null>(null)
 const historyEl = ref<InstanceType<typeof AgentSessionHistoryMenu> | null>(null)
+const menuEl = ref<InstanceType<typeof AgentPanelMenu> | null>(null)
 
 /** The list's element id, so the rows and the listbox agree on one name. */
 const historyListId = `agent-history-${props.session.sessionId}`
@@ -579,6 +633,71 @@ const historyMenu = useDetachedPopup({
   trigger: computed(() => barEl.value?.triggerElement() ?? null),
   popup: () => historyEl.value?.element() ?? null,
 })
+
+/**
+ * The rows the options menu would draw, which is also the answer to whether there is a control at
+ * all.
+ *
+ * Derived from what the caller can carry rather than kept as a list of its own, so a row cannot
+ * outlive the ability behind it: the menu is drawn only while this is non-empty, and an empty one
+ * is not drawn rather than drawn empty. Both rows are doors out of this component — the settings
+ * dialog and the rail's switch — which is why each is gated on its own capability rather than on
+ * "the panel is live".
+ */
+const menuRows = computed<readonly AgentPanelMenuRow[]>(() => {
+  const rows: AgentPanelMenuRow[] = []
+  if (props.settingsOpenable === true) rows.push({ id: 'settings', label: props.labels.menu.settings })
+  if (props.chatOpenable === true) rows.push({ id: 'chat', label: props.labels.menu.chat })
+  return rows
+})
+
+/**
+ * Where the menu goes, when it closes, and who owns Escape while it is up — the same recipe as
+ * the session list beside it, measured against the control in the bar.
+ */
+const optionsMenu = useDetachedPopup({
+  floor: 180,
+  claim: 'agent-options-menu',
+  trigger: computed(() => barEl.value?.menuElement() ?? null),
+  popup: () => menuEl.value?.element() ?? null,
+})
+
+/** Open the menu, or take it away — the trigger is a toggle, like the history control beside it. */
+async function toggleMenu(): Promise<void> {
+  if (optionsMenu.open.value) {
+    closeMenu()
+    return
+  }
+  await optionsMenu.show()
+  menuEl.value?.focusFirst()
+}
+
+/** Close the menu and hand the keyboard back to the control it belongs to. */
+function closeMenu(): void {
+  optionsMenu.hide()
+  barEl.value?.menuElement()?.focus()
+}
+
+/**
+ * Act on a row.
+ *
+ * Both rows leave as an event, because neither thing they ask for is this component's: the dialog
+ * belongs to the window root, and the rail's switch to the shell that reads it. `id` is typed as a
+ * plain string because that is what crosses a component boundary in this codebase, and the two
+ * cases below are exhaustive against {@link menuRows} — the ids pushed there and the ids handled
+ * here are the same pair, and a row added to only one of them fails `AgentPanel.menu.test.ts`,
+ * which is the test that exists for exactly that.
+ */
+function chooseMenuRow(id: string): void {
+  closeMenu()
+  switch (id) {
+    case 'settings':
+      emit('open-settings')
+      return
+    case 'chat':
+      emit('use-chat')
+  }
+}
 
 /**
  * Show the engine's sessions, or take the list away again.
@@ -757,8 +876,12 @@ function onHistoryPick(sessionId: string): void {
       :elapsed-ms="elapsedMs"
       :history="historyOffered"
       :history-open="historyMenu.open.value"
+      :menu="menuRows.length > 0"
+      :menu-open="optionsMenu.open.value"
+      :menu-label="labels.menu.label"
       :labels="labels.bar"
       @history="openHistory"
+      @menu="toggleMenu"
     />
     <p
       v-if="gap"
@@ -858,6 +981,26 @@ function onHistoryPick(sessionId: string): void {
         @set-config="onConfigSet"
       />
     </div>
+    <!-- The options menu, teleported and placed against the control in the bar for the same
+         reasons the list below is: the rail body scrolls and would clip it, and the placement is
+         the composable's. It is drawn on the panel's own answer — {@link menuRows} non-empty —
+         so a panel whose caller can carry no row has no popup and no control to open one. -->
+    <Teleport to="body">
+      <Transition name="agent-history-popup">
+        <AgentPanelMenu
+          v-if="optionsMenu.open.value"
+          ref="menuEl"
+          :rows="menuRows"
+          :labels="{ label: labels.menu.label }"
+          :left="optionsMenu.placement.value.left"
+          :top="optionsMenu.placement.value.top"
+          :min-width="optionsMenu.placement.value.minWidth"
+          :drop="optionsMenu.placement.value.drop"
+          @select="chooseMenuRow"
+          @close="closeMenu"
+        />
+      </Transition>
+    </Teleport>
     <!-- The engine's sessions, teleported to the body and placed against the control in the bar
          by `useDetachedPopup`: the rail body scrolls, and a list drawn inside it would be clipped
          by a container it has nothing to do with. It is the panel's list rather than the bar's

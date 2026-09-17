@@ -58,6 +58,7 @@ import {
   CircleX,
   History,
   Loader,
+  MoreHorizontal,
   ShieldQuestion,
 } from 'lucide-vue-next'
 import { t } from '../../../i18n'
@@ -101,15 +102,37 @@ const props = defineProps<{
   history: boolean
   /** Whether the list it opens is up, for `aria-expanded` — the state lives in the panel. */
   historyOpen: boolean
+  /**
+   * Whether to draw the options control — the panel's answer, and the same rule as `history`.
+   *
+   * The panel draws it only while it has at least one row its caller can carry, so a panel
+   * mounted with nothing behind it has no control rather than one that opens an empty box.
+   */
+  menu: boolean
+  /** Whether the menu it opens is up, for `aria-expanded`. */
+  menuOpen: boolean
+  /**
+   * The options control's accessible name — and the menu's as well, because they are one
+   * sentence.
+   *
+   * A prop rather than a member of {@link AgentSessionBarLabels}, which is where the history
+   * control's own name lives: the panel owns this menu (its rows are the panel's events), and the
+   * name has to be the same string on the control and on the box it opens, so a second place to
+   * write it would be a second place for one name to drift.
+   */
+  menuLabel: string
   labels: AgentSessionBarLabels
 }>()
 
 const emit = defineEmits<{
   /** The user asked for the sessions this engine holds. The panel draws the list. */
   history: []
+  /** The options control: open it, or — pressed again, or `Escape` — take it away. */
+  menu: []
 }>()
 
 const triggerEl = ref<HTMLButtonElement | null>(null)
+const menuTriggerEl = ref<HTMLButtonElement | null>(null)
 
 /** The element the panel measures its popup against. Exposed rather than kept here because the
  *  list is the panel's (it is the layer that holds the gateway), and the app's popup recipe
@@ -118,7 +141,39 @@ function triggerElement(): HTMLElement | null {
   return triggerEl.value
 }
 
-defineExpose({ triggerElement })
+/** The same, for the options menu, which hangs off a control of its own. */
+function menuElement(): HTMLElement | null {
+  return menuTriggerEl.value
+}
+
+defineExpose({ triggerElement, menuElement })
+
+/**
+ * The keys the control answers itself, and only while the focus is still on it.
+ *
+ * Once the menu is open the focus is inside it and the menu's own handler owns every one of
+ * these; the two never see the same key. `Escape` and the arrows are the two that would do the
+ * wrong thing unseen: the first would reach the dialog or the editor behind the popup, and the
+ * second would scroll the transcript under a menu the reader is aiming at.
+ *
+ * `Enter` and `Space` are deliberately absent. A button fires its own click for both, and the
+ * press is a toggle, so intercepting them here would be the same gesture written twice — once by
+ * the browser and once by this handler, in the same event.
+ */
+function onMenuKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    if (!props.menuOpen) return
+    event.preventDefault()
+    event.stopPropagation()
+    emit('menu')
+    return
+  }
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    if (props.menuOpen) return
+    event.preventDefault()
+    emit('menu')
+  }
+}
 
 /** The catalogue's own name for this control, unless the caller said otherwise. */
 const historyLabel = computed(() => props.labels.history ?? t('agent.panel.bar.history'))
@@ -313,6 +368,31 @@ const elapsedLabel = computed<string | null>(() => {
         aria-hidden="true"
       />
     </button>
+    <!-- The panel's options control, beside the history one and drawn on the same rule: the panel
+         decides (it is what owns the rows and the events they produce), so a panel with nothing
+         to offer draws no control rather than one that opens an empty box. It carries the whole
+         of the keyboard that opens a menu — a press, `Enter`/`Space` through the button's own
+         click, an arrow, and `Escape` to take it away — because the focus leaves here the moment
+         the menu is up. -->
+    <button
+      v-if="menu"
+      ref="menuTriggerEl"
+      class="agent-bar-menu"
+      type="button"
+      data-agent-menu
+      aria-haspopup="menu"
+      :aria-expanded="menuOpen"
+      :title="menuLabel"
+      :aria-label="menuLabel"
+      @click="emit('menu')"
+      @keydown="onMenuKeydown"
+    >
+      <MoreHorizontal
+        :size="14"
+        :stroke-width="1.8"
+        aria-hidden="true"
+      />
+    </button>
     <!-- What the last finished turn cost and took, in the engine's own numbers and this
          window's own stopwatch (rows 5b and 37). They sit *before* the state line rather than
          inside it: the state word is the one thing in this strip that must draw the eye, so it
@@ -415,6 +495,37 @@ const elapsedLabel = computed<string | null>(() => {
   color: var(--app-accent);
 }
 .agent-bar-history:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
+/* The options control, restating the history one's box rather than sharing a class: the two are
+   different controls in different positions, and a shared name would make the next change to one
+   of them a change to both. */
+.agent-bar-menu {
+  display: inline-flex;
+  align-self: center;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+  transition: background var(--app-motion-fast) var(--app-ease),
+              color var(--app-motion-fast) var(--app-ease);
+}
+.agent-bar-menu:hover {
+  background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
+  color: var(--app-text);
+}
+.agent-bar-menu[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--app-accent-soft) 82%, var(--app-elevated));
+  color: var(--app-accent);
+}
+.agent-bar-menu:focus-visible {
   outline: 2px solid var(--app-accent);
   outline-offset: 1px;
 }
