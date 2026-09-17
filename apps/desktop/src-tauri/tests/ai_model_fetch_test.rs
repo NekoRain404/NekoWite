@@ -158,6 +158,39 @@ async fn each_provider_keeps_its_own_derived_models_path() {
     }
 }
 
+/// The fetch the agent settings page's provider form makes.
+///
+/// `agent-provider-authoring.ts` sends this command `provider: "custom"` and the address the user
+/// typed in the form's Base URL field, because an engine provider block names
+/// `@ai-sdk/openai-compatible` — whose own model list is `GET {baseURL}/models` with
+/// `Authorization: Bearer <key>`, the request this app already makes for every provider it has no
+/// special case for. So the claim "one command serves both" is a claim about *this* path, and it is
+/// asserted here rather than in a comment: the derived endpoint from the address alone, with a
+/// trailing slash the user may well have left on it.
+#[tokio::test]
+async fn the_provider_form_fetches_from_the_address_it_was_given() {
+    let (base, seen, server) = serve(
+        "200 OK",
+        "application/json",
+        r#"{"data":[{"id":"deepseek-v4.1-flash"}]}"#,
+    )
+    .await;
+    let config = AIConfig {
+        provider: "custom".into(),
+        base_url: Some(format!("{base}/")),
+        ..cfg(&base)
+    };
+
+    let ids = list_models(&config).await.expect("a model list");
+    assert_eq!(ids, vec!["deepseek-v4.1-flash"]);
+    assert_eq!(
+        seen.lock().expect("request log").as_slice(),
+        ["GET /models HTTP/1.1".to_string()],
+        "the address the user typed, its own /models, trailing slash and all"
+    );
+    server.abort();
+}
+
 /// A 2xx that is not JSON and not HTML either — a proxy's plain-text page, a
 /// truncated body — still has to say where the bytes came from and what they
 /// were.
