@@ -21,6 +21,8 @@ import { t } from '../../../i18n'
 import type { AgentIdentity } from '../../../platform/gateways/agent-contracts'
 import { useTabsStore } from '../../../stores/tabs'
 import { useAgentSessionStore, type AgentSessionRecord } from '../stores/agent-session'
+import { createAgentComposition } from '../../../app/agent-composition'
+import { attachmentMonthDir } from '../../attachments'
 import { captureEditBaselines } from '../services/agent-edit-apply'
 import type { AgentLiveNote } from '../services/agent-context-snapshot'
 import { initialAgentSessionView, sessionKey } from '../services/agent-session-view'
@@ -29,14 +31,18 @@ import AgentNoteProposals from './AgentNoteProposals.vue'
 
 const readMock = vi.hoisted(() => vi.fn())
 const writeMock = vi.hoisted(() => vi.fn())
+const statMock = vi.hoisted(() => vi.fn())
+const listMock = vi.hoisted(() => vi.fn())
+const saveAttachmentMock = vi.hoisted(() => vi.fn())
 vi.mock('../../../platform/gateways/fs', () => ({
   fsService: {
     read: readMock,
     write: writeMock,
-    list: vi.fn(async () => []),
+    stat: statMock,
+    list: listMock,
+    saveAttachment: saveAttachmentMock,
     watch: vi.fn(async () => () => {}),
     deleteFile: vi.fn(async () => ''),
-    stat: vi.fn(async () => ({ size: 0, mtime: 0 })),
     listHistory: vi.fn(async () => []),
     readHistory: vi.fn(async () => ''),
     restoreHistory: vi.fn(async () => ''),
@@ -82,6 +88,19 @@ beforeEach(() => {
     disk.set(path, content)
     return null
   })
+  statMock.mockReset()
+  listMock.mockReset()
+  saveAttachmentMock.mockReset()
+  statMock.mockImplementation(async (_vault: string, path: string) => ({
+    size: new TextEncoder().encode(disk.get(path) ?? '').length,
+    mtime: 0,
+  }))
+  listMock.mockImplementation(async () => [])
+  // The port answers with where the file really went, which is what the caller checks the plan's
+  // own path against.
+  saveAttachmentMock.mockImplementation(async (_vault: string, name: string) =>
+    `attachments/${attachmentMonthDir()}/${name}`,
+  )
 })
 
 let mounted: VueApp[] = []
@@ -147,6 +166,44 @@ async function standing(note: AgentLiveNote | null = atSend(), entry: AgentToolE
   sessions.focus(key)
 }
 
+/**
+ * The composition the shell hands the editor pane, built the way the app builds it.
+ *
+ * `environment: 'browser'` only picks the memory gateway — which none of these cases touches — and
+ * the insertion binding is the composition's REAL one, over the tab store's own lookup. That is the
+ * point: the case below is the first caller `connectSvgInsertion` has ever had, so it is driven
+ * through the object the app passes down rather than through a stand-in for it.
+ */
+function compositionOverTabs() {
+  return createAgentComposition({
+    vaultId: VAULT,
+    environment: 'browser',
+    liveNotes: { lookUpLiveNote: (path: string) => useTabsStore().lookUpLiveNote(path) },
+  })
+}
+
+/** Mount the surface, with the composition wired as the shell wires it. */
+async function mountWithInsertions(insertions: ReturnType<typeof compositionOverTabs>): Promise<HTMLElement> {
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const app = createApp(
+    defineComponent({
+      setup() {
+        return () => h(AgentNoteProposals, { identity: IDENTITY, insertions })
+      },
+    }),
+  )
+  app.use(pinia)
+  app.mount(host)
+  mounted.push(app)
+  await nextTick()
+  // The artifact is read off the disk by a watcher, which is asynchronous: one macrotask is what
+  // the read's own promise chain needs to have landed before the tree is read.
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await nextTick()
+  return host
+}
+
 /** Mount the surface and settle its first render. */
 async function mount(): Promise<HTMLElement> {
   const host = document.createElement('div')
@@ -172,9 +229,14 @@ const conflictText = (host: HTMLElement, role: string): string =>
 
 async function click(el: Element | null): Promise<void> {
   el?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-  await nextTick()
-  // The apply's promises resolve over several microtasks; let them all run before reading.
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  // The flow behind a control is a chain of promises — a save reads the file, an insertion reads
+  // and writes one — and each await is a turn of its own. Round the loop a few times rather than
+  // guessing which one the last state lands on; a case that needed more would be a hang rather
+  // than a wrong answer, and the assertions below are about what the user ends up looking at.
+  for (let round = 0; round < 6; round += 1) {
+    await nextTick()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
   await nextTick()
 }
 
@@ -254,6 +316,57 @@ describe('the proposal the editor pane draws', () => {
 
     expect(host.querySelector('[data-agent-note-proposal]')).toBeNull()
     expect(host.querySelector('[data-agent-edit-conflict]')).toBeNull()
+  })
+
+  it('drives the composition’s own insertion binding for an SVG the run staged', async () => {
+    // The artifact the engine wrote into the vault, and the call that wrote it.
+    const stagedPath = `${VAULT}/attachments/${attachmentMonthDir()}/diagram.svg`
+    const markup =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="#123"/></svg>'
+    disk.set(stagedPath, markup)
+    const svgCall = diffCall({
+      toolCallId: 'call-svg',
+      paths: [stagedPath],
+      content: [],
+    })
+    await standing(atSend(), svgCall)
+    const host = await mountWithInsertions(compositionOverTabs())
+
+    // The verified preview is drawn, and it is the serialiser's output rather than the raw file.
+    const preview = host.querySelector('[data-artifact-preview]')
+    expect(preview).not.toBeNull()
+    expect(preview!.querySelector('svg')).not.toBeNull()
+    expect(host.querySelector('[data-artifact-refused]')).toBeNull()
+
+    await click(byAction(host, 'agent-artifact-insert'))
+
+    // The file is in the vault, at the path the note points at…
+    expect(saveAttachmentMock).toHaveBeenCalledTimes(1)
+    const [vault, name, base64, dir] = saveAttachmentMock.mock.calls[0]!
+    expect(vault).toBe(VAULT)
+    expect(name).toBe('diagram.svg')
+    expect(dir).toBe(`attachments/${attachmentMonthDir()}`)
+    expect(Buffer.from(base64 as string, 'base64').toString('utf8')).toBe(markup)
+
+    // …and the note gained exactly the markdown the plan named for it: the reference is measured
+    // from the NOTE's own directory (`notes/` here), which is what makes it resolve from there.
+    const written = disk.get(PATH)!
+    expect(written.startsWith(AT_SEND)).toBe(true)
+    expect(written).toContain(`![diagram](../attachments/${attachmentMonthDir()}/diagram.svg)`)
+    expect(host.textContent).toContain(t('agent.note.svg.outcome.inserted'))
+  })
+
+  it('draws nothing for an artifact the checks refused, and says which check', async () => {
+    const stagedPath = `${VAULT}/attachments/${attachmentMonthDir()}/diagram.svg`
+    // A doctype is a refusal rather than a sanitisation, and the sentence has to reach the reader:
+    // a preview that silently drew nothing would look like a document with no content.
+    disk.set(stagedPath, '<!DOCTYPE svg><svg xmlns="http://www.w3.org/2000/svg"/>')
+    await standing(atSend(), diffCall({ toolCallId: 'call-svg', paths: [stagedPath], content: [] }))
+    const host = await mountWithInsertions(compositionOverTabs())
+
+    expect(host.querySelector('[data-artifact-preview]')).toBeNull()
+    expect(host.querySelector('[data-artifact-refused]')?.textContent).toContain('doctype')
+    expect(byAction(host, 'agent-artifact-insert')).toBeNull()
   })
 
   it('offers nothing when there is no session on screen', async () => {

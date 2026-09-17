@@ -1,19 +1,4 @@
-<script lang="ts">
-import type { AgentIdentity } from '../../../platform/gateways/agent-contracts'
-import type { AgentSvgInsertionBinding } from '../../../app/agent-composition'
 
-/**
- * Where an SVG insertion is bound, as this surface needs it.
- *
- * Structural rather than the composition's own type: the feature declares the one method it calls,
- * and `agent-composition.ts` — which is this surface's assembly site, not its dependency — happens
- * to satisfy it. A feature that imported the composition's type would be the arrow pointing the
- * wrong way (see the note in `live-note-responder.ts` that this copies).
- */
-export interface AgentInsertionSource {
-  connectSvgInsertion(identity: AgentIdentity): AgentSvgInsertionBinding
-}
-</script>
 
 <script setup lang="ts">
 /**
@@ -43,19 +28,27 @@ export interface AgentInsertionSource {
  *
  * ## What it deliberately does not do
  *
- * It never touches a document. The write goes through `useAgentNoteHost` → `applyAgentEdit` → the
- * note's own save transaction, so the judgement and the write are one step and the disk is checked
- * by the code that already knows how. This file has no `fs` import and no editor import: it renders
- * values and calls two functions, which is what keeps "may this write land" in one place.
+ * It never touches a document itself. Both writes go through code that already knows how: the edit
+ * through `useAgentNoteHost` → `applyAgentEdit` → the note's own save transaction, and the image
+ * through `connectSvgInsertion` → the insertion service's plan and commit. What this file supplies
+ * is the two things neither can have — the disk read of the staged artifact, and an answer to the
+ * question — and it renders what came back rather than deciding anything about the note.
+ *
+ *  - **An artifact, only after the checks.** §7.3 clause 3's rule, enforced by the type: nothing
+ *    here can draw a preview that `inspectStagedSvg` did not mint, and a document it refused is
+ *    reported by name instead of being rendered anyway.
  */
-import { computed, ref } from 'vue'
+import { computed, ref, watchEffect } from 'vue'
 import { FileWarning } from 'lucide-vue-next'
+import type { AgentIdentity } from '../../../platform/gateways/agent-contracts'
 import { t } from '../../../i18n'
 import { useTabsStore } from '../../../stores/tabs'
 import { useAgentSessionStore } from '../stores/agent-session'
 import { noteProposalsFor } from '../services/agent-note-proposals'
 import { sessionKey } from '../services/agent-session-view'
 import { useAgentNoteHost } from '../composables/use-agent-note-host'
+import { useAgentNoteArtifact } from '../composables/use-agent-note-artifact'
+import type { AgentInsertionSource } from '../services/agent-insertion-source'
 import type { AgentEditOutcome } from '../services/agent-edit-apply'
 import AgentEditConflictView from './AgentEditConflictView.vue'
 import type { AgentEditConflictLabels } from './AgentEditConflictView.vue'
@@ -153,11 +146,54 @@ function onConflictAnswer(choice: 'apply' | 'discard'): void {
   outcome.value = choice === 'discard' ? { status: 'discarded', path: path.value ?? '' } : outcome.value
   host.answer(choice)
 }
+
+// ---- The SVG the run staged for this note (N9) ------------------------------------------------
+//
+// The other half of the same join, and its production caller: `connectSvgInsertion` is asked here
+// and nowhere else. The whole of the flow — reading the artifact, the checks, the attachment save,
+// the commit and the note edit — is `use-agent-note-artifact.ts`, which is where the order §7.3
+// asks for is stated and held; this file supplies the session, the note and the decision.
+
+const svg = computed(() => proposals.value.find((proposal) => proposal.kind === 'svg') ?? null)
+
+const artifact = useAgentNoteArtifact({
+  proposal: () => (svg.value?.kind === 'svg' ? svg.value : null),
+  identity: props.identity,
+  insertions: props.insertions,
+  path: () => path.value,
+  onDecided: (toolCallId: string) => {
+    decided.value = [...decided.value, toolCallId]
+  },
+})
+
+/**
+ * The box the verified preview is drawn in.
+ *
+ * Filled by parsing the serialiser's output as **XML** — the format it was written in, and the one
+ * whose parser refuses to invent anything — and importing the root node, rather than by handing the
+ * string to `v-html`. The brand on `AgentSvgPreview` is what makes the string trustworthy; this is
+ * what keeps the render from being a second place a string could arrive from.
+ */
+const previewEl = ref<HTMLElement | null>(null)
+
+watchEffect(() => {
+  const el = previewEl.value
+  const markup = artifact.preview.value?.markup ?? null
+  if (el === null) return
+  el.replaceChildren()
+  if (markup === null) return
+  const parsed = new DOMParser().parseFromString(markup, 'image/svg+xml')
+  const root = parsed.documentElement
+  // A parser that failed reports its own error element; drawing that instead of the picture would
+  // be the surface claiming a document it did not get.
+  if (root === null || root.nodeName.toLowerCase() !== 'svg') return
+  el.append(document.importNode(root, true))
+})
 </script>
 
 <template>
   <section
-    v-if="proposals.length > 0 || host.conflict.value !== null || outcomeSentence !== null"
+    v-if="proposals.length > 0 || host.conflict.value !== null || outcomeSentence !== null || artifact.sentence.value !== null"
     class="agent-note"
     data-agent-note
     :aria-label="t('agent.note.title')"
@@ -208,6 +244,86 @@ function onConflictAnswer(choice: 'apply' | 'discard'): void {
       </div>
     </div>
 
+    <div
+      v-if="svg !== null"
+      class="agent-note-proposal"
+      data-agent-note-artifact
+      :data-path="svg.path"
+    >
+      <p class="agent-note-line">
+        <FileWarning
+          :size="13"
+          :stroke-width="1.8"
+          aria-hidden="true"
+        />
+        {{ t('agent.note.svg.row', { name: artifact.fileName.value || artifact.stem(svg.path) }) }}
+      </p>
+
+      <p
+        v-if="artifact.artifact.value !== null && artifact.artifact.value.status === 'unreadable'"
+        class="agent-note-hint"
+        data-artifact-refused
+      >
+        {{ t('agent.note.svg.unreadable') }}
+      </p>
+
+      <template v-else-if="artifact.preview.value !== null">
+        <!-- The verified preview, and never the raw text: `markup` is the platform serialiser's
+             output for the tree the checks allowed, and `AgentSvgPreview`'s brand is what makes
+             this the only string a caller can reach. It is parsed as XML and imported as a node —
+             `previewEl` below — rather than handed to `v-html`, because §7.3 clause 3 is about the
+             RENDER and not only about the checks: a surface that injected markup would be one
+             string away from drawing something no check ever saw. -->
+        <div
+          ref="previewEl"
+          class="agent-note-preview"
+          data-artifact-preview
+          role="img"
+          :aria-label="t('agent.note.svg.previewAlt', { name: artifact.fileName.value })"
+        />
+        <p class="agent-note-hint">
+          {{ t('agent.note.svg.verified') }}
+        </p>
+        <p class="agent-note-hint">
+          {{ t('agent.note.svg.where') }}
+        </p>
+        <label class="agent-note-name">
+          <span>{{ t('agent.note.svg.name') }}</span>
+          <input
+            v-model="artifact.fileName.value"
+            type="text"
+            data-artifact-name
+          >
+        </label>
+        <div class="agent-note-actions">
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            data-action="agent-artifact-discard"
+            @click="artifact.discard()"
+          >
+            {{ t('agent.note.svg.discard') }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            data-action="agent-artifact-insert"
+            @click="artifact.insert()"
+          >
+            {{ t('agent.note.svg.insert') }}
+          </button>
+        </div>
+      </template>
+
+      <p
+        v-else-if="artifact.previewRefusal.value !== null"
+        class="agent-note-refusal"
+        data-artifact-refused
+      >
+        {{ artifact.refusalSentence.value }}
+      </p>
+    </div>
+
     <AgentEditConflictView
       :conflicts="host.conflict.value === null ? [] : [host.conflict.value]"
       :labels="conflictLabels"
@@ -222,6 +338,15 @@ function onConflictAnswer(choice: 'apply' | 'discard'): void {
       role="status"
     >
       {{ outcomeSentence }}
+    </p>
+
+    <p
+      v-if="artifact.sentence.value !== null"
+      class="agent-note-outcome"
+      data-agent-artifact-outcome
+      role="status"
+    >
+      {{ artifact.sentence.value }}
     </p>
   </section>
 </template>
@@ -281,5 +406,45 @@ function onConflictAnswer(choice: 'apply' | 'discard'): void {
   color: var(--app-muted);
   font-size: 11px;
   line-height: 1.35;
+}
+.agent-note-refusal {
+  margin: 0;
+  color: var(--app-warn);
+  font-size: 11px;
+  line-height: 1.35;
+}
+/* The preview is the verified tree, drawn at a bounded size: a diagram that fills the rail would
+   push the note it is about off the screen. */
+.agent-note-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-height: 180px;
+  padding: 6px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--app-panel) 55%, var(--app-canvas));
+  border-radius: var(--app-radius-sm);
+}
+.agent-note-preview :deep(svg) {
+  max-width: 100%;
+  max-height: 168px;
+}
+.agent-note-name {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--app-muted);
+  font-size: 11px;
+}
+.agent-note-name input {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--app-text);
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-sm);
 }
 </style>

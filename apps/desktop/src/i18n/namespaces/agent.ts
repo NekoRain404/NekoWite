@@ -163,6 +163,17 @@ export const agent = {
              accessible name is always the action. */
           follow: 'Follow the newest output',
           followStop: 'Stop following the newest output',
+          /* The transcript's other three controls. Zed draws these under each message
+             (`render_thread_controls`) and this panel draws one row for the whole log, so each
+             sentence says *which* one it acts on: 「the newest answer」 and 「your last message」
+             are the difference between a label and a guess. `copied` is the press landing, and
+             `copyFailed` is the clipboard refusing — a reader who is not told would paste a
+             stale buffer believing it was the answer. */
+          copy: 'Copy the newest answer',
+          copied: 'Copied',
+          copyFailed: 'The answer could not be copied — the clipboard refused it',
+          toUser: 'Go to your last message',
+          toTop: 'Go to the beginning',
           tool: {
             status: {
               pending: 'Queued',
@@ -1136,6 +1147,15 @@ export const agent = {
              `aria-pressed` 说明，提示语再重复一遍只会让第一次用这个控件的读者得不到答案。 */
           follow: '跟随最新输出',
           followStop: '停止跟随最新输出',
+          /* 记录区另外三个控件。Zed 把它们画在每条消息下面（`render_thread_controls`），本面板
+             是为整个记录画一行，所以每句都要说明它作用在**哪一个**上：『最新的回答』和『你上一条
+             消息』正是标签与猜测之间的差别。`copied` 是按下生效，`copyFailed` 是剪贴板拒绝——不
+             告诉读者，他们就会把旧内容当成回答粘贴出去。 */
+          copy: '复制最新的回答',
+          copied: '已复制',
+          copyFailed: '未能复制该回答——剪贴板拒绝了这次操作',
+          toUser: '跳到你上一条消息',
+          toTop: '跳到开头',
           tool: {
             status: {
               pending: '排队中',
