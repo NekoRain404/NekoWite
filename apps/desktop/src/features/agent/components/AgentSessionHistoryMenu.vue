@@ -42,34 +42,33 @@ export type AgentSessionHistoryFooter =
  * The rows follow the app's list vocabulary — one row per session, `role="option"`,
  * `aria-activedescendant` on the listbox — and Enter, a click and a pointer-down-and-release all
  * mean the same thing. The listbox owns options and nothing else, which is why the page sentence
- * and the notices sit outside it and why the free action below is a sibling of the option.
+ * and the notices sit outside it and why the free action is a sibling of the option.
  *
- * What a row may say is deliberately narrow. The title is the engine's or it is absent, and the
- * absence is drawn as a statement about the engine rather than as a name this app invented; the
- * age is the engine's own `updatedAt` read (`services/agent-session-history.ts`); and the two
- * marks beside it are the two facts a reader needs before pressing anything — this is the one
- * already open, and this one was recorded in another folder.
+ * **Two of the four surfaces under this popup are their own files, and the two that are not are
+ * the reason.** A row (`AgentSessionHistoryRow.vue`) and the way to the next page
+ * (`AgentSessionHistoryMore.vue`) know nothing but their props and emit nothing but what the user
+ * did, so they moved; the find box above had already. What stayed is what is *about the list*:
+ * which row the arrows are on, which sentence stands in for an empty answer, and the strip below
+ * the rows — that strip is deliberately inside the listbox and drawn against a row that is on
+ * screen, so it is the list's own state rather than a control that could be handed one.
  *
  * **The list can be narrowed without asking the engine anything.** `filterSessionRows` is a
  * service rule over the rows already in hand, so what a query leaves is the engine's own answer
  * with rows removed, never a second list this app composed — and a query that leaves nothing says
  * so in a sentence of its own, rather than by drawing an empty box.
- *
- * **The free action is a second element beside the option, not inside it.** A listbox may only
- * own options, and an interactive child inside one is a control whose role the AT cannot
- * announce; so a row is a wrapper holding the option and, when the engine reports `session-close`
- * *and* the row is not the session on screen, the button that asks to free it. The option stays
- * the whole width of the row, and the button is the only part of it that is not the row.
  */
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { X } from 'lucide-vue-next'
 import { t } from '../../../i18n'
 import {
-  describeSessionAge,
   filterSessionRows,
   type AgentSessionHistoryRow,
 } from '../services/agent-session-history'
 import AgentSessionHistoryHead from './AgentSessionHistoryHead.vue'
+import AgentSessionHistoryMore from './AgentSessionHistoryMore.vue'
+/* The row component and the row *type* are two names for one word, and TypeScript will not hold an
+   imported value beside a type of the same name — so the component is imported under the name its
+   element carries, which is what a reader will see in the template below. */
+import AgentSessionHistoryRowView from './AgentSessionHistoryRow.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -197,17 +196,6 @@ const notice = computed((): string => {
       return ''
   }
 })
-
-/** The second line of a row: the engine's own stamp read as an age, then the two marks that say
- *  something pressing the row would not. Absent parts are absent, never blank. */
-function metaOf(row: AgentSessionHistoryRow): string[] {
-  const parts: string[] = []
-  const age = describeSessionAge(row.updatedAt, props.now)
-  if (age !== null) parts.push(age)
-  if (row.current) parts.push(t('agent.panel.history.current'))
-  if (row.elsewhere) parts.push(t('agent.panel.history.elsewhere', { cwd: row.cwd }))
-  return parts
-}
 
 function move(offset: number): void {
   const count = visibleRows.value.length
@@ -347,74 +335,20 @@ defineExpose({ element, focus })
       :aria-label="t('agent.panel.history.list')"
       :aria-activedescendant="activeOptionId"
     >
-      <div
+      <AgentSessionHistoryRowView
         v-for="(row, index) in visibleRows"
         :key="row.sessionId"
-        class="agent-history-row"
-        :class="{
-          'is-active': index === activeIndex,
-          'is-current': row.current,
-          'is-confirming': confirming === row.sessionId,
-        }"
-        :data-index="index"
-      >
-        <div
-          :id="`${listId}-option-${index}`"
-          class="agent-history-option"
-          role="option"
-          :aria-selected="row.current"
-          :aria-current="row.current || undefined"
-          tabindex="-1"
-          :data-session="row.sessionId"
-          :data-elsewhere="row.elsewhere || undefined"
-          @mousedown.prevent
-          @mouseenter="activeIndex = index"
-          @click="commit(index)"
-        >
-          <!-- The engine's title, or the sentence saying it sent none. A row is never blank and
-               never carries a name this app wrote in the engine's place. -->
-          <span class="agent-history-option-title">{{ row.title ?? t('agent.panel.history.untitled') }}</span>
-          <span
-            v-if="metaOf(row).length > 0"
-            class="agent-history-option-meta"
-          >
-            <span
-              v-for="part in metaOf(row)"
-              :key="part"
-              class="agent-history-option-part"
-              :title="part"
-            >{{ part }}</span>
-          </span>
-        </div>
-        <!-- The row's own action, beside the option rather than inside it: the engine's records
-             are not this app's to keep or drop, and freeing one is offered only where the call can
-             be carried out — and never on the session the reader is in.
-
-             Three facts, and all three are needed. `closeable` is the engine saying it answers
-             `session/close`; `row.held` is *this host* saying it holds the session, which is the
-             predicate `agent_close_session` checks before it asks the engine at all; `!row.current`
-             is the trap the row above this one keeps. The engine's table outlives this app's run,
-             so most rows of a fresh window are listed and not held — before `held` was read, every
-             one of them wore a button whose only possible outcome was the host's refusal, which
-             the panel then reported as the engine's. §5.2: an option that cannot act is not drawn,
-             so nothing here has to be explained away. -->
-        <button
-          v-if="closeable && row.held && !row.current"
-          class="agent-history-free"
-          type="button"
-          :title="t('agent.panel.history.free.label')"
-          :aria-label="t('agent.panel.history.free.label')"
-          :data-free="row.sessionId"
-          @mousedown.prevent
-          @click.stop="emit('ask', row.sessionId)"
-        >
-          <X
-            :size="12"
-            :stroke-width="1.8"
-            aria-hidden="true"
-          />
-        </button>
-      </div>
+        :row="row"
+        :index="index"
+        :list-id="listId"
+        :active="index === activeIndex"
+        :confirming="confirming === row.sessionId"
+        :closeable="closeable"
+        :now="now"
+        @hover="activeIndex = index"
+        @activate="commit(index)"
+        @ask="emit('ask', row.sessionId)"
+      />
     </div>
     <!-- A search that left nothing, said as the search's own answer. It is a different sentence
          from the engine's "it holds no sessions" on purpose: this app has not asked the engine
@@ -439,39 +373,13 @@ defineExpose({ element, focus })
     <!-- Outside the listbox, which may only own options, and drawn for a short list whether or not
          a search found anything: an engine that named a further page has not shown the whole
          table, and "no session matches" is only ever true of the page that was sent. A list that
-         read as complete would be the one answer worse than a short one.
-
-         A button and not a sentence. The sentence said a page existed and offered no way to it,
-         which is this app's own worst shape — a surface claiming something the reader cannot
-         reach — so the words are the button's explanation (`title`) and the press is the act.
-         `disabled` while the read is in flight, because a second press would ask for the same
-         page twice; the label says which page and how far the list has come. -->
-    <div
+         read as complete would be the one answer worse than a short one. -->
+    <AgentSessionHistoryMore
       v-if="searchable && more"
-      class="agent-history-more"
-      role="presentation"
-    >
-      <button
-        class="agent-history-more-btn"
-        type="button"
-        data-history-more
-        :title="t('agent.panel.history.more')"
-        :disabled="moreBusy"
-        :aria-busy="moreBusy ? 'true' : undefined"
-        @mousedown.prevent
-        @click="emit('more')"
-      >
-        {{ moreBusy ? t('agent.panel.history.moreLoad.loading') : t('agent.panel.history.moreLoad.load') }}
-      </button>
-      <p
-        v-if="moreReason !== null && moreReason !== undefined"
-        class="agent-history-more-reason"
-        data-history-more-failed
-        role="status"
-      >
-        {{ t('agent.panel.history.moreLoad.failed', { reason: moreReason }) }}
-      </p>
-    </div>
+      :busy="moreBusy"
+      :reason="moreReason"
+      @more="emit('more')"
+    />
     <!-- The strip under the rows. `role=presentation` for the reason the notices carry it: this
          is a child of the listbox and not one of its options. -->
     <div
@@ -551,93 +459,6 @@ defineExpose({ element, focus })
 .agent-history-popup.is-above {
   transform-origin: bottom center;
 }
-/* The row: the option, and the action beside it. The highlight belongs to the row rather than to
-   the option, so the free button is inside the same lit area as the text it acts on. */
-.agent-history-row {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  /* `--app-radius-sm` is the list-row radius this app uses (`AgentConfigOptionsPopup.vue`,
-     `SelectMenu.vue`). */
-  border-radius: var(--app-radius-sm);
-  transition: background var(--app-motion-fast) var(--app-ease);
-}
-.agent-history-row.is-active {
-  background: color-mix(in srgb, var(--app-accent-soft) 82%, var(--app-elevated));
-}
-/* The row the question in the footer is about, marked so the sentence has a subject. */
-.agent-history-row.is-confirming {
-  box-shadow: inset 2px 0 0 var(--app-accent);
-}
-.agent-history-option {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  padding: 5px 8px;
-  border: 0;
-  border-radius: var(--app-radius-sm);
-  background: transparent;
-  color: var(--app-text);
-  font-family: var(--app-font);
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-/* The engine's records are not this app's to drop, so the action is quiet by default and answers
-   the pointer in colour rather than in an alarm the engine did not raise. */
-.agent-history-free {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  margin-right: 4px;
-  border: none;
-  border-radius: var(--app-radius-sm);
-  background: transparent;
-  color: var(--app-muted);
-  cursor: pointer;
-  transition: background var(--app-motion-fast) var(--app-ease),
-              color var(--app-motion-fast) var(--app-ease);
-}
-.agent-history-free:hover {
-  background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
-  color: var(--app-text);
-}
-.agent-history-free:focus-visible {
-  outline: 2px solid var(--app-accent);
-  outline-offset: -1px;
-}
-/* The session on screen. Colour is the second signal and never the only one: the same fact is in
-   the row's meta line and in its `aria-current`. */
-.agent-history-option.is-current .agent-history-option-title {
-  color: var(--app-accent);
-}
-.agent-history-option-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.agent-history-option-meta {
-  display: flex;
-  gap: 6px;
-  min-width: 0;
-  color: var(--app-muted);
-  font-size: 11px;
-}
-.agent-history-option-part {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* A folder other than the one this runtime works in: the one fact in the row that changes what
-   pressing it means, so it is marked rather than left to be read out of a path. */
-.agent-history-option[data-elsewhere] .agent-history-option-meta {
-  color: var(--app-warn);
-}
 .agent-history-notice {
   margin: 0;
   padding: 14px 8px;
@@ -648,41 +469,6 @@ defineExpose({ element, focus })
   /* The reason is the backend's own sentence and a narrow popup will wrap it; it must not be
      elided into a title a reader has to hover to find. */
   overflow-wrap: anywhere;
-}
-.agent-history-more {
-  padding: 6px 8px 2px;
-  border-top: 1px solid var(--app-border);
-  color: var(--app-muted);
-  font-size: 11px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-.agent-history-more-btn {
-  min-height: 26px;
-  width: 100%;
-  padding: 0 8px;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-sm);
-  background: var(--app-elevated);
-  color: var(--app-text);
-  font-family: var(--app-font);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background var(--app-motion-fast) var(--app-ease);
-}
-.agent-history-more-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--app-elevated) 84%, var(--app-accent-soft));
-}
-.agent-history-more-btn:disabled {
-  color: var(--app-muted);
-  cursor: default;
-}
-.agent-history-more-btn:focus-visible {
-  outline: 2px solid var(--app-accent);
-  outline-offset: 1px;
-}
-.agent-history-more-reason {
-  margin: 4px 0 0;
 }
 /* The strip under the rows: the question before a free, and the engine's answer after one. It is
    inside the listbox rather than a second popup because it is about a row that is on screen, and
