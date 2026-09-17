@@ -97,8 +97,15 @@ snapshot() {
   fi
 }
 
-BEFORE="$(mktemp -d)"
-trap 'rm -rf "$BEFORE"' EXIT
+# **A fixed directory, not `mktemp -d`.** It used to be a temporary one removed by an `EXIT` trap, and
+# that made every finding in this script disposable: the logs went with it, so a re-read of what a paid
+# run actually printed cost another paid run. It did: the marker check's own `--` bug (below) turned
+# this script red on a green product, and answering "was it the product or the check" needed the logs
+# that the trap had already deleted. A run spends six prompts; its transcript is the expensive thing,
+# so it is kept where it can be read afterwards — under the target directory, which is gitignored.
+BEFORE="$ROOT/apps/desktop/src-tauri/target/acp-live"
+rm -rf "$BEFORE"
+mkdir -p "$BEFORE"
 snapshot "$REAL_CONFIG" > "$BEFORE/config"
 snapshot "$REAL_DATA" > "$BEFORE/data"
 say "profile before: $REAL_CONFIG and $REAL_DATA recorded"
@@ -189,13 +196,13 @@ for index in "${!TARGETS[@]}"; do
   # inject, an inherited NODE_EXTRA_CA_CERTS, a missing CA store) and a caller must be told rather
   # than reassured.
   per="$BEFORE/$target.log"
-  if grep -q '^SKIP:' "$per"; then
+  if grep -q -- '^SKIP:' "$per"; then
     say "FAIL: $target skipped:
-$(grep '^SKIP:' "$per")"
+$(grep -- '^SKIP:' "$per")"
     FAILURES=1
     continue
   fi
-  grep -q 'test result: ok' "$per" || {
+  grep -q -- 'test result: ok' "$per" || {
     say "FAIL: $target printed no test result line."
     FAILURES=1
     continue
@@ -206,7 +213,15 @@ $(grep '^SKIP:' "$per")"
   required=()
   IFS='|' read -r -a required <<< "${MARKERS[$index]}"
   for marker in "${required[@]}"; do
-    if ! grep -qF "$marker" "$per"; then
+    # **`--`, and this is the whole reason this line has a comment.** Four of the eight markers begin
+    # with `---` (the targets print their measurements as `--- variant counts: …`), and without `--`
+    # grep reads a leading `---` as an option cluster: it exits 2 with `unrecognized option`, the `if`
+    # sees a non-zero status, and the target is reported as having printed no evidence. So the check
+    # failed *unconditionally* for exactly the two targets it was written for, while the two whose
+    # markers begin with a letter passed — and the product was green throughout. It is the same shape
+    # as the `grep -E "^Diff in"` that hid a `cargo fmt` error for six CI runs: a judge whose failure
+    # mode reads as "nothing found" rather than "the check did not run".
+    if ! grep -qF -- "$marker" "$per"; then
       say "FAIL: $target printed no evidence for \"$marker\" (expected one of \"${MARKERS[$index]}\")."
       missing=1
     fi
