@@ -281,15 +281,9 @@ export const agent = {
             remove: 'Remove {name}',
             /* The chip's accessible name, for a reader who cannot see the file's icon. */
             label: '{name}, attached to this message',
-            /* The `+` rows for the two kinds, each drawn only where the engine's report says the
-               capability is available. */
-            file: 'Attach a file from this folder',
-            image: 'Attach a picture',
-            /* The picture row is a picker rather than a drop, and it says so. */
-            pick: 'Choose a picture to attach',
-            /* Why one kind has no control. `{detail}` is the engine's own sentence about what its
-               handshake reported, kept verbatim: this app's reading of the report would be a
-               second account of a fact the engine already stated. */
+            /* Why something the reader offered is not in the message. `{detail}` is the engine's
+               own sentence about what its handshake reported, kept verbatim: this app's reading of
+               the report would be a second account of a fact the engine already stated. */
             refused: '{name} was not attached: {detail}',
             unreported: '{name} was not attached: {detail}',
             /* The three refusals the message's own budget produces, and the one a file that could
@@ -298,7 +292,6 @@ export const agent = {
             tooLarge: '{name} is larger than the {max} one attachment may be.',
             noRoom: 'This message already holds {max} of attachments; {name} did not fit.',
             unreadable: '{name} could not be read, so there is nothing to send in it.',
-            /* The `@` menu: the same folder listing the `+` walks, opened by typing. */
             /* The `@` menu: the same folder the `+` walks, opened by typing a note's name. Its
                four "nothing to show" states are separate sentences for the reason the `/` menu's
                are: a list still being read, a vault with no notes, a word that matches none and an
@@ -1380,9 +1373,6 @@ export const agent = {
             strip: '这条消息已附加',
             remove: '移除 {name}',
             label: '{name}，已附加到这条消息',
-            file: '附加这个文件夹里的文件',
-            image: '附加一张图片',
-            pick: '选择一张要附加的图片',
             refused: '{name} 没有附加：{detail}',
             unreported: '{name} 没有附加：{detail}',
             tooMany: '这条消息已经持有能发送的附件上限（{max}）。',
