@@ -121,7 +121,6 @@ describe('the pet’s task link', () => {
     // the panel's own record under, which is what makes a `PetTaskKey` addressable without a
     // second store.
     expect(store.activeKey).toBe(sessionKey({ ...key }))
-    expect(store.records[sessionKey(key)]?.unread).toBe(false)
     // The rail is already on screen, so nothing is asked for. The click moved the store and
     // nothing else.
     expect(onOpenRail).not.toHaveBeenCalled()
@@ -155,8 +154,7 @@ describe('the pet’s task link', () => {
 
     // A key the engine is no longer running: the window is still raised and the rail still shows
     // what it has, but the store keeps the session that is really on screen. `focus` takes any
-    // string, so the alternative is an active key nothing answers to — and, with it, the session
-    // on screen marked unread behind every frame that arrives.
+    // string, so the alternative is an active key nothing answers to.
     host.deliver({ ...key, runtimeEpoch: 'epoch-2' })
 
     expect(store.activeKey).toBe(held)

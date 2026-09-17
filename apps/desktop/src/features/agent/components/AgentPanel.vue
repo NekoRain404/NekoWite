@@ -24,9 +24,8 @@ export type { AgentPanelLabels } from './agent-panel-labels'
  *    subscription, which `useAgentSession` owns. The subscription is re-established from a
  *    snapshot when the panel comes back (§6.2's handshake, which exists for exactly this), so a
  *    rail that closes and opens is not a run that was interrupted or a transcript that was lost.
- *  - **the draft, the position and the unread flag are the session's**, not the panel's: they
- *    live in the store, keyed by the session's identity, so collapsing the rail cannot take
- *    them with it (§5.1).
+ *  - **the draft and the position are the session's**, not the panel's: they live in the store,
+ *    keyed by the session's identity, so collapsing the rail cannot take them with it (§5.1).
  *  - **a hole in the stream is said out loud.** A gap means the transcript on screen is not
  *    the session's record, and the one honest thing to offer is a resync rather than a
  *    silent partial answer.
@@ -198,28 +197,6 @@ const {
   dropped,
   lastDrop,
 } = useAgentSession({ gateway: props.gateway, session: props.session })
-
-/**
- * `unread` is deliberately not taken from the binding above, and the reason is worth writing down
- * because the state and this component's shape make it look like an oversight.
- *
- * The store sets the flag when an event is applied for a session that is *not* the one on screen
- * (`stores/agent-session.ts`, `key !== activeKey`), and this binding clears it — `focus(key)` on
- * mount calls `markRead`. So the flag can never be true in the panel that would draw it: mounting
- * is what clears it. Its surface is therefore the list of sessions a reader switches between — a
- * marker on the row that is not the open one, which is Zed's activity-bar dot
- * (`agent_panel.rs`, `has_notification` on an inactive entry, cleared by
- * `active_terminal_visible`) — and this panel has no such list. `AgentSessionHistoryMenu` is not
- * one: its rows are the *engine's* sessions, keyed by the engine's own ids, and a session this
- * window never subscribed to has no record and no flag.
- *
- * Nothing draws it today, and that is a fact about the flag rather than about the render: a
- * subscription is only ever made by `useAgentSession`, which focuses in the same breath, so no
- * session can be subscribed while another one is active. Making the marker reachable means
- * keeping a session attached across a switch — a lifecycle change (the rail replaces the panel
- * rather than re-pointing it, and `useAgentSession`'s `subscribe: false` exists for the reader
- * that would need) — not a line in this template.
- */
 
 /**
  * The conversation on screen: what this session is called, how long the turn has taken, and the

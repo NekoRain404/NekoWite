@@ -133,7 +133,6 @@ async function afterTheRun(entry: AgentToolEntry = toolRow()): Promise<void> {
     view: { ...initialAgentSessionView(IDENTITY), timeline: [entry] },
     draft: '',
     scrollTop: 0,
-    unread: false,
     dropped: 0,
     lastDrop: null,
     edits: captured,
@@ -196,8 +195,7 @@ describe('what the run changed', () => {
       view: initialAgentSessionView(IDENTITY),
       draft: '',
       scrollTop: 0,
-      unread: false,
-      dropped: 0,
+        dropped: 0,
       lastDrop: null,
       edits: [],
     }

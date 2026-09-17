@@ -29,8 +29,8 @@
  * writes `scrollTop` and nothing else — no easing, no smooth scroll, no reveal. The store's
  * text arrives already coalesced per frame; the scroll follows the text rather than a curve.
  *
- * The composable is the panel's, not the store's: session *state* (the draft, the unread
- * flag, the remembered offset) belongs to the store (§10.2), and this file only decides what
+ * The composable is the panel's, not the store's: session *state* (the draft, the
+ * remembered offset) belongs to the store (§10.2), and this file only decides what
  * the container does about it. It reports where the container ended up through
  * `onPosition` so the caller can keep that per session, and it never decides what a session
  * is — a session switch arrives as a fresh mount with a remembered offset.

@@ -180,8 +180,7 @@ export function identityMismatch(
 }
 
 /**
- * The key a session's view, draft, scroll position and unread flag are stored
- * under.
+ * The key a session's view, draft and scroll position are stored under.
  *
  * All five identity fields, because two agents can use the same session id and a
  * restarted runtime's session is not the one the window was showing. NUL as the

@@ -5,8 +5,9 @@
  * It holds the state and the actions over it (§10.2: stores, queries and commands stay
  * separate). Everything that has to be *decided* about an event is in the reducer; this
  * file is the part that talks to a gateway and the part that remembers what belongs to one
- * session rather than to a window: the draft, the scroll position and the unread flag
- * (§5.1 「每会话独立草稿、滚动位置和未读状态」).
+ * session rather than to a window: the draft and the scroll position
+ * (§5.1 「每会话独立草稿、滚动位置」). The third member of that sentence, the unread flag, is
+ * gone — {@link useAgentSessionStore}'s `focus` carries the argument.
  *
  * The gateway arrives as an argument rather than an import. This module is where the
  * feature meets whichever adapter is behind `AgentGateway`, and the adapter is chosen at
@@ -91,8 +92,6 @@ export interface AgentSessionRecord {
    *  Only a send that was accepted clears it — an error does not (§5.1). */
   draft: string
   scrollTop: number
-  /** Set when something was applied for this session while another one was on screen. */
-  unread: boolean
   dropped: number
   lastDrop: AgentDropReason | null
   /**
@@ -179,7 +178,6 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
       view: initialAgentSessionView(identity),
       draft: '',
       scrollTop: 0,
-      unread: false,
       dropped: 0,
       lastDrop: null,
       edits: Object.freeze([]),
@@ -225,7 +223,6 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
       record.lastDrop = reduced.outcome.reason
       return
     }
-    if (key !== activeKey.value) record.unread = true
     // Copied before the walk: a listener that unsubscribed while another was being called would
     // otherwise change the set under the iteration.
     for (const listener of [...eventListeners]) listener(event)
@@ -480,10 +477,36 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     return record.edits.find((baseline) => baseline.path === path) ?? null
   }
 
-  /** Put a session's record on screen. Reading it is what clears its unread flag. */
+  /**
+   * Put a session's record on screen. What reads it is `activeRecord` — the panel assembles its
+   * own rows from the key it was mounted with, so this pointer is for the surfaces that have no
+   * session of their own (`use-agent-note-host.ts`).
+   *
+   * **It used to clear an `unread` flag, and the flag is gone.** The pair was written into the
+   * record, exposed on the store, and read by nobody: no component, no template, no instrument —
+   * only tests, which is the shape that looks like a live surface to whoever reads the interface
+   * next. It was deleted rather than wired for two measured reasons.
+   *
+   *  - **It had no renderer a reader could reach.** The record set it for a frame applied to a
+   *    session that was not `activeKey`, and the only surface that can say "a session you are not
+   *    looking at received something" is a list of the window's own sessions. There is none: the
+   *    rail shows one session, and the history menu's rows are the *engine's* sessions, keyed by
+   *    the engine's ids, where a session this window never subscribed to has no record to be
+   *    unread on (Zed's counterpart is a dot in its agent panel's session list).
+   *  - **Its condition does not mean what the name says.** A session can only be marked while it
+   *    is subscribed, and only `useAgentSession` subscribes — on mount, focusing in the same
+   *    breath. The one reachable way to make the two disagree is `app/pet-task-link.ts`: it moves
+   *    the pointer to the session its task names while the rail keeps the session it was on, so
+   *    the flag lands on the session **on screen**, where a "you have news" marker would be
+   *    false. Reaching the state the marker was written for needs the session list itself, and
+   *    the list is the missing thing — not the flag.
+   *
+   * §5.1's 「每会话独立」 is still the rule for what remains here: the draft and the scroll
+   * position are the key's, not the panel's. If a session list lands, the flag belongs with it,
+   * read off the subscription the list keeps rather than off this pointer.
+   */
   function focus(key: string | null): void {
     activeKey.value = key
-    if (key !== null) markRead(key)
   }
 
   /**
@@ -516,11 +539,6 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     if (record !== null) record.scrollTop = scrollTop
   }
 
-  function markRead(key: string): void {
-    const record = recordFor(key)
-    if (record !== null) record.unread = false
-  }
-
   return {
     records,
     activeKey,
@@ -543,7 +561,6 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     focus,
     setDraft,
     setScroll,
-    markRead,
     adoptOptions,
   }
 })

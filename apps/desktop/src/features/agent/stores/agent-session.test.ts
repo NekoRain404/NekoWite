@@ -277,7 +277,7 @@ describe('the session store', () => {
     })
   })
 
-  it('keeps two sessions apart, including their unread flags and drafts', async () => {
+  it('keeps two sessions apart, including their drafts and positions', async () => {
     const store = useAgentSessionStore()
     const first = await opened()
     const second = await opened({ vaultId: 'vault-2' })
@@ -295,17 +295,15 @@ describe('the session store', () => {
       payload: { usedTokens: 42, contextTokens: 100, cost: null },
     })
 
-    expect(store.records[secondKey].unread).toBe(true)
-    expect(store.records[firstKey].unread).toBe(false)
+    // It is applied to its own record — which is the whole of what the two-session rule is now:
+    // the pointer names one session and the other one's state is untouched either way.
     expect(store.records[secondKey].view.usage?.usedTokens).toBe(42)
     // The session on screen heard nothing of it.
     expect(store.records[firstKey].view.usage).toBeNull()
     expect(store.records[firstKey].view.sequence).toBe(0)
     expect(store.records[secondKey].draft).toBe('half-written over there')
     expect(store.records[secondKey].scrollTop).toBe(120)
-
-    store.focus(secondKey)
-    expect(store.records[secondKey].unread).toBe(false)
+    expect(store.records[firstKey].draft).toBe('')
   })
 
   it('keeps the draft when a run fails', async () => {

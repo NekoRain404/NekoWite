@@ -157,8 +157,8 @@ interface PromptCall {
 interface PanelHarness {
   gateway: MemoryAgentGateway
   session: AgentSession
-  /** Kept across mounts: the session's record — its timeline, draft, position and unread flag —
-   *  lives in this store, and a collapse must not take it with it (§5.1). */
+  /** Kept across mounts: the session's record — its timeline, draft and position — lives in this
+   *  store, and a collapse must not take it with it (§5.1). */
   pinia: Pinia
   app: App | null
   /** Every prompt the panel handed the engine, in order. The composer's sends are the only

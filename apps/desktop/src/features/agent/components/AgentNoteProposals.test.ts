@@ -157,7 +157,6 @@ async function standing(note: AgentLiveNote | null = atSend(), entry: AgentToolE
     view: { ...initialAgentSessionView(IDENTITY), timeline: [entry] },
     draft: '',
     scrollTop: 0,
-    unread: false,
     dropped: 0,
     lastDrop: null,
     edits: at,
