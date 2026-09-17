@@ -147,6 +147,26 @@ const labels = computed<AgentPermissionLabels>(() => props.labels ?? permissionL
 const readout = ref<PermissionReadout | null>(null)
 const state = ref<'loading' | 'ready' | 'unreadable'>('loading')
 
+/**
+ * The rules readout, and only while it is the read this page holds.
+ *
+ * `state` decides rather than `readout` alone, because a retry that fails leaves the last
+ * successful answer in the ref while this half goes back to `unreadable` — rows drawn from that
+ * value would be this page showing rules it can no longer say are current, which is the one thing
+ * the states below exist to avoid.
+ *
+ * It is a `computed` because the gate is asked in two places. The grants block sits between the two
+ * parts of the rules half — under the rules they are an answer to, which is where this page wants
+ * it — so that half is drawn in two branches rather than one. The repetition is the point: one
+ * branch would put the grants block back inside *this* read's success path, which is the defect
+ * `AgentPermissionGrants.vue`'s own module comment names ("the two answer different questions") and
+ * the reason a failed profile read must not take the revoke control off the page. See
+ * `AgentPermissionSettings.test.ts`.
+ */
+const profileRead = computed<PermissionReadout | null>(() =>
+  state.value === 'ready' ? readout.value : null,
+)
+
 function originText(origin: SettingOrigin): string {
   const copy = labels.value.origin
   if (origin.kind === 'host') {
@@ -188,6 +208,8 @@ onMounted(load)
     <span class="settings-label">{{ labels.section.title }}</span>
     <span class="settings-note">{{ labels.section.hint }}</span>
 
+    <!-- The rules half: what the engine will *ask*, read from the profile's own document. Its own
+         read, its failure, its retry — and nothing else on this page is inside them. -->
     <span v-if="state === 'loading'" class="settings-note" data-test="permission-loading">
       {{ labels.loading }}
     </span>
@@ -198,26 +220,26 @@ onMounted(load)
       </button>
     </template>
 
-    <template v-else-if="readout">
+    <template v-else-if="profileRead">
       <!-- What this app did about permissions for this profile, above the list it explains: the
            state is what turns "these are the rules" into "these are the rules in force", and the
            two states where they are not in force are the ones a user most needs said out loud. -->
       <p
         class="settings-note"
         data-test="permission-state"
-        :data-state="readout.state"
+        :data-state="profileRead.state"
       >
-        {{ stateText(readout.state) }}
+        {{ stateText(profileRead.state) }}
       </p>
 
       <div class="permission-group">
         <span class="settings-label">{{ labels.rules.title }}</span>
-        <span v-if="readout.rules.length === 0" class="settings-note" data-test="permission-no-rules">
+        <span v-if="profileRead.rules.length === 0" class="settings-note" data-test="permission-no-rules">
           {{ labels.rules.empty }}
         </span>
         <ul v-else class="permission-rows">
           <li
-            v-for="rule in readout.rules"
+            v-for="rule in profileRead.rules"
             :key="rule.tool"
             class="permission-row"
             :data-test="`permission-rule-${rule.tool}`"
@@ -232,20 +254,31 @@ onMounted(load)
           </li>
         </ul>
       </div>
+    </template>
 
-      <!-- The grants the user actually gave, directly under the rules they are an answer to:
-           "what the engine will ask" and "what you have already answered for good" are the two
-           halves of the same question, and this is the half that can be taken back. -->
-      <AgentPermissionGrants :client="props.client" />
+    <!-- The grants the user actually gave, directly under the rules they are an answer to:
+         "what the engine will ask" and "what you have already answered for good" are the two
+         halves of the same question, and this is the half that can be taken back.
 
+         It is drawn **outside** the branch above, on its own authority — its own read, its own
+         failure, its own retry, all inside `AgentPermissionGrants.vue`. The two halves answer
+         different questions (that component's own module comment), so neither may be gated by the
+         other's read: an unreadable profile document is exactly when a user needs to see, and be
+         able to take back, what the engine wrote down after they answered "always". Gating this
+         block on the profile read is what hid the only lasting-permission control this app has. -->
+    <AgentPermissionGrants :client="props.client" />
+
+    <!-- The rest of the rules half, in a branch of its own rather than a shared one — the gate is
+         repeated, not widened, so the grants block above cannot end up inside it again. -->
+    <template v-if="profileRead">
       <div class="permission-group">
         <span class="settings-label">{{ labels.options.title }}</span>
         <span class="settings-note">{{ labels.options.hint }}</span>
-        <span v-if="readout.optionKinds.length === 0" class="settings-note" data-test="permission-no-options">
+        <span v-if="profileRead.optionKinds.length === 0" class="settings-note" data-test="permission-no-options">
           {{ labels.options.none }}
         </span>
         <ul v-else class="permission-rows" data-test="permission-options">
-          <li v-for="kind in readout.optionKinds" :key="kind" class="settings-note permission-name">
+          <li v-for="kind in profileRead.optionKinds" :key="kind" class="settings-note permission-name">
             {{ kind }}
           </li>
         </ul>
@@ -258,7 +291,7 @@ onMounted(load)
         <span class="settings-label">{{ labels.limits.title }}</span>
         <ul class="permission-rows">
           <li
-            v-for="limit in readout.limits"
+            v-for="limit in profileRead.limits"
             :key="limit"
             class="settings-note is-warn permission-limit"
             :data-test="`permission-limit-${limit}`"
