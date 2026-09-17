@@ -13,7 +13,7 @@
  * checks what it draws.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { createApp, nextTick, type App as VueApp } from 'vue'
+import { createApp, h, nextTick, reactive, type App as VueApp } from 'vue'
 import AgentSessionHistoryMenu from './AgentSessionHistoryMenu.vue'
 import type { AgentSessionHistoryRow } from '../services/agent-session-history'
 import { setLocale } from '../../../i18n'
@@ -40,6 +40,25 @@ const OTHER: AgentSessionHistoryRow = {
   elsewhere: true,
 }
 
+/**
+ * A row whose title is a *name* rather than the placeholder an unprompted session gets.
+ *
+ * `New session - <stamp>` is what the pinned engine was measured answering for a session nothing
+ * has been asked of yet (P0 §2.2 prints the same shape), and a session that has been used since
+ * carries the engine's summary of it. Both are the engine's own string and the box has to answer
+ * either — this fixture is the second kind, because a search is only worth having if it finds
+ * something a stamp would not.
+ */
+const NAMED: AgentSessionHistoryRow = {
+  sessionId: 'session-7',
+  title: 'Weather notes for the trip',
+  cwd: '/notes/garden',
+  updatedAt: '2026-01-01T00:00:07Z',
+  held: false,
+  current: false,
+  elsewhere: true,
+}
+
 let mounted: VueApp[] = []
 
 beforeEach(() => {
@@ -52,8 +71,36 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-function mountMenu(props: {
+/**
+ * The props the list is mounted with, as a live object.
+ *
+ * Reactive rather than a plain object literal passed to `createApp`, because one of the panel's
+ * moves changes the rows *under* an open list: the free action re-reads `session/list`
+ * (`AgentPanel.confirmFree`), and a query can be up while it happens. A case that needs that
+ * moment has to be able to hand the list a second answer, which is what the return value is for.
+ */
+interface MenuProps {
   view: 'loading' | 'rows' | 'empty' | 'unreadable'
+  rows: readonly AgentSessionHistoryRow[]
+  more: boolean
+  reason: string | null
+  closeable: boolean
+  footer: null
+  confirming: null
+  now: number
+  listId: string
+  left: number
+  top: number
+  minWidth: number
+  drop: 'down' | 'up'
+  openable: boolean
+  onOpen: () => void
+  onActivate: (sessionId: string) => void
+  onClose: () => void
+}
+
+function mountMenu(input: {
+  view: MenuProps['view']
   rows?: readonly AgentSessionHistoryRow[]
   more?: boolean
   reason?: string | null
@@ -61,14 +108,15 @@ function mountMenu(props: {
   openable?: boolean
   onOpen?: () => void
   onActivate?: (sessionId: string) => void
-}): void {
+  onClose?: () => void
+}): MenuProps {
   const host = document.createElement('div')
   document.body.appendChild(host)
-  const app = createApp(AgentSessionHistoryMenu, {
-    view: props.view,
-    rows: props.rows ?? [],
-    more: props.more ?? false,
-    reason: props.reason ?? null,
+  const props = reactive<MenuProps>({
+    view: input.view,
+    rows: input.rows ?? [],
+    more: input.more ?? false,
+    reason: input.reason ?? null,
     // The free action's two inputs: no capability, and no question in the footer. What those draw
     // is the panel's cases (`AgentSessionHistory.test.ts`); they are named here because the props
     // are required.
@@ -81,12 +129,15 @@ function mountMenu(props: {
     top: 0,
     minWidth: 220,
     drop: 'down',
-    openable: props.openable ?? false,
-    onOpen: props.onOpen ?? (() => {}),
-    onActivate: props.onActivate ?? (() => {}),
+    openable: input.openable ?? false,
+    onOpen: input.onOpen ?? (() => {}),
+    onActivate: input.onActivate ?? (() => {}),
+    onClose: input.onClose ?? (() => {}),
   })
+  const app = createApp({ render: () => h(AgentSessionHistoryMenu, props) })
   app.mount(host)
   mounted.push(app)
+  return props
 }
 
 /** What the list is drawing, as the engine's own titles. */
@@ -238,14 +289,78 @@ describe('the find box', () => {
     // The reader never leaves the box: the arrows and Enter are the list's, which is the keyboard
     // model the config picker's own filter established for this app.
     const picked: string[] = []
-    mountMenu({ view: 'rows', rows: [ROW, OTHER], onActivate: (sessionId) => picked.push(sessionId) })
-    await type('elsewhere')
-
+    mountMenu({
+      view: 'rows',
+      rows: [ROW, OTHER, NAMED],
+      onActivate: (sessionId) => picked.push(sessionId),
+    })
     const field = document.querySelector<HTMLInputElement>('[data-history-search]')!
+
+    // The arrows move the highlight — here onto the third row, which the query below is about to
+    // remove from the list altogether.
+    for (let i = 0; i < 2; i += 1) {
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    }
+    await type('new session')
+
     field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     await nextTick()
 
-    expect(picked).toEqual([OTHER.sessionId])
+    // A query is a new list, so the row Enter would take is the first one it left. The two rows
+    // that remain are about to be committed against an index the reader set on a *third*: an index
+    // merely clamped into range would land on `OTHER`, which is a row they never picked.
+    expect(picked).toEqual([ROW.sessionId])
+  })
+
+  it('clears the query first, and closes only when there is nothing left to clear', async () => {
+    let closed = 0
+    mountMenu({
+      view: 'rows',
+      rows: [ROW, OTHER],
+      onClose: () => {
+        closed += 1
+      },
+    })
+    const field = document.querySelector<HTMLInputElement>('[data-history-search]')!
+    await type('elsewhere')
+    expect(titles()).toEqual([OTHER.title])
+
+    // Escape is the key a reader has learned means "not this", and the thing they are asking to be
+    // rid of first is what they typed.
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await nextTick()
+    expect(titles()).toEqual([ROW.title, OTHER.title])
+    expect(closed).toBe(0)
+
+    // A second one, with the box empty, is the list being closed — the behaviour that was there
+    // before the box existed, unchanged.
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await nextTick()
+    expect(closed).toBe(1)
+  })
+
+  it('keeps Enter on a row when the engine’s answer shrinks under a live query', async () => {
+    // The panel re-reads `session/list` after a free, with the list still open and a query possibly
+    // still typed. What comes back can be shorter than what the highlight was measured against.
+    const picked: string[] = []
+    const props = mountMenu({
+      view: 'rows',
+      rows: [ROW, OTHER],
+      onActivate: (sessionId) => picked.push(sessionId),
+    })
+    const field = document.querySelector<HTMLInputElement>('[data-history-search]')!
+
+    // Arrow onto the second row — the index that a shorter list would no longer have.
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await nextTick()
+
+    props.rows = [ROW]
+    await nextTick()
+    expect(titles()).toEqual([ROW.title])
+
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await nextTick()
+    expect(picked).toEqual([ROW.sessionId])
   })
 })
 
