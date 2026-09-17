@@ -550,7 +550,7 @@ describe('the agent rail — a new session on the runtime that is up', () => {
     // credential went stale, a workspace it refuses. The reader stays where they are: the session
     // on screen is not the one at fault, and this rail has no arm for "live, with a notice", so
     // the sentence is the caller's to draw (exactly as `onResumeFailed`'s is).
-    const failure = new AgentFailure('refused', 'the engine would not open a session')
+    const failure = new AgentFailure('runtime-unavailable', 'the engine would not open a session')
     fake.composition.openSession = async () => {
       throw failure
     }
