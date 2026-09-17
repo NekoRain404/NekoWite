@@ -71,6 +71,8 @@
     "allow-desktop-pet-appearance",
     "allow-desktop-pet-library",
     "allow-desktop-pet-import-character",
+    "allow-desktop-pet-catalogue",
+    "allow-desktop-pet-adopt-character",
     "allow-desktop-pet-open-task",
     "allow-desktop-pet-read-settings",
     "allow-desktop-pet-update-settings",

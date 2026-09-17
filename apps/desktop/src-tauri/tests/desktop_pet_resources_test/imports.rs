@@ -12,7 +12,7 @@
 use std::path::Path;
 
 use crate::desktop_pet::resources::{
-    CreateRequest, EntryState, PackageProblem, ResourceRefusal, INSTALLED_MANIFEST,
+    CharacterKind, CreateRequest, EntryState, PackageProblem, ResourceRefusal, INSTALLED_MANIFEST,
 };
 use crate::support::{gif, install_request, library, listing, ogg, pack_dir, pet_json, png, write};
 
@@ -301,6 +301,7 @@ fn creating_a_character_is_the_same_transaction_with_the_same_budgets() {
         .create(&CreateRequest {
             character_id: "local-1700000000000".to_string(),
             name: "Bear".to_string(),
+            kind: CharacterKind::Created,
             installed_at_ms: 1_700_000_000_001,
             sheet_name: "sheet.png".to_string(),
             sheet: png(800, 900),
@@ -327,6 +328,7 @@ fn creating_a_character_is_the_same_transaction_with_the_same_budgets() {
         .create(&CreateRequest {
             character_id: "local-2".to_string(),
             name: "Bear".to_string(),
+            kind: CharacterKind::Created,
             installed_at_ms: 1_700_000_000_002,
             sheet_name: "sheet.png".to_string(),
             sheet: b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>".to_vec(),

@@ -203,6 +203,30 @@ export const settings = {
           preset100: 'M',
           preset125: 'L',
           animationsUnavailable: 'The pet draws from these values (row per mood, idle playlist), and this page has no controls for them yet: a control here would be the first place they could be set.',
+        catalogue: {
+          title: 'Online catalogue',
+          note: 'Characters published to the community catalogue, downloaded from the catalogue\'s own host and nowhere else. This build checks the address, the size, the response type and the record it keeps of every file it installs. It does not check a signature: the catalogue publishes none, so nothing here claims the bytes are the ones the creator uploaded.',
+          search: 'Search by name or id…',
+          kindAll: 'All',
+          count: 'Showing {shown} of {total} matches.',
+          skipped: '{count} entries in the catalogue cannot be installed by this build and are not listed.',
+          noMatches: 'Nothing in the catalogue matches that search.',
+          install: 'Get',
+          downloading: 'Downloading…',
+          installFailed: 'The character could not be downloaded: {msg}',
+          reload: 'Ask the catalogue again',
+          termsStated: 'The catalogue states: {terms}',
+          termsUnstated: 'The catalogue states no licence for this pack.',
+          by: 'by {author}',
+          detail: 'The host said: {detail}',
+          state: {
+            unasked: 'The catalogue has not been read yet.',
+            unconfigured: 'No character catalogue is configured in this build.',
+            unreachable: 'The catalogue could not be reached. Your installed characters are unaffected.',
+            unreadable: 'The catalogue answered, and what came back is not a catalogue.',
+            empty: 'The catalogue answered and offers nothing this build can install.',
+          },
+        },
         },
         bubble: {
           theme: 'Bubble theme',
@@ -325,10 +349,6 @@ export const settings = {
           systemTitle: 'The host and local data',
           notOfferedNote: 'None of these is drawn as a switch that is off: an off switch says the feature is there and merely switched off, and these are not in this build. Each line says what it would need.',
           rows: {
-            catalog: {
-              name: 'Character gallery (browsing and downloading)',
-              reason: 'Not offered: downloading runs through the restricted client and a service endpoint that has been reviewed, and neither exists yet. Characters can be imported from local files only.',
-            },
             'care-sync': {
               name: 'Sign in, restore, sync, leaderboard',
               reason: 'Not offered: off by default, and off until the service\'s source and its privacy terms are agreed. The original project\'s login identity is never borrowed.',
@@ -599,6 +619,30 @@ export const settings = {
           preset100: 'M',
           preset125: 'L',
           animationsUnavailable: '桌宠会按这些值绘制（每种情绪用哪一行、待机播放列表），只是本页还没有对应的控件：有了控件这里才会是第一个能设置它们的地方。',
+        catalogue: {
+          title: '在线角色库',
+          note: '社区角色库里公开的角色，只从角色库自己的主机下载。本版本会校验地址、大小、响应类型，并为每个装进来的文件留下摘要记录；但不校验签名——角色库并不提供签名，所以这里不会声称字节就是创作者上传的那一份。',
+          search: '按名称或 id 搜索…',
+          kindAll: '全部',
+          count: '共 {total} 条匹配，显示前 {shown} 条。',
+          skipped: '角色库里有 {count} 条本版本无法安装，未列出。',
+          noMatches: '角色库里没有匹配这个搜索条件的角色。',
+          install: '获取',
+          downloading: '正在下载…',
+          installFailed: '角色下载失败：{msg}',
+          reload: '重新读取角色库',
+          termsStated: '角色库声明：{terms}',
+          termsUnstated: '角色库未对这个素材包声明许可。',
+          by: '作者：{author}',
+          detail: '主机返回：{detail}',
+          state: {
+            unasked: '尚未读取角色库。',
+            unconfigured: '本版本没有配置在线角色库。',
+            unreachable: '读不到角色库。已经安装的角色不受影响。',
+            unreadable: '角色库有响应，但返回的内容不是一个角色库。',
+            empty: '角色库有响应，但其中没有本版本可以安装的角色。',
+          },
+        },
         },
         bubble: {
           theme: '气泡主题',
@@ -718,10 +762,6 @@ export const settings = {
           systemTitle: '宿主与本地数据',
           notOfferedNote: '这些都不会显示成关闭状态的开关：一个「关」的开关意味着功能已经存在、只是没开，而它们在本版本里并不存在。每一行写明了它需要什么。',
           rows: {
-            catalog: {
-              name: '在线角色库（浏览与下载）',
-              reason: '不提供：下载要经过受限客户端和已经评审过的服务端点，两者都还不存在。角色目前只能从本地文件导入。',
-            },
             'care-sync': {
               name: '登录、恢复、同步、排行榜',
               reason: '不提供：默认关闭，并且在服务来源与隐私条款确定之前一直关闭。不借用原项目的登录身份。',

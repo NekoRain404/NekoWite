@@ -62,9 +62,9 @@ use serde::Serialize;
 
 use crate::desktop_pet::settings::DefaultsReason;
 use crate::desktop_pet::{
-    CallerWindow, CapabilityReport, CareSummary, CharacterKind, CharacterLibrary, Closed,
-    HostRefusal, InstallRequest, LinuxEnvironment, PetInstance, PetSettingsDomain, PetSettingsLoad,
-    PetWindowHost, TeardownReport, WindowAction,
+    AdoptionRefusal, CallerWindow, CapabilityReport, CareSummary, CharacterKind, CharacterLibrary,
+    Closed, HostRefusal, InstallRequest, LinuxEnvironment, PetInstance, PetSettingsDomain,
+    PetSettingsLoad, PetWindowHost, TeardownReport, WindowAction,
 };
 use crate::state::DesktopPetState;
 
@@ -566,6 +566,91 @@ pub async fn desktop_pet_import_character<R: tauri::Runtime>(
         files: crate::desktop_pet::PetCharacterFiles::Intact,
         installed_at_ms: installed.installed_at_ms,
     }))
+}
+
+/// What the online catalogue offers right now (§8's 在线角色库).
+///
+/// The read is the whole of browsing: it answers with a state and, when there is one, a list of
+/// offers — never an empty list for a failure, which is the defect §3.1 records against the
+/// upstream client's `catalog.ts` (「区分离线、空库、损坏」). No URL crosses this boundary in either
+/// direction: an offer is a name, a byline and a slug, and the address it would be downloaded from
+/// is resolved on the host side from the catalogue the host itself read.
+///
+/// It is deliberately *not* cached. A browse is a user opening a page, and the alternative — a
+/// process-lifetime copy of a document whose whole purpose is to change — would make the page's
+/// first paint fast and every install after it resolve a slug against a list that may have moved.
+#[tauri::command]
+pub async fn desktop_pet_catalogue() -> Result<crate::desktop_pet::CatalogueReading, String> {
+    Ok(crate::desktop_pet::read_catalogue().await)
+}
+
+/// Download one catalogue offer and install it (§8's 导入, from the network side).
+///
+/// The parameter is a **slug** and nothing else. §7.1's rule for windows is that a front end names
+/// a character and never a window; this is the same rule one layer over, and the reason is the same
+/// and stronger — a renderer that could name an address could point this app's downloader at any
+/// host on the network. There is no argument to forge, so a catalogue document is the only thing
+/// that can decide where a character comes from.
+///
+/// §8's four transfer rules are [`crate::desktop_pet::resources::remote`]'s, and every one of them
+/// is applied before a byte is read: HTTPS, the catalogue's own host and a public address, a size
+/// budget, and a content type that is checked against the bytes as well as the header. A refusal is
+/// a sentence naming what refused — never a retry, and never a hang.
+///
+/// The character lands through [`CharacterLibrary::create`], the same transaction a locally made one
+/// uses, and is recorded as [`crate::desktop_pet::CharacterKind::Remote`] so that what came from the
+/// network is a fact on disk rather than a memory of this process.
+#[tauri::command]
+pub async fn desktop_pet_adopt_character<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    slug: String,
+) -> Result<crate::desktop_pet::PetCharacterEntry, String> {
+    use tauri::Manager;
+    // Cloned out of the managed state rather than borrowed across the await: the fetch is a
+    // suspension point, and a library held by reference through one would be a reference into the
+    // app handle for as long as a remote host takes to answer.
+    let library = app
+        .try_state::<CharacterLibrary>()
+        .map(|state| state.inner().clone())
+        .ok_or_else(|| "this build has no character library to install into".to_string())?;
+    let installed = crate::desktop_pet::install_from_catalogue(&slug, &library, now_ms())
+        .await
+        .map_err(adoption_sentence)?;
+    Ok(crate::desktop_pet::PetCharacterEntry {
+        character_id: installed.character_id.clone(),
+        // Read back from what the library wrote rather than echoed from the catalogue: the entry
+        // and the manifest are one fact, and a second spelling of the name here could differ from
+        // the one on disk.
+        pack_name: installed.name,
+        kind: installed.kind,
+        files: crate::desktop_pet::PetCharacterFiles::Intact,
+        installed_at_ms: installed.installed_at_ms,
+    })
+}
+
+/// Why a catalogue install was refused, in the words the user reads.
+///
+/// Assembled here rather than in the module for the reason `ResourceRefusal` gives — the refusals
+/// below are data, and a sentence built where the decision is made is one no page can translate —
+/// with the module's own sentence for the library half, so the two cannot drift.
+fn adoption_sentence(refusal: AdoptionRefusal) -> String {
+    use crate::desktop_pet::resources::CatalogueFailure;
+    match refusal {
+        AdoptionRefusal::Catalogue(CatalogueFailure::Unconfigured) => {
+            "no character catalogue is configured in this build".to_string()
+        }
+        AdoptionRefusal::Catalogue(CatalogueFailure::Unreachable(detail)) => {
+            format!("the catalogue could not be reached: {detail}")
+        }
+        AdoptionRefusal::Catalogue(CatalogueFailure::Unreadable(detail)) => {
+            format!("the catalogue could not be read: {detail}")
+        }
+        AdoptionRefusal::NoSuchOffer { slug } => {
+            format!("the catalogue no longer offers {slug}")
+        }
+        AdoptionRefusal::Transfer(refusal) => refusal.detail(),
+        AdoptionRefusal::Library(refusal) => crate::desktop_pet::refusal_sentence(&refusal),
+    }
 }
 
 /// Now, in epoch milliseconds, for a manifest's install time.

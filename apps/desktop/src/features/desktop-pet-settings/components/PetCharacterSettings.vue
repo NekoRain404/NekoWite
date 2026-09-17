@@ -17,6 +17,9 @@
  *    imported through `PetGateway.importCharacter()`. The rows, the selection and the notices come
  *    from `pet-library-policy.ts` (D8) rather than from this component, so the page cannot form a
  *    second opinion about what the library holds.
+ *  - the online catalogue → `PetCatalogueBrowser.vue` below, which reads
+ *    `PetGateway.catalogue()` and installs through `PetGateway.adoptCharacter(slug)`. §8's
+ *    transfer rules and the page's own share of them are argued there.
  *
  * What is still *stated* rather than drawn is the animation mapping — `ap_bind_<mood>`,
  * `ap_idle_mode`, `ap_idle_interval` and `ap_idle_clips`. The schema holds all four since D7d, and
@@ -45,6 +48,10 @@ import type { PetCharacterEntry } from '../../../platform/gateways/pet-contracts
 import { readPetLibrary, type PetLibraryState } from '../../desktop-pet'
 import type { PetSettingsSaveStatus } from '../composables/use-pet-settings'
 import type { PetSettingsContext } from './DesktopPetSettings.vue'
+// The catalogue is its own component: this page is about the character on screen, that one is
+// about a document written by strangers and served by a host this app does not operate (§13.1's
+// reason to split, and the reason this page stays inside its budget).
+import PetCatalogueBrowser from './PetCatalogueBrowser.vue'
 
 const props = defineProps<{
   /** The container's sessions. This page creates none of its own. */
@@ -86,9 +93,10 @@ const reading = computed(() =>
  * The notices this page draws, out of the ones the policy reports.
  *
  * Deliberately three of them: `no-characters`, `selection-missing` and `characters-damaged` are
- * about *this app's* library, which is what this page is for. The catalogue notices belong to the
- * advanced page's subject — an online gallery this build has no endpoint for — and drawing them
- * here would put a sentence about the network on the page a user opens to pick a character.
+ * about *this app's* library, which is what the list above is for. The catalogue's own states are
+ * drawn by the browser below, from the reading it asked for, so they are filtered out here rather
+ * than said twice — once in the browser and once in a list that cannot offer to do anything about
+ * them.
  */
 const notices = computed(() =>
   reading.value.notices.filter((notice) =>
@@ -129,6 +137,18 @@ async function importCharacter(): Promise<void> {
 // Read when the page opens, and only then: a page that is not on screen has nothing to show, and
 // the container mounts a page when it is opened (`DesktopPetSettings.vue`).
 onMounted(() => void readLibrary())
+
+/**
+ * A character the catalogue installed.
+ *
+ * Exactly what an import does, and for the same reason: the selection is *why* the user went and
+ * got one, so it follows the download rather than leaving them to find the new row in a list. The
+ * entry comes from the host's own answer, so the id selected is the one the library wrote.
+ */
+async function adopt(entry: PetCharacterEntry): Promise<void> {
+  await readLibrary()
+  character.edit('characterId', entry.characterId)
+}
 
 /**
  * The save states a page states in words, by the codes the session reports — the same table the
@@ -283,6 +303,13 @@ defineExpose({ settle })
         {{ t('settings.pet.character.importFailed', { msg: importError }) }}
       </p>
       <span class="settings-note">{{ t('settings.pet.character.libraryNote') }}</span>
+
+      <!-- §8's 在线角色库. The browser owns its own read, its own search and its own failures, and
+           emits what it installed; this page owns the library list and the selection. -->
+      <PetCatalogueBrowser
+        :context="context"
+        @installed="adopt"
+      />
 
       <span class="settings-label">{{ t('settings.pet.character.size', { px: values.size }) }}</span>
       <input

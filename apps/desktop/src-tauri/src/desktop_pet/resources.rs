@@ -20,13 +20,14 @@
 //!   to be rewritten. This is why there is no library index file beside the directories — a
 //!   second list of what is installed could disagree with the directories without either being
 //!   wrong, which is the bug class this rule exists to remove.
-//! - **Nothing here reaches the network.** The one operation that would — the online catalogue —
-//!   has no endpoint in this build, and [`remote::remote_fetch_plan`] refuses before any of §8's transfer
-//!   rules are consulted. An installed character is a local directory, and every read here works
-//!   with no interface up (§8's 「缓存与离线角色不依赖服务可用性」). The rules themselves are
-//!   written and tested rather than left to the task that configures an endpoint, because
-//!   "HTTPS only, no private address, bounded size, bounded time" is a specification that belongs
-//!   beside the thing it constrains.
+//! - **A read never reaches the network, and an install reaches it through one file.** An installed
+//!   character is a local directory, and every read here — the listing, the appearance, the digest
+//!   pass — works with no interface up (§8's 「缓存与离线角色不依赖服务可用性」). The one operation
+//!   that does fetch is [`catalogue::install_from_catalogue`], it runs only when the user asks for
+//!   one named offer, and the socket it opens is opened by [`fetch`] — the only file in this tree
+//!   that names an HTTP client at all, which the source-level test
+//!   `only_the_fetch_module_opens_a_socket` holds it to. Everything that decides what may be
+//!   fetched is [`remote`], before a connection exists.
 //!
 //! **The name rule, and the rule that is not one.** Two facts about a character are easy to run
 //! together and are kept apart here, because running them together is what made a Chinese folder
@@ -72,17 +73,24 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub mod catalogue;
 pub mod entries;
+pub mod fetch;
 pub mod library;
 pub mod media;
 pub mod pack;
 pub mod remote;
 
+pub use catalogue::{
+    install_from_catalogue, parse_catalogue, read_catalogue, AdoptionRefusal, Catalogue,
+    CatalogueEntry, CatalogueFailure, CatalogueOffer, CatalogueReading, MAX_CATALOGUE_ENTRIES,
+};
 pub use library::CharacterLibrary;
 pub use pack::{is_path_component, name_problem};
 pub use remote::{
-    remote_fetch_plan, RemoteRefusal, LIBRARY_ENDPOINT, REMOTE_CONTENT_TYPES, REMOTE_MAX_BYTES,
-    REMOTE_TIMEOUT_MS,
+    remote_fetch_plan, FetchKind, FetchPlan, RemoteRefusal, CATALOGUE_CONTENT_TYPES,
+    CATALOGUE_MAX_BYTES, LIBRARY_ENDPOINT, REMOTE_MAX_BYTES, REMOTE_TIMEOUT_MS,
+    SHEET_CONTENT_TYPES,
 };
 
 /// The directory under the app's data directory that holds everything this module owns.
@@ -257,9 +265,14 @@ impl PackageRefusal {
     }
 }
 
-/// Where a character came from. Two arms and neither is remote, which is this build's whole
-/// online story for characters: an online one would need the licence and data-flow review §8
-/// defers to the online sub-plan.
+/// Where a character came from.
+///
+/// Three arms, and the third is the one that makes provenance answerable. A character the user
+/// made and one downloaded from a catalogue are the same shape on disk — an ordinary library
+/// directory with an ordinary manifest — so the only place the difference can be recorded is here,
+/// in the manifest the library writes. That matters most for the question the catalogue leaves
+/// open: "which of these came from a third party" is exactly what the licence work will have to
+/// ask, and a build that recorded every download as `Created` would be unable to answer it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CharacterKind {
@@ -267,6 +280,8 @@ pub enum CharacterKind {
     Imported,
     /// Drawn or assembled in the app from one sheet the user supplied.
     Created,
+    /// Downloaded from the online catalogue, through §8's transfer rules.
+    Remote,
 }
 
 /// The sheet, as the manifest records it: which file, how many pixels, and what grid it slices
@@ -388,6 +403,10 @@ pub struct InstallRequest {
 pub struct CreateRequest {
     pub character_id: String,
     pub name: String,
+    /// How the character came to be here. A parameter rather than a constant of this call because
+    /// the two callers differ in exactly this fact: `bundled` assembles one from a sheet compiled
+    /// into the binary, and `catalogue` assembles one from bytes it downloaded.
+    pub kind: CharacterKind,
     pub installed_at_ms: u64,
     /// The file name the sheet is stored under. Validated like every other pack name.
     pub sheet_name: String,

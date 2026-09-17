@@ -101,7 +101,9 @@ impl CharacterLibrary {
     /// The same transaction as an import and deliberately not a second path: a created character
     /// is an imported one whose pack was assembled in memory, so the validation, the budgets,
     /// the manifest and the commit point are the same code rather than a parallel implementation
-    /// that drifts.
+    /// that drifts. That holds for a *downloaded* sheet as well — the bytes a catalogue supplied
+    /// are assembled in memory exactly as a file the user picked is, which is why the download path
+    /// has no transaction of its own to get wrong.
     pub fn create(&self, request: &CreateRequest) -> Result<InstalledCharacter, ResourceRefusal> {
         if let Some(detail) = name_problem(&request.sheet_name) {
             return Err(ResourceRefusal::InvalidName {
@@ -121,7 +123,7 @@ impl CharacterLibrary {
         self.publish_with_grid(
             &request.character_id,
             &request.name,
-            CharacterKind::Created,
+            request.kind,
             request.installed_at_ms,
             files,
             Some(grid),

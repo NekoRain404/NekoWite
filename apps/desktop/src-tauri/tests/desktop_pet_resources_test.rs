@@ -78,6 +78,9 @@ mod desktop_pet {
 // behaviour, not targets, and there is deliberately no `main.rs` in it.
 #[path = "desktop_pet_resources_test/cache.rs"]
 mod cache;
+
+#[path = "desktop_pet_resources_test/catalogue.rs"]
+mod catalogue;
 #[path = "desktop_pet_resources_test/confinement.rs"]
 mod confinement;
 #[path = "desktop_pet_resources_test/imports.rs"]

@@ -170,7 +170,9 @@ pub fn run() {
                             if let Err(detail) =
                                 desktop_pet::seed(&library, &dir, desktop_pet::system_clock()())
                             {
-                                eprintln!("the desktop pet's shipped character is missing: {detail}");
+                                eprintln!(
+                                    "the desktop pet's shipped character is missing: {detail}"
+                                );
                             }
                             app.manage(library);
                         }
@@ -332,6 +334,8 @@ pub fn run() {
             commands::desktop_pet::desktop_pet_appearance,
             commands::desktop_pet::desktop_pet_library,
             commands::desktop_pet::desktop_pet_import_character,
+            commands::desktop_pet::desktop_pet_catalogue,
+            commands::desktop_pet::desktop_pet_adopt_character,
             commands::desktop_pet::desktop_pet_open_task,
             commands::desktop_pet::desktop_pet_read_settings,
             commands::desktop_pet::desktop_pet_update_settings,

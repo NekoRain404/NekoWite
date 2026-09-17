@@ -10,17 +10,37 @@
 //! Nothing is decoded. A codec defect inside a correctly-typed file is the player's to report;
 //! claiming to have checked it would be a claim this build cannot make.
 
-pub fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
+/// The format a file *is*, from its own header, or `None` for one this build cannot name.
+///
+/// The same four containers [`image_size`] can measure, split out because a downloaded sheet has a
+/// second question asked of it that a file on the user's own disk does not: the response said
+/// `image/webp`, and the bytes have to agree. One list of magic numbers serves both, so the
+/// formats this build accepts and the formats it can measure cannot drift apart — which is the
+/// property §8's 「不能校验的就拒绝」 depends on and the reason this is not a second `matches!`.
+pub fn image_format(bytes: &[u8]) -> Option<&'static str> {
     if bytes.len() >= 24 && bytes.starts_with(b"\x89PNG\r\n\x1a\n") && &bytes[12..16] == b"IHDR" {
-        return Some((be_u32(bytes, 16)?, be_u32(bytes, 20)?));
+        return Some("png");
     }
     if bytes.len() >= 10 && (bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")) {
-        return Some((le_u16(bytes, 6)? as u32, le_u16(bytes, 8)? as u32));
+        return Some("gif");
     }
     if bytes.len() >= 30 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
-        return webp_size(bytes);
+        return Some("webp");
     }
-    jpeg_size(bytes)
+    if bytes.starts_with(b"\xff\xd8") {
+        return Some("jpeg");
+    }
+    None
+}
+
+pub fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    match image_format(bytes)? {
+        "png" => Some((be_u32(bytes, 16)?, be_u32(bytes, 20)?)),
+        "gif" => Some((le_u16(bytes, 6)? as u32, le_u16(bytes, 8)? as u32)),
+        "webp" => webp_size(bytes),
+        "jpeg" => jpeg_size(bytes),
+        _ => None,
+    }
 }
 
 /// The three WebP containers, which each store the canvas size differently.
@@ -132,16 +152,6 @@ pub(super) fn looks_like_a_document(name: &str, bytes: &[u8]) -> bool {
     named || shaped
 }
 
-/// §8's transfer rules, as a plan rather than a request.
-///
-/// Nothing in this build calls it: [`LIBRARY_ENDPOINT`] is `None`, so the first check answers
-/// with [`RemoteRefusal::NotConfigured`] and no other rule is consulted. It exists because the
-/// rules are a specification — 「HTTPS、域名/重定向策略、超时、大小、内容类型；拒绝内网/回环地址
-/// 跳转」 — and a specification that lives only in a plan is one the task that configures an
-/// endpoint would have to re-derive. The endpoint is a parameter rather than the constant so the
-/// rules can be tested before there is anything to point them at.
-///
-/// A redirect is validated by calling this again on the target: §8 refuses a hop into a private
 fn be_u32(bytes: &[u8], at: usize) -> Option<u32> {
     let slice = bytes.get(at..at + 4)?;
     Some(u32::from_be_bytes(slice.try_into().ok()?))
