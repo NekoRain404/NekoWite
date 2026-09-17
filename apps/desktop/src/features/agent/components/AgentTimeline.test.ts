@@ -23,6 +23,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick, ref, type App as VueApp } from 'vue'
 import AgentTimeline, { type AgentTimelineLabels } from './AgentTimeline.vue'
 import type { AgentTimelineEntry } from '../services/agent-timeline'
+import { setLocale, t } from '../../../i18n'
 
 const LABELS: AgentTimelineLabels = {
   aria: 'Agent transcript',
@@ -80,6 +81,10 @@ const ROWS: readonly AgentTimelineEntry[] = [
 ]
 
 let mounted: VueApp[] = []
+
+// The find bar reads its own sentences from the catalogue, so the locale is pinned rather than
+// left to whatever the machine's storage says.
+setLocale('en')
 
 afterEach(() => {
   mounted.forEach((app) => app.unmount())
@@ -291,8 +296,7 @@ describe('the transcript’s way to the reader’s own message', () => {
   })
 })
 
-describe('what a turn carried', () => {
-  it('is drawn on the reader’s own row, named as the chip named it', () => {
+describe('what a turn carried', () => {  it('is drawn on the reader’s own row, named as the chip named it', () => {
     // The composer's strip goes with the draft, so this row is the only place left that says the
     // model was given a file. Drawn per name rather than as a count: "2 files" tells a reader who
     // is looking for the diagram they sent nothing about whether it is the one that arrived.
@@ -327,5 +331,153 @@ describe('what a turn carried', () => {
     ])
 
     expect(host.querySelector('[data-row-files]')).toBeNull()
+  })
+})
+
+/**
+ * The transcript's find bar, driven from the control the reader presses.
+ *
+ * What is asserted here is everything that is *in the document*: the control, the bar, the marks,
+ * the count, the sentence for a query that matched nothing, and the unfolding a hit inside folded
+ * reasoning needs. What is NOT here is where the container ends up — jsdom has no layout, so
+ * `getBoundingClientRect` is all zeroes and a scroll write is invisible; the WebKit probe
+ * (`e2e/webkit/agent-search-phase.mjs`) is where landing on a hit is measured, in the engine that
+ * ships, and where "a rescan does not move a reader" is measurable at all.
+ */
+describe('the transcript’s find bar', () => {
+  /** One engine answer. A function rather than a table of literals: every test below is about a
+   *  different arrangement of hits. */
+  const answer = (id: number, text: string): AgentTimelineEntry => ({
+    kind: 'text',
+    id,
+    runId: 'run-1',
+    text,
+  })
+
+  const searchToggle = (host: HTMLElement): HTMLButtonElement | null =>
+    host.querySelector<HTMLButtonElement>('[data-timeline-control="search"]')
+  const field = (host: HTMLElement): HTMLInputElement | null =>
+    host.querySelector<HTMLInputElement>('[data-conversation-search]')
+
+  /** Open the bar the way the reader does, and type a query into it the way a browser does. */
+  async function find(host: HTMLElement, text: string): Promise<void> {
+    searchToggle(host)!.click()
+    await nextTick()
+    const input = field(host)
+    if (input === null) throw new Error('the find bar did not open')
+    input.value = text
+    input.dispatchEvent(new Event('input'))
+    for (let i = 0; i < 3; i += 1) await nextTick()
+  }
+
+  it('opens from the control row, on an empty box with focus in it', async () => {
+    // FAILS IF: the control is not drawn (the row this closes: a search that exists and has no
+    // gesture), or the bar opens somewhere the reader cannot type into it.
+    const { host } = mountTimeline()
+    expect(searchToggle(host)).not.toBeNull()
+    expect(field(host)).toBeNull()
+
+    searchToggle(host)!.click()
+    await nextTick()
+
+    expect(field(host)).not.toBeNull()
+    expect(searchToggle(host)?.getAttribute('aria-pressed')).toBe('true')
+    expect(document.activeElement).toBe(field(host))
+  })
+
+  it('marks every hit in the row it was found in, and counts them', async () => {
+    const { host } = mountTimeline([
+      { kind: 'user', id: 1, runId: null, text: 'the plan and the plan again', origin: 'host', attachments: [] },
+      answer(2, 'no mention here'),
+    ])
+
+    await find(host, 'plan')
+
+    const marks = [...host.querySelectorAll('mark')]
+    expect(marks.map((mark) => mark.textContent)).toEqual(['plan', 'plan'])
+    // The count is the reader's answer to "how many, and which one am I on", one-based.
+    expect(host.querySelector('[data-search-count]')?.textContent?.trim()).toBe('1/2')
+  })
+
+  it('walks the hits with the arrows, and the marked one moves with them', async () => {
+    const { host } = mountTimeline([
+      answer(1, 'plan'),
+      answer(2, 'plan'),
+      answer(3, 'plan'),
+    ])
+    await find(host, 'plan')
+
+    /** Which mark is the one the reader is on — its index among the row's own marks. */
+    const activeAt = (): number =>
+      [...host.querySelectorAll('mark')].findIndex((mark) => mark.dataset.agentHit === 'active')
+    expect(activeAt()).toBe(0)
+    expect(host.querySelector('[data-search-count]')?.textContent?.trim()).toBe('1/3')
+
+    host.querySelector<HTMLButtonElement>('[data-search-step="next"]')!.click()
+    await nextTick()
+    expect(activeAt()).toBe(1)
+
+    host.querySelector<HTMLButtonElement>('[data-search-step="prev"]')!.click()
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('[data-search-step="prev"]')!.click()
+    await nextTick()
+    // Backwards from the first hit is the last one: the arrows wrap, which is what a reader
+    // walking a list of matches expects and what Zed's own arithmetic does.
+    expect(activeAt()).toBe(2)
+    expect(host.querySelector('[data-search-count]')?.textContent?.trim()).toBe('3/3')
+  })
+
+  it('answers a query that matched nothing with a sentence and no marks', async () => {
+    const { host } = mountTimeline()
+    await find(host, 'nowhere-at-all')
+
+    expect(host.querySelectorAll('mark').length).toBe(0)
+    expect(host.querySelector('[data-search-count]')).toBeNull()
+    expect(host.querySelector('[data-search-none]')?.textContent?.trim()).toBe(
+      t('agent.panel.timeline.search.noMatch'),
+    )
+  })
+
+  it('unfolds folded reasoning when a hit lands inside it', async () => {
+    // The deliberate departure from Zed's scan, made reachable: reasoning is searched while it is
+    // folded, so landing on a hit in it has to open the row — otherwise the reader is taken to a
+    // row whose matching text is not on screen, which is the hit that cannot be found.
+    const { host } = mountTimeline([
+      { kind: 'thought', id: 1, runId: 'run-1', text: 'the engine considered the plan' },
+    ])
+    const head = (): HTMLButtonElement => host.querySelector<HTMLButtonElement>('.agent-thought-head')!
+    expect(head().getAttribute('aria-expanded')).toBe('false')
+    expect(host.querySelector('.agent-thought-text')).toBeNull()
+
+    await find(host, 'considered')
+
+    expect(head().getAttribute('aria-expanded')).toBe('true')
+    expect(host.querySelector('.agent-thought-text mark')?.textContent).toBe('considered')
+  })
+
+  it('takes the marks away when the bar closes, and leaves the toggle unpressed', async () => {
+    // A query nobody can see the box for is a highlighted transcript with no control left to
+    // explain it — so closing gives up the query, not just the row.
+    const { host } = mountTimeline([answer(1, 'a plan and a plan')])
+    await find(host, 'plan')
+    expect(host.querySelectorAll('mark').length).toBeGreaterThan(0)
+
+    host.querySelector<HTMLButtonElement>('[data-search-close]')!.click()
+    await nextTick()
+
+    expect(field(host)).toBeNull()
+    expect(host.querySelectorAll('mark').length).toBe(0)
+    expect(searchToggle(host)?.getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('searches the engine’s own facts on a tool call’s row', async () => {
+    // The header is drawn, so a hit there is a hit the row shows — and it is painted where the
+    // reader can see which part of the call matched.
+    const { host } = mountTimeline()
+    await find(host, 'notes/2026-09/a.md')
+
+    const row = host.querySelector('.agent-tool')
+    expect(row?.querySelectorAll('mark').length).toBe(2)
+    expect(row?.querySelector('[data-agent-hit="active"]')?.textContent).toBe('notes/2026-09/a.md')
   })
 })

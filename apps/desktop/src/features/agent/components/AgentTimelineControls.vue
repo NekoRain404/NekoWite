@@ -52,6 +52,15 @@ export interface AgentTimelineControlLabels {
  * ours are drawn whenever they have a target, because neither of them is destructive and a
  * control that disappears mid-turn is a control the reader has to re-find.
  *
+ * **The fourth control opens the transcript's find bar** (Zed: `agent::ToggleSearch`, `ctrl-f` in
+ * its thread view, whose bar is `conversation_view/thread_search_bar.rs`). It is the third way
+ * through a long log — after the way back to the end and the two jumps — and it belongs beside
+ * them for that reason: a reader who is looking for a line they remember is not scrolling to it,
+ * they are searching for it. It is a toggle rather than a one-shot because the bar it opens takes
+ * a row of the transcript's own height, and the same control has to be able to give that back.
+ * Its two sentences come from the catalogue rather than from the label tree — see
+ * {@link searchTitle}.
+ *
  * **It is placed here rather than in the composer's control row**, which is where Zed puts the
  * follow switch, for two reasons that are both about this panel: that row is the engine's own
  * option row (`AgentConfigRow`, drawn from what the session reported) and its width budget is
@@ -73,9 +82,10 @@ export interface AgentTimelineControlLabels {
  * and a control whose press does nothing is worse than an absent one.
  */
 import { computed, onBeforeUnmount, ref } from 'vue'
-import { ArrowDown, ArrowUp, Check, Copy, Crosshair, Reply } from 'lucide-vue-next'
+import { ArrowDown, ArrowUp, Check, Copy, Crosshair, Reply, Search } from 'lucide-vue-next'
 import { copyToClipboard } from '../services/agent-clipboard'
 import { notifyError } from '../../../services/errors'
+import { t } from '../../../i18n'
 
 const props = defineProps<{
   /** Whether arrivals are followed. The container's own state, not a second opinion. */
@@ -94,6 +104,8 @@ const props = defineProps<{
   /** Whether the reader has said anything, which is whether there is anywhere for the
    *  go-to-my-last-message control to go. */
   hasUserMessage: boolean
+  /** Whether the transcript's find bar is open — the state the search control is drawn in. */
+  searching: boolean
   labels: AgentTimelineControlLabels
 }>()
 
@@ -106,12 +118,28 @@ const emit = defineEmits<{
   toUser: []
   /** Take the reader to the top of the log. */
   toTop: []
+  /** Open the find bar, or close it if it is already open. */
+  search: []
 }>()
 
 /** What pressing the switch will do, which is the tooltip a toggle carries while its state is
  *  already on screen as `aria-pressed`. */
 const followTitle = computed(() =>
   props.following ? props.labels.followStop : props.labels.follow,
+)
+
+/**
+ * The find control's own two sentences, read here rather than handed in through the label tree.
+ *
+ * It is the direction this feature's newer components take (`AgentToolDiff.vue`,
+ * `AgentCommandMenu.vue`): the tree this row receives is assembled one level up in the rail body,
+ * and a control added here would otherwise be a key that level has to grow for a sentence only
+ * this file draws. The labels above stay props because they were props.
+ */
+const searchTitle = computed(() =>
+  props.searching
+    ? t('agent.panel.timeline.search.close')
+    : t('agent.panel.timeline.search.open'),
 )
 
 /**
@@ -199,6 +227,27 @@ onBeforeUnmount(() => {
       @click="emit('toTop')"
     >
       <ArrowUp
+        :size="13"
+        :stroke-width="1.8"
+        aria-hidden="true"
+      />
+    </button>
+    <!-- The find bar's control, beside the two ways around the log because it is the third one:
+         it is where a reader who is looking for a line rather than scrolling to it goes. It is
+         drawn whether or not the transcript has anything to find, which is the difference between
+         this control and the bar it opens — the bar appears only once a query exists to answer
+         (`AgentTimeline.vue`), and a control that came and went with the transcript's own length
+         would be one the reader has to look for. -->
+    <button
+      class="agent-control"
+      type="button"
+      data-timeline-control="search"
+      :aria-pressed="searching"
+      :title="searchTitle"
+      :aria-label="searchTitle"
+      @click="emit('search')"
+    >
+      <Search
         :size="13"
         :stroke-width="1.8"
         aria-hidden="true"

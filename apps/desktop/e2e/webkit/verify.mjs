@@ -335,6 +335,21 @@ export function verify(results) {
     )
 
     if (settled) {
+      // FAILS IF: a transcript with no rows offers a find box. There is nothing to narrow and
+      // nothing to count, so the control is not drawn — the same decision the history popup makes
+      // for its own box (`AgentSessionHistoryHead.vue`'s `searchable`, and `thread_search_bar.rs`
+      // never being mounted at all before `ctrl-f`). Read at the one moment in the run when the
+      // log is empty, because afterwards it never is again.
+      c.run(
+        'agent search: a transcript with no rows offers no find box',
+        `the log held ${boot.emptyTranscript?.rows ?? '?'} row(s); the find control is ` +
+          `${boot.emptyTranscript?.control === true ? 'DRAWN' : 'not drawn'} and the bar is ` +
+          `${boot.emptyTranscript?.bar === true ? 'DRAWN' : 'not drawn'}`,
+        boot.emptyTranscript?.rows === 0 &&
+          boot.emptyTranscript?.control === false &&
+          boot.emptyTranscript?.bar === false,
+      )
+
       const held = agent.held ?? {}
       const trace = held.trace ?? {}
       // FAILS IF: the panel pins the container to the end while the reader is away from it —
@@ -560,6 +575,195 @@ export function verify(results) {
         controls.failure === undefined &&
           controls.transcript?.userRowId !== null &&
           controls.toUser?.read?.anchorId === controls.transcript?.userRowId,
+      )
+
+      // ---- The transcript's own find bar -------------------------------------
+      //
+      // The audit's row 12, second half: a search over what the reader is looking at. Four things
+      // are decided here and nothing else is: that the control is reachable and the bar opens
+      // without moving the reader, that the count the bar shows is the number of marks the
+      // transcript paints (a count that lies is worse than none), that landing on a hit puts it
+      // inside the log AND leaves the reader's own scroll alone afterwards, and that arrivals
+      // while the reader is on a hit do not take them off it. Every one of them is read off the
+      // page's own geometry — see `agent-search-phase.mjs`.
+      const search = agent.search ?? {}
+      const opened = search.opened ?? {}
+      const openedMoved = opened.moved ?? null
+      const toggleBefore = search.before?.toggle ?? null
+
+      // FAILS IF: the control is not drawn, or is drawn where a pointer cannot reach it — the
+      // failure mode the whole audit exists for (a search built and reachable from nowhere).
+      c.run(
+        'agent search: the transcript carries a find control a pointer can press',
+        search.failure ??
+          `the control is ${toggleBefore ? 'on screen' : 'absent'} at ` +
+            `${JSON.stringify(toggleBefore ? { top: toggleBefore.top, left: toggleBefore.left, w: toggleBefore.width } : null)}, ` +
+            `pressable ${toggleBefore?.inViewport ?? '?'}, pressed ${JSON.stringify(toggleBefore?.pressed ?? null)}; ` +
+            `the press was a real click (${JSON.stringify(search.click ?? null)}); afterwards the bar is ` +
+            `${opened.state?.bar ? `at ${opened.state.bar.top}–${opened.state.bar.bottom}` : 'absent'} and the log starts at ` +
+            `${opened.state?.log?.top ?? '?'} — the bar sits above it (${JSON.stringify(opened.aboveLog ?? null)}) rather than over it`,
+        search.failure === undefined &&
+          toggleBefore?.inViewport === true &&
+          toggleBefore?.disabled === false &&
+          opened.state?.field !== null && opened.state?.field !== undefined &&
+          opened.state?.bar !== null && opened.state?.bar !== undefined &&
+          opened.aboveLog === true,
+      )
+
+      // FAILS IF: opening the bar moves the reader. The bar takes its own height out of the log,
+      // which is a height change above every row — the ruling §5.2 「高度变化保持可见内容锚点」 says
+      // the row the reader is on keeps its place, and this is the gesture that produces it.
+      c.run(
+        'agent search: opening the bar does not move the reader',
+        search.failure ??
+          `the reader's row went from ${JSON.stringify(openedMoved?.anchorBefore ?? null)} to ` +
+            `${JSON.stringify(openedMoved?.anchorAfter ?? null)} (changed ${JSON.stringify(openedMoved?.anchorChanged ?? null)}), ` +
+            `its offset ${JSON.stringify(openedMoved?.offsetDelta ?? null)}px, the container ` +
+            `${JSON.stringify(openedMoved?.scrollTopDelta ?? null)}px`,
+        search.failure === undefined &&
+          openedMoved?.anchorChanged === false &&
+          openedMoved?.offsetDelta !== null &&
+          Math.abs(openedMoved.offsetDelta) <= 1,
+      )
+
+      // FAILS IF: the counter is a number the page disagrees with — the hit count that lies. The
+      // two halves are read from different sides on purpose: the count from the bar's own text,
+      // the marks from the transcript's DOM, and one active mark (not zero, which would mean
+      // nothing was landed on, and not two, which would make "go to the hit" ambiguous).
+      const answer = search.answer?.reading ?? {}
+      const afterEnter = search.key?.afterEnter ?? {}
+      c.run(
+        'agent search: the count is the number of hits the transcript paints',
+        search.failure ??
+          `the bar says ${JSON.stringify(search.answer?.state?.count ?? null)} over ${answer.painted ?? '?'} painted ` +
+            `mark(s) across ${answer.rows ?? '?'} row(s) — ${answer.agrees === true ? 'they agree' : 'they do NOT agree'}; ` +
+            `${JSON.stringify(answer.activeCount ?? null)} mark(s) claim to be the active one; the reader typed ` +
+            `${JSON.stringify(search.key?.typed ?? null)}; a real Enter moved the index to ` +
+            `${JSON.stringify(afterEnter.index ?? null)} of ${JSON.stringify(afterEnter.claimed ?? null)} ` +
+            `(marks stayed ${JSON.stringify(afterEnter.painted ?? null)})`,
+        search.failure === undefined &&
+          answer.agrees === true &&
+          (answer.claimed ?? 0) >= 2 &&
+          answer.activeCount === 1 &&
+          afterEnter.claimed === answer.claimed,
+      )
+
+      // FAILS IF: the arrow moves the index and leaves the reader where they were — the hit they
+      // were taken to is then a hit they cannot see. The verdict is the active mark's own box
+      // against the log's box, which is the only reading that says the reader can look at it —
+      // and it is read from a reader parked at the END of the log, with the precondition that the
+      // hit was off screen, because a hit that was already on screen makes both readings true for
+      // a control that moved nothing.
+      const landing = search.landing ?? {}
+      c.run(
+        'agent search: landing on a hit puts it inside the log',
+        search.failure ??
+          `the reader was parked at ${landing.before?.scroller?.scrollTop ?? '?'} of ` +
+            `${landing.before?.scroller?.max ?? '?'} with the hit ${landing.before?.activeInTimeline === true ? 'on screen' : 'off screen'}; ` +
+            `the arrow took the index from ${JSON.stringify(landing.before?.activeIndex ?? null)} to ` +
+            `${JSON.stringify(landing.after?.activeIndex ?? null)}; the container moved ` +
+            `${JSON.stringify(landing.movedBy?.scrollTopDelta ?? null)}px and the active mark is now ` +
+            `${landing.after?.activeInTimeline === true ? 'inside' : 'outside'} the log's box ` +
+            `(${JSON.stringify(landing.after?.activeBox ?? null)} against ${JSON.stringify(landing.after?.log ?? null)}) ` +
+            `holding ${JSON.stringify(landing.after?.activeText ?? null)}`,
+        search.failure === undefined &&
+          landing.before?.activeInTimeline === false &&
+          landing.activeIndexMoved === true &&
+          Math.abs(landing.movedBy?.scrollTopDelta ?? 0) >= 50 &&
+          landing.after?.activeInTimeline === true &&
+          (landing.after?.activeCount ?? 0) === 1,
+      )
+
+      // FAILS IF: the landing leaves something running that fights the reader's own hand — the
+      // ruling 「必须可中断、可反向」. The landing is one instant write, so what is measured is what
+      // follows it: a wheel the engine acts on, the container settling where the wheel left it,
+      // and the search not pulling it back to its hit.
+      const afterLanding = search.after ?? {}
+      c.run(
+        'agent search: the reader’s own scroll after a landing holds',
+        search.failure ??
+          `the wheel (${JSON.stringify(afterLanding.wheel ?? null)}) moved the container by ` +
+            `${JSON.stringify(afterLanding.landed?.scrollTopDelta ?? null)}px from where the landing left it, ` +
+            `and it then ${afterLanding.quiet?.settled === true ? `held for ${afterLanding.quiet.frames ?? '?'} frame(s)` : 'was still moving when the budget ran out'} ` +
+            `at ${afterLanding.quiet?.scrollTop ?? '?'}/${afterLanding.state?.scroller?.max ?? '?'}; the active hit stayed ` +
+            `${JSON.stringify(afterLanding.state?.activeIndex ?? null)} and the count still says ` +
+            `${JSON.stringify(afterLanding.state?.count ?? null)}`,
+        search.failure === undefined &&
+          afterLanding.wheel?.ok === true &&
+          afterLanding.quiet?.settled === true &&
+          afterLanding.landed?.scrollTopDelta !== null &&
+          Math.abs(afterLanding.landed.scrollTopDelta) >= 8 &&
+          afterLanding.state?.activeIndex === landing.after?.activeIndex,
+      )
+
+      // FAILS IF: a rescan moves the reader. The engine streams, the rows are rebuilt on every
+      // frame of it, and the query is rescanned with them; a scan that scrolled to its active hit
+      // each time would show up here as moved frames — the same instrument and the same verdict
+      // as the parked reader's half of this probe, with a search running beside it.
+      const heldSearch = search.held ?? {}
+      const heldTrace = heldSearch.trace ?? {}
+      c.run(
+        'agent search: arrivals do not move a reader who is on a hit',
+        search.failure ??
+          `${heldTrace.movedFrames ?? '?'} of ${heldTrace.frames ?? '?'} frames moved the reader ` +
+            `(offset ${JSON.stringify(heldTrace.offsetRange ?? null)}, baseline ${heldTrace.baseline ?? null}, ` +
+            `scrollTop ${JSON.stringify((heldTrace.scrollTop ?? []).map((s) => s.value))}); ` +
+            `arrivals: ${heldSearch.live?.why ?? 'no trace'}; the hit the reader was on is ` +
+            `${JSON.stringify(heldSearch.state?.activeText ?? null)} at index ${JSON.stringify(heldSearch.state?.activeIndex ?? null)} ` +
+            `and the count now says ${JSON.stringify(heldSearch.state?.count ?? null)} ` +
+            `(${heldSearch.answer?.agrees === true ? 'still agreeing with the page' : 'DISAGREEING with the page'})`,
+        search.failure === undefined &&
+          heldSearch.live?.holds === true &&
+          heldTrace.movedFrames === 0 &&
+          heldSearch.answer?.agrees === true &&
+          heldSearch.state?.activeIndex === afterLanding.state?.activeIndex,
+      )
+
+      // FAILS IF: a query with no answer is answered with a number, or a closed bar leaves its
+      // marks on the transcript. Both are the same rule read twice — the answer to a query is
+      // either the hits or a sentence, and the highlights belong to the box that explains them.
+      const none = search.none ?? {}
+      c.run(
+        'agent search: no answer is a sentence, and closing takes the marks with it',
+        search.failure ??
+          `a query nothing carries left ${none.state?.marks ?? '?'} mark(s), a count of ` +
+            `${JSON.stringify(none.state?.count ?? null)} and the sentence ` +
+            `${JSON.stringify(none.afterClear === undefined ? null : none.state?.none ?? null)}; ` +
+            `a real press on the close control left the field ` +
+            `${none.afterClose?.field === null || none.afterClose?.field === undefined ? 'gone' : 'on screen'}, ` +
+            `${none.afterClose?.marks ?? '?'} mark(s), and the control ` +
+            `${JSON.stringify(none.afterClose?.toggle?.pressed ?? null)}`,
+        search.failure === undefined &&
+          none.state?.marks === 0 &&
+          none.state?.count === null &&
+          typeof none.state?.none === 'string' &&
+          none.state.none.length > 0 &&
+          (none.afterClose?.field === null || none.afterClose?.field === undefined) &&
+          none.afterClose?.marks === 0 &&
+          none.afterClose?.toggle?.pressed === 'false' &&
+          none.afterClose?.bar === null,
+      )
+
+      // FAILS IF: the bar cannot shrink — the composer's bar lost its send button past the
+      // panel's edge below 268px (the defect `fitPhase` measures), and this row carries four
+      // controls in the same 204px of panel. Both the row's own overflow and the engine's hit
+      // test at the close control's centre are read, because a control that is drawn but lands
+      // under something else is a control a pointer cannot press.
+      const narrow = search.narrow ?? {}
+      c.run(
+        'agent search: the bar fits at the rail’s narrowest width',
+        search.failure ??
+          `at 220px the panel is ${narrow.panel?.log?.width ?? '?'}px wide; the bar ` +
+          `${narrow.state?.bar?.fits === true ? 'fits' : `overflows (${narrow.state?.bar?.scrollWidth ?? '?'} > ${narrow.state?.bar?.clientWidth ?? '?'})`}; ` +
+          `the close control is ${narrow.panel?.insidePanel === true ? 'inside' : 'OUTSIDE'} the log's box ` +
+          `(right ${narrow.panel?.close?.right ?? '?'} against ${narrow.panel?.log?.right ?? '?'}) and ` +
+          `${narrow.panel?.reachable === true ? 'is what the engine hit-tests at its centre' : 'is NOT what the engine finds at its centre'}; ` +
+          `the rail was left at ${JSON.stringify(narrow.restored ?? null)}px`,
+        search.failure === undefined &&
+          narrow.state?.bar?.fits === true &&
+          narrow.panel?.insidePanel === true &&
+          narrow.panel?.reachable === true &&
+          narrow.restored === 300,
       )
 
       // ---- The transcript as a keyboard-reachable surface --------------------

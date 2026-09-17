@@ -13,6 +13,7 @@
  * adds later fails to typecheck here rather than rendering as a blank word.
  */
 import type { AgentToolStatus } from '../../../platform/gateways/agent-contracts'
+import type { AgentHitRange } from './AgentHighlightedText.vue'
 
 export interface AgentToolLabels {
   /** What to call each state the contract allows, e.g. queued / running / failed. */
@@ -55,9 +56,15 @@ export interface AgentToolLabels {
  *    the transcript moving on its own (§5.1 「长输出折叠并按需加载，仍能查看错误」).
  *  - **status is word and icon together**, never colour alone (§5.3). Colour only shifts the
  *    icon and the word: a reader who cannot tell the two reds apart still reads "Failed".
+ *
+ * `data-row` is the timeline's own identity for this row, and it is here rather than only on the
+ * rows the timeline draws itself: every row of the transcript answers to one name (the store's id
+ * for it), and a tool row that answered to none was the one kind a `[data-row]` lookup could not
+ * find — including the find bar's own reading of how many rows carry a hit.
  */
 import { computed, ref } from 'vue'
 import AgentToolDiff from './AgentToolDiff.vue'
+import AgentHighlightedText from './AgentHighlightedText.vue'
 import {
   Brain,
   ChevronDown,
@@ -83,6 +90,21 @@ const props = defineProps<{
   /** The row to draw, exactly as the store reduced it. */
   entry: AgentToolEntry
   labels: AgentToolLabels
+  /**
+   * The find bar's hits, one pair per string this row's header draws — the name it leads with and
+   * the target beside it. Absent when no row is marked, which is every row while the bar is shut:
+   * the timeline hands out one shared absence so a search that does not touch this row cannot
+   * re-render it.
+   *
+   * Only the header. The body's blocks are drawn inside their own scroll boxes and the change is
+   * folded by its own disclosure, so a hit in one of them is not a hit the transcript's scroll can
+   * bring the reader to — see `services/agent-conversation-search.ts`, which is where that line is
+   * drawn and where it is justified.
+   */
+  nameHits?: readonly AgentHitRange[]
+  nameActive?: number
+  targetHits?: readonly AgentHitRange[]
+  targetActive?: number
 }>()
 
 const emit = defineEmits<{
@@ -154,6 +176,7 @@ function toggle(): void {
 <template>
   <div
     class="agent-tool"
+    :data-row="entry.id"
     :data-status="entry.status"
     :data-kind="entry.toolKind"
     :data-call="entry.toolCallId"
@@ -172,12 +195,20 @@ function toggle(): void {
         :size="13"
         :stroke-width="1.8"
       />
-      <span class="agent-tool-name">{{ script }}</span>
+      <span class="agent-tool-name"><AgentHighlightedText
+        :text="script"
+        :hits="nameHits"
+        :active="nameActive ?? -1"
+      /></span>
       <span
         v-if="target"
         class="agent-tool-target"
         :title="title"
-      >{{ target }}</span>
+      ><AgentHighlightedText
+        :text="target"
+        :hits="targetHits"
+        :active="targetActive ?? -1"
+      /></span>
       <span class="agent-tool-status">
         <component
           :is="statusIcon"

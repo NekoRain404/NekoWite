@@ -69,17 +69,20 @@ import {
 } from './agent-scroll-driver.mjs'
 import { distinct, frameStats, liveTrace, summariseFollow, summariseHeld } from './agent-scroll-readings.mjs'
 import { elapsedPhase, followSwitchPhase, transcriptControlsPhase } from './agent-controls-phase.mjs'
+import { searchPhase } from './agent-search-phase.mjs'
 
 /**
- * `--violate pin` / `--violate width`: a deliberate violation, so the instrument can be shown
- * failing on the thing it claims to measure.
+ * `--violate pin` / `--violate width` / `--violate search`: a deliberate violation, so the
+ * instrument can be shown failing on the thing it claims to measure.
  *
  * The brief this probe answers asks for a red rather than for a promise of one, and the only
  * honest way to produce it without touching application source is to break the property in the
- * page — a container that pins itself, or a body whose width sweeps across frames. Each
- * violation runs ONE phase and returns, so the run is a focused red: the same check, in the
- * same words, decided the other way. The output names what was injected, so a run under this
- * flag can never be mistaken for a measurement of the product.
+ * page — a container that pins itself, a body whose width sweeps across frames, or a find control
+ * whose press reaches nothing. `pin` and `width` run ONE phase and return, so their red is focused;
+ * `search` deliberately does not, because the bar it breaks is the only thing the later phases do
+ * not use — a run under it decides the search checks against a window with no box in it and leaves
+ * every other check measuring what it always measured. The output names what was injected, so a
+ * run under this flag can never be mistaken for a measurement of the product.
  */
 function violation() {
   const i = process.argv.indexOf('--violate')
@@ -185,6 +188,19 @@ export const agentScrollProbe = {
     }
     out.boot.loadAfterMount = load()
     out.boot.mounted = await wd.execute('return window.__nkwPanelState()')
+    // The find bar's own control, read here because this is the only moment in the run when the
+    // transcript is EMPTY. The bar is drawn only when there is something to search — a field over
+    // a log with no rows is a control that cannot act — and the same decision is what the history
+    // popup keeps for its own box (`AgentSessionHead`'s `searchable`). Read from the DOM rather
+    // than from the component, because "not drawn when there is nothing to narrow" is a claim
+    // about the window.
+    out.boot.emptyTranscript = await wd.execute(
+      `const control = document.querySelector('[data-timeline-control="search"]');
+       const bar = document.querySelector('[data-agent-search]');
+       const rows = document.querySelector('${TIMELINE}');
+       return { rows: rows ? rows.children.length : null,
+                control: Boolean(control), bar: Boolean(bar) }`,
+    )
     out.boot.listeners = await wire(wd)
 
     // A live turn, taken through the composer: the panel's own send path is what names a run,
@@ -433,6 +449,14 @@ export const agentScrollProbe = {
     // driver's own pointer rather than through the page's `click()`.
     out.switch = await followSwitchPhase(wd, RUN)
     out.controls = await transcriptControlsPhase(wd)
+
+    // ---- The find bar, from the control beside them ---------------------------
+    //
+    // The transcript's third way around a long log, and the only one that had no gesture at all
+    // (the audit's row 12, second half). Its own file at the line budget, and it runs here because
+    // a log with something in it already exists and the reader is parked somewhere in the middle
+    // — which is the state every claim in that phase is about.
+    out.search = await searchPhase(wd, RUN, violated)
 
     // ---- The transcript as a surface the keyboard can reach -------------------
     //

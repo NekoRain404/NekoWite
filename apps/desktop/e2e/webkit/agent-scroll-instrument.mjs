@@ -480,6 +480,101 @@ window.__nkwPanel = function (opts, done) {
 };
 
 /**
+ * The transcript's find bar, as the DOM has it — plus the two things a count can lie about.
+ *
+ * The reading is deliberately taken from the *drawn* page rather than from any state the probe
+ * could reach for: 'marks' is how many mark elements the transcript actually paints, 'rowsMarked'
+ * is how many rows carry one, and 'count' is the number the bar says out loud. The check that
+ * matters is those agreeing — a counter that says "1/40" over a transcript with three marks is
+ * the failure this phase exists to catch, and it is invisible to anything that reads the hit list
+ * instead of the page.
+ *
+ * 'activeIndex' is the active mark's position among all the marks, which is what "the arrows
+ * moved the reader" means as a reading, and 'activeInTimeline' is whether that mark's box is
+ * inside the container's box — the difference between landing on a hit and merely selecting it.
+ */
+window.__nkwSearch = function () {
+  const box = function (el) {
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    const round = function (n) { return Math.round(n * 10) / 10; };
+    // 'inViewport' travels with every box: a control that is drawn but whose box is off the
+    // window is not one a pointer can reach, and the box's own numbers alone do not say so.
+    return { left: round(r.left), top: round(r.top), right: round(r.right), bottom: round(r.bottom),
+             width: round(r.width), height: round(r.height),
+             inViewport: r.width > 0 && r.left >= 0 && r.top >= 0 &&
+                         r.right <= innerWidth && r.bottom <= innerHeight };
+  };
+  const toggle = document.querySelector('[data-timeline-control="search"]');
+  const bar = document.querySelector('[data-agent-search]');
+  const field = document.querySelector('[data-conversation-search]');
+  const sheet = document.querySelector('${TIMELINE}');
+  const marks = Array.from(document.querySelectorAll('${TIMELINE} mark'));
+  const active = document.querySelector('${TIMELINE} [data-agent-hit="active"]');
+  const counter = document.querySelector('[data-search-count]');
+  const none = document.querySelector('[data-search-none]');
+  const sheetBox = box(sheet);
+  const activeBox = box(active);
+  const seenRows = {};
+  marks.forEach(function (mark) {
+    const row = mark.closest('[data-row]');
+    if (row) seenRows[row.dataset.row] = true;
+  });
+  const following = document.querySelector('${FOLLOW}');
+  return {
+    toggle: toggle ? Object.assign(box(toggle), {
+      pressed: toggle.getAttribute('aria-pressed'),
+      label: toggle.getAttribute('aria-label'),
+      disabled: Boolean(toggle.disabled),
+    }) : null,
+    bar: bar ? Object.assign(box(bar), {
+      clientWidth: bar.clientWidth, scrollWidth: bar.scrollWidth,
+      fits: bar.scrollWidth <= bar.clientWidth,
+    }) : null,
+    log: sheetBox,
+    field: field ? Object.assign(box(field), { value: field.value }) : null,
+    close: box(document.querySelector('[data-search-close]')),
+    clear: box(document.querySelector('[data-search-clear]')),
+    stepNext: (function () { const el = document.querySelector('[data-search-step="next"]');
+      return el ? Object.assign(box(el), { disabled: Boolean(el.disabled) }) : null; })(),
+    count: counter ? counter.textContent.trim() : null,
+    countLabel: counter ? counter.getAttribute('aria-label') : null,
+    none: none ? none.textContent.trim() : null,
+    marks: marks.length,
+    markTexts: marks.slice(0, 8).map(function (m) { return m.textContent; }),
+    rowsMarked: Object.keys(seenRows).length,
+    activeCount: document.querySelectorAll('${TIMELINE} [data-agent-hit="active"]').length,
+    activeText: active ? active.textContent : null,
+    activeIndex: active ? marks.indexOf(active) : null,
+    activeBox: activeBox,
+    activeInTimeline: Boolean(activeBox && sheetBox) &&
+      activeBox.top >= sheetBox.top - 1 && activeBox.bottom <= sheetBox.bottom + 1,
+    following: following ? following.getAttribute('aria-pressed') : null,
+    scroller: window.__nkwRead('${TIMELINE}'),
+  };
+};
+
+/**
+ * What one read of the find bar says about the *answer*, as opposed to what is on screen.
+ *
+ * 'claimed' is the number the counter is showing, 'painted' is how many marks the transcript has,
+ * and 'index' is the one-based position the counter reads. Splitting them out is what lets a
+ * check say "the count agrees with the page" rather than asserting on a string.
+ */
+window.__nkwSearchAnswer = function (search) {
+  const at = search || window.__nkwSearch();
+  const parts = at.count === null ? null : at.count.split('/');
+  const claimed = parts ? Number(parts[1]) : null;
+  const index = parts ? Number(parts[0]) : null;
+  return {
+    claimed: claimed, index: index, painted: at.marks, rows: at.rowsMarked,
+    activeIndex: at.activeIndex, activeCount: at.activeCount, none: at.none,
+    agrees: claimed !== null && claimed === at.marks,
+    statesOneHit: at.activeCount === 1,
+  };
+};
+
+/**
  * The transcript's own control row, as the DOM has it.
  *
  * Read as a whole rather than one selector at a time because the row is what a reader sees: a
@@ -695,6 +790,31 @@ window.__nkwViolateNoFocus = function (sel) {
   if (document.activeElement === el) el.blur();
   return { installed: true, removed: had, tabIndex: el.tabIndex,
            what: 'removeAttribute("tabindex") on the transcript container' };
+};
+
+/**
+ * A deliberate violation of the find bar's own gesture: the control is drawn, looks live, and a
+ * real click on it reaches nothing.
+ *
+ * It is the failure the whole audit exists to catch — 「建好了但够不到」 — in its smallest form:
+ * a control whose press does nothing. The press is swallowed in the capture phase at the document,
+ * which is upstream of the button's own Vue listener, so the bar never opens and every reading the
+ * search phase takes afterwards is taken against a transcript with no box in it. Used only under
+ * the probe's own --violate search.
+ */
+window.__nkwViolateSearch = function () {
+  if (window.__nkwSearchSwallowed) return { already: true };
+  window.__nkwSearchSwallowed = true;
+  document.addEventListener('click', function (event) {
+    const target = event.target && event.target.closest
+      ? event.target.closest('[data-timeline-control="search"]')
+      : null;
+    if (!target) return;
+    event.stopPropagation();
+    event.preventDefault();
+    window.__nkwSearchSwallowedPresses = (window.__nkwSearchSwallowedPresses || 0) + 1;
+  }, true);
+  return { installed: true, what: 'swallow every click on the find control before the button sees it' };
 };
 
 /**

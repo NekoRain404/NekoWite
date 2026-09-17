@@ -201,6 +201,27 @@ export const agent = {
           copyFailed: 'The answer could not be copied — the clipboard refused it',
           toUser: 'Go to your last message',
           toTop: 'Go to the beginning',
+          /* The transcript's find box (Zed: `conversation_view/thread_search_bar.rs`, whose
+             placeholder is "Search this thread…"). It searches the conversation on screen, so
+             every sentence here is about *this* one — the history list's box beside it says
+             "these sessions" for the same reason. `count` is the field's own answer to "where am
+             I": the visible form is "3/5", which read aloud is two numbers, so the label says
+             what they are. `noMatch` is the sentence that stands where the count would be, and it
+             is deliberately not "0/0": the reader typed something and the honest answer is a
+             sentence, not a zero. What the search does and does not cover is stated in
+             `services/agent-conversation-search.ts`, and not here — a sentence about the scope of
+             a find box in a 220px rail would be longer than the box. */
+          search: {
+            open: 'Find in this conversation',
+            close: 'Close the search',
+            label: 'Search this conversation',
+            placeholder: 'Search this conversation…',
+            previous: 'Previous match',
+            next: 'Next match',
+            clear: 'Clear the search',
+            count: 'Match {index} of {total}',
+            noMatch: 'No line of this conversation matches',
+          },
           tool: {
             status: {
               pending: 'Queued',
@@ -1345,6 +1366,24 @@ export const agent = {
           copyFailed: '未能复制该回答——剪贴板拒绝了这次操作',
           toUser: '跳到你上一条消息',
           toTop: '跳到开头',
+          /* 记录区的查找框（Zed：`conversation_view/thread_search_bar.rs`，占位文案是
+             "Search this thread…"）。它查的是屏幕上这一段对话，所以每句都写「这段对话」；旁边的
+             历史列表查找框写「这些会话」，理由相同。`count` 是这个框对「我在哪一条」的回答：可见
+             形式是 "3/5"，读出来是两个数字，所以标签要把它们是什么说出来。`noMatch` 是占住计数
+             位置的那句话，它刻意不是 "0/0"——读者确实输入了内容，诚实的回答是一句话而不是一个零。
+             搜索覆盖什么、不覆盖什么写在 `services/agent-conversation-search.ts` 里，不写在这里：
+             220px 宽的侧栏里，一句解释查找框范围的话会比这个框本身还长。 */
+          search: {
+            open: '在这段对话中查找',
+            close: '关闭查找',
+            label: '搜索这段对话',
+            placeholder: '搜索这段对话……',
+            previous: '上一个匹配',
+            next: '下一个匹配',
+            clear: '清除搜索',
+            count: '第 {index} 个匹配，共 {total} 个',
+            noMatch: '这段对话中没有匹配的内容',
+          },
           tool: {
             status: {
               pending: '排队中',

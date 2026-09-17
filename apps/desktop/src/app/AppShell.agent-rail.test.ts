@@ -18,7 +18,7 @@ import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import AppShell from './AppShell.vue'
 import { useSettingsStore } from '../stores/settings'
 import { createMemoryAgentGateway } from '../platform/gateways/memory-agent'
-import { setLocale } from '../i18n'
+import { setLocale, t } from '../i18n'
 import type { AgentComposition } from './agent-composition'
 import type { AgentOpenRequest, AgentSession } from '../platform/gateways/agent-contracts'
 
@@ -565,8 +565,117 @@ describe('the sessions the engine holds, from the panel’s own control', () => 
   })
 })
 
-describe('a refusal, and the way back from it', () => {
-  it('shows the backend\'s own sentence and rolls back to the chat in one click', async () => {
+describe('the transcript’s own find bar, reached from the window', () => {
+  /**
+   * The panel with a conversation in it, produced rather than assembled.
+   *
+   * The rows the search runs over are the product's own: the gateway the rail was composed with
+   * streams a real turn, the store's reducer writes the rows, and the timeline draws them. A
+   * fixture array handed to the component would prove the marks work on a fixture — this is the
+   * assertion that the box the reader can press reaches the words the engine actually sent.
+   */
+  async function shellWithTranscript(): Promise<ReturnType<typeof createMemoryAgentGateway>> {
+    const gateway = createMemoryAgentGateway({ agentId: 'opencode', profileId: 'default' })
+    composeMock.mockReturnValue(fakeComposition({ gateway }).composition)
+    const store = useSettingsStore()
+    store.agentPanel = true
+    shell({})
+    await untilDom(
+      () => document.querySelector('.agent-composer-field') !== null,
+      'the panel and its composer',
+    )
+
+    gateway.script({ chunks: ['The plan lives in notes/plan.md, third paragraph. '] })
+    // The turn is taken through the composer, and that is not decoration: the store is what
+    // starts a run, and a frame for a run the store never began is refused by its own guard
+    // (`agent-event-reducer.ts`, `judgeRun` → `illegal-transition`). A turn sent straight
+    // through the gateway would leave the transcript empty for a reason that has nothing to do
+    // with the search — and it would also be the wrong claim, since the reader cannot send that
+    // way.
+    const field = document.querySelector<HTMLTextAreaElement>('.agent-composer-field')!
+    field.value = 'Where is the plan?'
+    field.dispatchEvent(new Event('input'))
+    await untilDom(
+      () => document
+        .querySelector<HTMLElement>('.agent-composer [data-action="send"]')
+        ?.hasAttribute('disabled') === false,
+      'the send control to be live',
+    )
+    document.querySelector<HTMLElement>('.agent-composer [data-action="send"]')!.click()
+    await untilDom(
+      () => document.querySelector('.agent-row-reply') !== null,
+      'the engine’s answer in the transcript',
+    )
+    return gateway
+  }
+
+  /**
+   * Open the bar from the transcript's own control (if it is not open already) and type a query
+   * into it, waiting for the answer the caller says that query has.
+   *
+   * The expected answer is a parameter rather than "wait for the bar to have answered anything":
+   * the previous query's count is still on screen for a tick after the next one is typed, and a
+   * wait that accepted it would read the stale one.
+   */
+  async function find(text: string, answer: 'count' | 'none'): Promise<void> {
+    if (document.querySelector('[data-conversation-search]') === null) {
+      const control = document.querySelector<HTMLElement>('[data-timeline-control="search"]')
+      if (control === null) throw new Error('the transcript is not drawing a find control')
+      control.click()
+      await untilDom(
+        () => document.querySelector('[data-conversation-search]') !== null,
+        'the find bar',
+      )
+    }
+    const field = document.querySelector<HTMLInputElement>('[data-conversation-search]')!
+    field.value = text
+    field.dispatchEvent(new Event('input'))
+    await untilDom(
+      () => (answer === 'none'
+        ? document.querySelector('[data-search-none]') !== null
+        : document.querySelector('[data-search-count]') !== null),
+      `the bar to answer “${text}” with ${answer === 'none' ? 'its no-match sentence' : 'a count'}`,
+    )
+  }
+
+  it('finds a word of the engine’s own answer, from the control in the transcript', async () => {
+    await shellWithTranscript()
+
+    // A word taken out of the answer as it is drawn, rather than one written here: the assertion
+    // is then about the words the reader can see and not about what this file believes was sent.
+    const answer = document.querySelector('.agent-row-reply')?.textContent ?? ''
+    expect(answer).toContain('third paragraph')
+
+    await find('third paragraph', 'count')
+
+    const marks = [...document.querySelectorAll<HTMLElement>('.agent-row-reply mark')]
+    expect(marks.map((mark) => mark.textContent)).toEqual(['third paragraph'])
+    expect(marks[0].dataset.agentHit).toBe('active')
+    expect(document.querySelector('[data-search-count]')?.textContent?.trim()).toBe('1/1')
+
+    // And a query the conversation does not contain is answered in words, with the transcript
+    // left unmarked: the box says what happened rather than leaving a field and no answer.
+    await find('nothing here says this', 'none')
+    expect(document.querySelectorAll('mark').length).toBe(0)
+    expect(document.querySelector('[data-search-none]')?.textContent?.trim()).toBe(
+      t('agent.panel.timeline.search.noMatch'),
+    )
+  })
+
+  it('searches the reader’s own turn as well as the engine’s', async () => {
+    await shellWithTranscript()
+
+    // The row the store wrote from the reader's own send, rather than one the engine replayed:
+    // the transcript holds both halves of a conversation and the box has to answer for both.
+    await find('Where is the plan?', 'count')
+
+    const marks = [...document.querySelectorAll('.agent-row-user mark')]
+    expect(marks.map((mark) => mark.textContent)).toEqual(['Where is the plan?'])
+    expect(document.querySelector('[data-search-count]')?.textContent?.trim()).toBe('1/1')
+  })
+})
+
+describe('a refusal, and the way back from it', () => {  it('shows the backend\'s own sentence and rolls back to the chat in one click', async () => {
     const fake = fakeComposition({ refuseWith: NO_ENGINE })
     composeMock.mockReturnValue(fake.composition)
     const store = useSettingsStore()
