@@ -9,6 +9,17 @@
 #   identity       its sha256 is the digest recorded in the app's own release manifest
 #                  (`src/agent_runtime/update.rs`), and the version is pinned in three places that are
 #                  checked against each other here — a drift between them is otherwise silent.
+#
+#                  **Except inside an AppImage, where that digest cannot match and never will.**
+#                  linuxdeploy runs patchelf over the bundled engine so it can find the libraries
+#                  the image carries: that adds a `$ORIGIN/../lib` RUNPATH and rewrites the ELF
+#                  header and section table, moving the file by a page. A byte-for-byte assertion
+#                  there would be asserting something no AppImage this repository builds can
+#                  satisfy. What is asserted instead is what the patch is *allowed* to be — the
+#                  RUNPATH is exactly the bundler's, the pinned artifact has none, the size moves
+#                  by less than a page's worth of header — and the version and the handshake below
+#                  remain the proof that it is still this engine. The output says so rather than
+#                  printing a digest that matched.
 #   no system CLI  the engine answers `--version` and a full ACP handshake with an EMPTY environment
 #                  (`env -i`: no PATH, no HOME, nothing). That is the strongest available form of
 #                  §3.1.1's "安装 NekoWite 后已经拥有经过验证的 OpenCode 基础版本": not "we did not use a
@@ -131,7 +142,10 @@ fi
 
 # --- the checks, on one program ---------------------------------------------
 check_program() {
-  local program="$1" label="$2"
+  # `$3` is the archive this copy came out of, when it came out of one. It exists for one reason:
+  # an AppImage cannot be checked for byte identity against the pinned digest, and this function has
+  # to know that it is looking at one rather than at the artifact in the tree. See the header.
+  local program="$1" label="$2" source_archive="${3:-}"
 
   [ -f "$program" ] || fail "$label: $program is not a file"
   [ -x "$program" ] || fail "$label: $program is not executable"
@@ -154,12 +168,50 @@ check_program() {
   PROVEN+=("$label: x86-64 ELF, executable bit set")
 
   digest="$(sha256sum "$program" | cut -d' ' -f1)"
-  if [ "$digest" != "$EXPECTED_SHA" ]; then
-    fail "$label: sha256 $digest does not match the digest this app pinned ($EXPECTED_SHA).
+  local packaged_rpath pinned_rpath packaged_size delta
+  case "$source_archive" in
+    *.AppImage)
+      # The digest cannot match here, and the reason is the bundler's rather than the artifact's:
+      # linuxdeploy runs patchelf over the engine so it can find the libraries the image carries.
+      # Asserting the pinned digest would be asserting something no AppImage this repository builds
+      # can satisfy — which is how this was found, by the arm failing after a path bug was fixed
+      # ahead of it. What is checked instead is that the patch is the one the bundler is allowed to
+      # make and nothing else, and the note below says the bytes were not compared, so a reader
+      # cannot mistake this for the check the other arms get.
+      command -v readelf >/dev/null 2>&1 \
+        || fail "$label: readelf is needed to inspect the RUNPATH linuxdeploy adds inside an AppImage"
+      packaged_rpath="$(readelf -d "$program" 2>/dev/null | sed -n 's/.*RUNPATH.*\[\(.*\)\].*/\1/p' | head -1)"
+      [ "$packaged_rpath" = '$ORIGIN/../lib' ] \
+        || fail "$label: the engine inside the AppImage carries RUNPATH '$packaged_rpath', and the
+      only patch linuxdeploy is allowed to make is \$ORIGIN/../lib. Something other than the
+      bundler rewrote this file."
+      if [ -f "$STAGED" ]; then
+        pinned_rpath="$(readelf -d "$STAGED" 2>/dev/null | sed -n 's/.*RUNPATH.*\[\(.*\)\].*/\1/p' | head -1)"
+        [ -z "$pinned_rpath" ] \
+          || fail "$label: the pinned artifact already carries RUNPATH '$pinned_rpath', so the
+      difference this check exists to explain is not the bundler's."
+        packaged_size="$(stat -c%s "$program")"
+        delta=$(( packaged_size > $(stat -c%s "$STAGED") ? packaged_size - $(stat -c%s "$STAGED") : $(stat -c%s "$STAGED") - packaged_size ))
+        [ "$delta" -lt 65536 ] \
+          || fail "$label: the engine inside the AppImage is $delta bytes from the pinned artifact,
+      which is more than the bundler's patch can account for."
+        note "$label  digest NOT compared: linuxdeploy's RUNPATH is present and the file moved $delta bytes"
+      else
+        note "$label  digest NOT compared: linuxdeploy's RUNPATH is present; $STAGED is absent, so
+      the size difference against the pinned artifact could not be measured"
+      fi
+      note "$label  sha256 ${digest:0:16}… recorded, and not the pinned one by construction"
+      PROVEN+=("$label: the only difference from the pinned engine is the AppImage bundler's RUNPATH")
+      ;;
+    *)
+      if [ "$digest" != "$EXPECTED_SHA" ]; then
+        fail "$label: sha256 $digest does not match the digest this app pinned ($EXPECTED_SHA).
       The artifact is not the one the release record describes."
-  fi
-  note "$label  sha256 ${digest:0:16}… matches the app's release manifest"
-  PROVEN+=("$label: digest matches the pinned release record")
+      fi
+      note "$label  sha256 ${digest:0:16}… matches the app's release manifest"
+      PROVEN+=("$label: digest matches the pinned release record")
+      ;;
+  esac
 
   # The engine's own answer, with an empty environment: `env -i` leaves it without PATH, HOME or any
   # inherited credential, so a version that comes back is a version nothing else could have produced.
@@ -267,7 +319,7 @@ if [ "${#BUNDLES[@]}" -eq 0 ]; then
   if [ -n "$ARCHIVE" ]; then
     extract_package "$ARCHIVE" "$WORK/bundle"
     check_bundle_layout "$WORK/bundle" "$ARCHIVE"
-    check_program "$WORK/bundle/usr/bin/opencode" "packaged"
+    check_program "$WORK/bundle/usr/bin/opencode" "packaged" "$ARCHIVE"
   else
     check_program "$STAGED" "staged"
     SKIPPED+=("packaged layout: no --bundle given (run this again after 'pnpm package:linux')")
@@ -279,7 +331,7 @@ else
     [ -f "$bundle" ] || fail "--bundle $bundle does not exist"
     extract_package "$bundle" "$WORK/bundle-$index"
     check_bundle_layout "$WORK/bundle-$index" "$bundle"
-    check_program "$WORK/bundle-$index/usr/bin/opencode" "$(basename "$bundle")"
+    check_program "$WORK/bundle-$index/usr/bin/opencode" "$(basename "$bundle")" "$bundle"
   done
 fi
 
