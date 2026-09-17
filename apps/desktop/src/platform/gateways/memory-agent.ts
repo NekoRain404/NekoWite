@@ -91,6 +91,25 @@ export interface MemoryAgentGateway extends AgentGateway {
   crash(message?: string): void
 }
 
+/**
+ * The cursor this double mints, and the one rule about it: it is opaque to the caller and only
+ * ever handed back here. Encoded as the offset it starts at, with a prefix that makes a cursor
+ * from somewhere else recognisable — a real engine's cursor would be its own string and equally
+ * meaningless to this side, which is the property the contract relies on.
+ */
+const PAGE_PREFIX = 'memory-page:'
+
+function readPageCursor(cursor: string | undefined, total: number): number {
+  if (cursor === undefined) return 0
+  const encoded = cursor.startsWith(PAGE_PREFIX) ? Number(cursor.slice(PAGE_PREFIX.length)) : NaN
+  if (!Number.isInteger(encoded) || encoded < 0 || encoded > total) {
+    // Refused rather than clamped: a cursor this double never issued is a page it cannot serve,
+    // and answering the first page for it would be the caller's mistake reading as a success.
+    throw new AgentFailure('invalid-response', `unknown session cursor: ${cursor}`)
+  }
+  return encoded
+}
+
 export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAgentGateway {
   const replayLimit = options.replayLimit ?? DEFAULT_REPLAY_LIMIT
   const sessions = new Map<string, LiveSession>()
@@ -292,28 +311,33 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
      * store — a history kept anywhere else would be the double's own invention rather than a
      * model of the engine's.
      */
-    async listSessions(): Promise<AgentSessionHistory> {
+    async listSessions(cursor?: string): Promise<AgentSessionHistory> {
       currentEpoch()
       if (dead) throw new AgentFailure('process-exited', 'the agent runtime exited')
-      return {
-        sessions: [...sessions.values()].map((record) => ({
-          sessionId: record.identity.sessionId,
-          cwd: record.cwd,
-          title: record.title,
-          updatedAt: record.updatedAt,
-          // The two halves of the table are two halves here too, which is what makes this row the
-          // one the production boundary is about: the engine's table is every record, and this
-          // runtime instance holds only the ones its own epoch minted (and that a close has not
-          // let go). `recordFor` refuses exactly those, so a row this is false for is a row
-          // `closeSession` will not act on — the same predicate, read here instead of answered
-          // per call.
-          held: !record.closed && record.identity.runtimeEpoch === currentEpoch(),
-        })),
+      const all = [...sessions.values()].map((record) => ({
+        sessionId: record.identity.sessionId,
+        cwd: record.cwd,
+        title: record.title,
+        updatedAt: record.updatedAt,
+        // The two halves of the table are two halves here too, which is what makes this row the
+        // one the production boundary is about: the engine's table is every record, and this
+        // runtime instance holds only the ones its own epoch minted (and that a close has not
+        // let go). `recordFor` refuses exactly those, so a row this is false for is a row
+        // `closeSession` will not act on — the same predicate, read here instead of answered
+        // per call.
+        held: !record.closed && record.identity.runtimeEpoch === currentEpoch(),
+      }))
+      const size = options.pageSize
+      if (size === undefined) {
         // One page, which is what the pinned engine was measured answering — and an honest
         // `null` rather than a fabricated cursor, because a cursor the engine never issued is a
         // page this double could not serve.
-        nextCursor: null,
+        return { sessions: all, nextCursor: null }
       }
+      const from = readPageCursor(cursor, all.length)
+      const page = all.slice(from, from + size)
+      const next = from + size
+      return { sessions: page, nextCursor: next < all.length ? `${PAGE_PREFIX}${next}` : null }
     },
 
     /**

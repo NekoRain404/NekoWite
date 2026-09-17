@@ -376,7 +376,7 @@ async fn session_load_replays_the_conversation_through_this_runtime() {
     // The session id has to outlive the process; the runtime's own table is the only place it is.
     let session = {
         let listed = first
-            .list_sessions()
+            .list_sessions(None)
             .await
             .expect("session/list before the restart");
         assert_eq!(

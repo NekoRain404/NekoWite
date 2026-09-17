@@ -247,7 +247,7 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
       return book.open(identity, answer, null)
     },
 
-    async listSessions(): Promise<AgentSessionHistory> {
+    async listSessions(cursor?: string): Promise<AgentSessionHistory> {
       // The runtime check is this adapter's, not the host's: `agent_list_sessions` needs a live
       // session slot to reach the runtime through, so without one it would refuse with the host's
       // own sentence. Answering the contract's `runtime-unavailable` here instead is the same fact
@@ -256,7 +256,7 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
       if (runtime === null) {
         throw new AgentFailure('runtime-unavailable', 'the agent runtime is not started')
       }
-      const answer = await ipc.listSessions()
+      const answer = await ipc.listSessions(cursor)
       const history = readSessionHistory(answer)
       if (history === null) {
         // A rejected read, not an empty history — for the reason `capabilities` gives about a

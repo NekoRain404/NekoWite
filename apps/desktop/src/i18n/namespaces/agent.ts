@@ -102,6 +102,15 @@ export const agent = {
           /* An engine that names a further page has not shown the whole table, and a list that
              read as complete would be the one answer worse than a short one. */
           more: 'This is the first page. The engine named more sessions after these.',
+          /* The control the sentence above became. The sentence is the button's `title` —
+             it explains why the list is short — and these are what the button says and does:
+             an action while it can act, a state while the read is in flight, and the engine's
+             own reason when the page could not be read. */
+          moreLoad: {
+            load: 'Read the next page',
+            loading: 'Reading the next page...',
+            failed: 'The next page could not be read: {reason}',
+          },
           /* The find box over the rows. It narrows what the engine already sent and asks the
              engine nothing (`filterSessionRows`), which is why `noMatch` is a sentence about this
              search rather than about the engine's table: this app has not looked for such a
@@ -1122,6 +1131,14 @@ export const agent = {
           empty: '该引擎没有保存任何会话。',
           unreadable: '未能读取该引擎的会话列表：{reason}',
           more: '这只是第一页，引擎在后面还列出了更多会话。',
+          /* 上面那句话变成的控件。那句话现在是按钮的 `title`（它解释了列表为什么这么短），
+             这里则是按钮说什么、做什么：能动手时是一个动作，读取中是一个状态，读不到时是引擎
+             自己的原因。 */
+          moreLoad: {
+            load: '读取下一页',
+            loading: '正在读取下一页……',
+            failed: '未能读取下一页：{reason}',
+          },
           search: {
             label: '搜索这些会话',
             placeholder: '搜索这些会话……',

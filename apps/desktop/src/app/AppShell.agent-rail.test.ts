@@ -317,12 +317,15 @@ describe('the rail with the agent panel switched on', () => {
  * thing to ask for.
  */
 describe('the sessions the engine holds, from the panel’s own control', () => {
-  async function shellWithHistory(options: { refuseLoadWith?: string } = {}) {
+  async function shellWithHistory(
+    options: { refuseLoadWith?: string; pageSize?: number } = {},
+  ) {
     const gateway = createMemoryAgentGateway({
       agentId: 'opencode',
       profileId: 'default',
       // What the engine reports about itself, which is what draws the control at all.
       capabilities: { 'session-list': { status: 'available' } },
+      pageSize: options.pageSize,
     })
     await gateway.start()
     const earlier = await gateway.openSession({ vaultId: '/notes/vault', cwd: '/notes/vault' })
@@ -410,6 +413,30 @@ describe('the sessions the engine holds, from the panel’s own control', () => 
     await untilDom(() => document.querySelector('[data-agent-history]') !== null, 'the control again')
     await openHistory()
     expect(openRow()).toEqual([earlier.sessionId])
+  })
+
+  /**
+   * The page the engine named, fetched from the control in the popup (N4).
+   *
+   * The audit's row was that the list said a further page existed and nothing passed the cursor
+   * back. The panel's own tests hold the append and the refusal; what this holds is the *reach*:
+   * the button the reader presses in the popup the panel draws inside the real shell, and the
+   * second page arriving in it.
+   */
+  it('fetches the page the engine named, from the control in the popup', async () => {
+    const { earlier } = await shellWithHistory({ pageSize: 1 })
+    await openHistory()
+    expect(listedRows().length).toBe(1)
+
+    const more = document.querySelector<HTMLElement>('[data-history-more]')
+    // FAILS IF: the page is announced and not reachable — the row's own defect.
+    expect(more).not.toBeNull()
+    more!.click()
+
+    await untilDom(() => listedRows().length === 2, 'the second page')
+    // The whole table, in the engine's order, with the earlier session the list was holding back.
+    expect(listedRows()).toContain(earlier.sessionId)
+    expect(document.querySelector('[data-history-more]')).toBeNull()
   })
 
   /**

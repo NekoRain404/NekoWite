@@ -125,6 +125,17 @@ export interface MemoryAgentOptions {
    * anything.
    */
   capabilities?: Partial<Record<AgentCapabilityFeature, AgentCapabilityFinding>>
+  /**
+   * How many sessions one page of `listSessions` holds. Absent means one page — the whole table,
+   * which is what the pinned engine was measured answering and what every test that is not about
+   * paging wants.
+   *
+   * A number makes the double page, and a paging engine is the only way to drive the second half
+   * of the contract: `nextCursor` is opaque, the caller's only use for it is to hand it back, and
+   * a double that never issues one leaves the whole path from "there is another page" to "the
+   * next page was fetched" untested.
+   */
+  pageSize?: number
 }
 
 /**

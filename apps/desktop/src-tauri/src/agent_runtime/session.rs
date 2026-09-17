@@ -532,11 +532,17 @@ impl AgentRuntime {
     /// back is projected to [`SessionListing`] rather than to a session this host now believes
     /// it has: a listed session is not an open one, and §6.1 forbids the host from treating an id
     /// it has not received a `session/new` or `session/load` answer for as one of its own.
-    pub async fn list_sessions(&self) -> Result<SessionPage, SessionError> {
+    ///
+    /// **`cursor` is the page the engine named, handed back unchanged.** `session/list` is
+    /// paginated, `next_cursor` is opaque and only ever means something to the engine that issued
+    /// it, and a host that answered the first page and dropped the cursor would be a surface that
+    /// can say there is more and never fetch it — which is the defect this parameter exists for.
+    /// A cursor this connection never issued is the engine's to refuse; nothing here reads it.
+    pub async fn list_sessions(&self, cursor: Option<&str>) -> Result<SessionPage, SessionError> {
         self.negotiate().await?;
         let response = self
             .connection
-            .list_sessions(None, None, CONTROL_BOUND)
+            .list_sessions(None, cursor, CONTROL_BOUND)
             .await
             .map_err(SessionError::Transport)?;
         // The one fact on a row that is this host's rather than the engine's, read from the table

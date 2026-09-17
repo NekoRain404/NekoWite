@@ -19,11 +19,13 @@
 //!
 //! ## What is deliberately not here
 //!
-//! A `cwd` filter or a cursor on the listing. Both are optional in the schema and the pinned
-//! engine was measured answering `{}` in one page (the probe's answer carried no `nextCursor`), so
-//! the parameters would be a surface with nothing behind it. `SessionPage::next_cursor` travels
-//! out of the runtime all the same, so the day an engine paginates the fact is already on the
-//! wire rather than being discovered.
+//! A `cwd` filter on the listing. It is optional in the schema and the pinned engine was measured
+//! answering `{}`, so a filter would be a parameter this host cannot say it passes. **The cursor
+//! is here and is not in that list**, and the difference is what the first page is for: an engine
+//! that names a further page has told the reader something they cannot act on unless the cursor
+//! can be handed back, and the schema's pagination exists whether or not today's engine uses it.
+//! The transport has taken a cursor since `list_sessions` was written (`calls.rs`); what was
+//! missing was the two signatures between it and the window.
 
 use serde::Serialize;
 
@@ -118,14 +120,18 @@ fn close_refusal(error: &SessionError) -> String {
 /// engine's report about itself, and refusing here would be this host answering for an engine on
 /// evidence it did not have. The call goes through, and an engine that meant no answers with its
 /// own refusal, classified and worded by the transport.
+/// `cursor` is the previous answer's `next_cursor`, handed back exactly as it was received: it is
+/// the engine's own string, this host cannot read it, and `None` asks for the first page. The
+/// engine is what refuses a cursor it did not issue.
 #[tauri::command]
 pub async fn agent_list_sessions(
+    cursor: Option<String>,
     ipc: tauri::State<'_, AgentIpcState>,
 ) -> Result<AgentSessionHistory, String> {
     let session = ipc.session()?;
     let page: SessionPage = session
         .runtime
-        .list_sessions()
+        .list_sessions(cursor.as_deref())
         .await
         .map_err(|error| error.failure_message())?;
     Ok(AgentSessionHistory {

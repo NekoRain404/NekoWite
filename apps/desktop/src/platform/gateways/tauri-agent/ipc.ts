@@ -134,7 +134,7 @@ export interface AgentIpc {
    * `unknown` rather than a declared shape, like {@link capabilities}: what arrives is a foreign
    * process's answer, and the contract's reader is what narrows it.
    */
-  listSessions(): Promise<unknown>
+  listSessions(cursor?: string): Promise<unknown>
   /**
    * Reopens a session the engine holds.
    *
@@ -179,7 +179,9 @@ export function createTauriAgentIpc(): AgentIpc {
     stop: () => invoke<void>('agent_stop'),
     openSession: (vaultId, cwd) =>
       invoke<AgentHostSession>('agent_open_session', { vaultId, cwd }),
-    listSessions: () => invoke<unknown>('agent_list_sessions'),
+    // `null` and not an absent field: the command's own signature is `Option<String>`, and a
+    // first page is a statement the caller makes rather than a key it leaves out.
+    listSessions: (cursor) => invoke<unknown>('agent_list_sessions', { cursor: cursor ?? null }),
     loadSession: (vaultId, cwd, sessionId) =>
       invoke<AgentHostSession>('agent_load_session', { vaultId, cwd, sessionId }),
     closeSession: (sessionId) => invoke<void>('agent_close_session', { sessionId }),

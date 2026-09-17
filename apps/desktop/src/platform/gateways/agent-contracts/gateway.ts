@@ -361,8 +361,14 @@ export interface AgentGateway {
    * answer. The adapter does not second-guess that here, for the reason
    * `agent_session_capabilities` gives: a handshake is one engine's report about
    * itself, and this side may not answer for it on evidence it does not have.
+   *
+   * **`cursor` is how the page a previous answer named is asked for** — and the list is
+   * unreadable without it: ACP's `session/list` takes one, a page is not the table, and a
+   * surface handed `nextCursor` with nothing to pass it to is a list that says there is more
+   * and cannot fetch it. Opaque by contract and only ever handed back to the engine that
+   * issued it; absent asks for the first page.
    */
-  listSessions(): Promise<AgentSessionHistory>
+  listSessions(cursor?: string): Promise<AgentSessionHistory>
   /**
    * Reopen a session the engine holds, and adopt it.
    *

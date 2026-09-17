@@ -511,6 +511,20 @@ const historyRows = ref<readonly AgentSessionHistoryRow[]>([])
 const historyReason = ref<string | null>(null)
 /** The engine named a further page, so the list below is not the whole history. */
 const historyMore = ref(false)
+/**
+ * The cursor the engine handed back with the page on screen — the only thing that can fetch the
+ * next one.
+ *
+ * Held here rather than derived from the rows because it is opaque: this side cannot read it,
+ * cannot reconstruct it from what it has, and may only give it back to the engine that issued it.
+ * A list that showed the engine's "there is more" and kept no cursor was the whole of this
+ * defect; a cursor kept and never passed back is the same defect one layer down.
+ */
+const historyCursor = ref<string | null>(null)
+/** A page being read right now, so the control can say so and refuse a second press. */
+const historyMoreBusy = ref(false)
+/** Why the last page could not be read, in the gateway's own sentence. */
+const historyMoreReason = ref<string | null>(null)
 /** The instant every row's age is read against — one clock for the whole list. */
 const historyAt = ref(0)
 
@@ -539,6 +553,11 @@ async function openHistory(): Promise<void> {
   }
   historyView.value = 'loading'
   historyReason.value = null
+  // Opening the list asks for the first page: whatever cursor the reader walked to last time is
+  // a position in a list that is being rebuilt from the top, and reusing it would splice a page
+  // of the engine's table onto a list that no longer has the rows it continued from.
+  historyCursor.value = null
+  historyMoreReason.value = null
   const answer = readHistory()
   await historyMenu.show()
   await answer
@@ -554,25 +573,58 @@ async function openHistory(): Promise<void> {
  * the awaits around it to trip over, and everything it writes is the engine's own answer: the
  * rows, whether the list is a whole page, and the sentence a refusal came with.
  */
-async function readHistory(): Promise<void> {
-  const settled = await props.gateway.listSessions().then(
+async function readHistory(cursor: string | null = null): Promise<void> {
+  const settled = await props.gateway.listSessions(cursor ?? undefined).then(
     (history) => ({ ok: true as const, history }),
     (error: unknown) => ({ ok: false as const, error }),
   )
   if (!settled.ok) {
     // The gateway's own sentence, shown in the list rather than swallowed: a control that asked
-    // the engine something and got nothing back owes the reader the reason.
-    historyReason.value = describeFailure(settled.error).message
-    historyView.value = 'unreadable'
+    // the engine something and got nothing back owes the reader the reason. Which of the two
+    // sentences depends on what was asked: a first page that could not be read leaves no list to
+    // draw, and a *later* one leaves the rows on screen and says the page failed beside them —
+    // replacing a list the reader is using with an error would lose what they were reading.
+    const message = describeFailure(settled.error).message
+    if (cursor === null) {
+      historyReason.value = message
+      historyView.value = 'unreadable'
+    } else {
+      historyMoreReason.value = message
+    }
     return
   }
   historyAt.value = Date.now()
-  historyRows.value = agentSessionHistoryRows(settled.history, {
+  const rows = agentSessionHistoryRows(settled.history, {
     currentSessionId: props.session.sessionId,
     cwd: props.cwd,
   })
+  // A page is *appended* to the one before it, and only a first read replaces: the rows arrive in
+  // the engine's own order, and a page spliced in somewhere else would reorder a list the reader
+  // is reading.
+  historyRows.value = cursor === null ? rows : [...historyRows.value, ...rows]
+  historyCursor.value = settled.history.nextCursor
   historyMore.value = settled.history.nextCursor !== null
   historyView.value = historyRows.value.length === 0 ? 'empty' : 'rows'
+}
+
+/**
+ * The page the engine named, asked for with the cursor it issued.
+ *
+ * Guarded by the cursor and by the busy flag rather than by the button alone: the button is
+ * disabled while a read is in flight, and a second press that arrived anyway would ask for the
+ * same page twice and draw every row of it twice. A refusal appends nothing, leaves the list
+ * where it was, and puts the engine's sentence under the control.
+ */
+async function loadMoreHistory(): Promise<void> {
+  const cursor = historyCursor.value
+  if (cursor === null || historyMoreBusy.value) return
+  historyMoreBusy.value = true
+  historyMoreReason.value = null
+  try {
+    await readHistory(cursor)
+  } finally {
+    historyMoreBusy.value = false
+  }
 }
 
 /** Close the list and hand the keyboard back to the control it belongs to. */
@@ -621,7 +673,8 @@ async function confirmFree(): Promise<void> {
     await freeAgentSession(props.gateway, sessionId)
     // The list is *re-read* rather than edited: the engine's answer is what the reader sees, and
     // the row is expected to still be in it. Anything else — dropping the row here — would be
-    // this window drawing its own idea of what a close means.
+    // this window drawing its own idea of what a close means. From the first page, because the
+    // cursor the reader had walked to belongs to a table that just changed under it.
     await readHistory()
     freeTarget.value = null
     historyFooter.value = { kind: 'freed' }
@@ -777,6 +830,8 @@ function onHistoryPick(sessionId: string): void {
           :rows="historyRows"
           :reason="historyReason"
           :more="historyMore"
+          :more-busy="historyMoreBusy"
+          :more-reason="historyMoreReason"
           :closeable="closeOffered"
           :openable="openable === true"
           :footer="historyFooter"
@@ -789,6 +844,7 @@ function onHistoryPick(sessionId: string): void {
           :drop="historyMenu.placement.value.drop"
           @activate="onHistoryPick"
           @open="emit('new-session')"
+          @more="loadMoreHistory"
           @ask="askFree"
           @confirm="confirmFree"
           @cancel="cancelFree"

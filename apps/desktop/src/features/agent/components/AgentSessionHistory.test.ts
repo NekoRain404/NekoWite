@@ -271,6 +271,8 @@ async function mountPanel(options: {
   spare?: boolean
   /** Hold the engine's list until the answer is released: the window the popup is measured in. */
   holdList?: boolean
+  /** Make the engine page: how many sessions one answer holds. Absent, one answer is the table. */
+  pageSize?: number
 }): Promise<Harness> {
   const capabilities: Partial<Record<'session-list' | 'session-close', { status: 'available' }>> = {}
   // What the engine reported about itself. Anything a case does not name stays `unverified` — a
@@ -281,6 +283,7 @@ async function mountPanel(options: {
     agentId: 'memory',
     profileId: 'test',
     capabilities,
+    pageSize: options.pageSize,
   })
   await gateway.start()
   const earlier = await gateway.openSession({ vaultId: 'vault', cwd: '/notes/elsewhere' })
@@ -639,6 +642,61 @@ describe('the sessions the engine holds', () => {
       expect(footer?.textContent).toContain('It was not freed:')
       expect(footer?.textContent).not.toContain('The engine would not free it')
     })
+  })
+
+  it('fetches the page the engine named, with the cursor the engine issued', async () => {
+    // The engine pages here — one session per answer — which is the only way to drive the half of
+    // the contract the audit's N4 was about: `nextCursor` is opaque, the caller's only use for it
+    // is to hand it back, and until this existed the list said a page was there and had nothing
+    // to ask with.
+    const harness = await mountPanel({ available: true, pageSize: 1 })
+    const asked: Array<string | undefined> = []
+    const list = harness.gateway.listSessions.bind(harness.gateway)
+    harness.gateway.listSessions = async (cursor) => {
+      asked.push(cursor)
+      return list(cursor)
+    }
+    await harness.click('[data-agent-history]')
+
+    expect(harness.titles()).toEqual(['New session - 2026-01-01T00:00:01Z'])
+    const more = harness.el('[data-history-more]')
+    // FAILS IF: the further page is announced and nothing can fetch it — the defect this case
+    // exists for, and the state of the panel before the cursor was carried back.
+    expect(more).not.toBeNull()
+
+    more!.click()
+    await harness.settle()
+
+    // The page was asked for with the cursor the engine itself issued, and what came back was
+    // *appended*: the rows the reader was already reading are still there, in the engine's order.
+    expect(asked).toEqual([undefined, 'memory-page:1'])
+    expect(harness.titles()).toEqual([
+      'New session - 2026-01-01T00:00:01Z',
+      'New session - 2026-01-01T00:00:02Z',
+    ])
+    // …and with the whole table read, the control goes away rather than offering a third page.
+    expect(harness.el('[data-history-more]')).toBeNull()
+  })
+
+  it('keeps the list and says so when a further page cannot be read', async () => {
+    const harness = await mountPanel({ available: true, pageSize: 1 })
+    await harness.click('[data-agent-history]')
+    const list = harness.gateway.listSessions.bind(harness.gateway)
+    harness.gateway.listSessions = async (cursor) => {
+      if (cursor !== undefined) throw new Error('the engine sent a page this window could not read')
+      return list(cursor)
+    }
+
+    harness.el('[data-history-more]')!.click()
+    await harness.settle()
+
+    // The rows stay and the failure is said beside the control: replacing a list the reader is
+    // using with an error would take away what they were reading.
+    expect(harness.titles()).toEqual(['New session - 2026-01-01T00:00:01Z'])
+    expect(harness.el('[data-history-more-failed]')?.textContent).toContain(
+      'the engine sent a page this window could not read',
+    )
+    expect(harness.el('[data-history-more]')).not.toBeNull()
   })
 
   it('says why there is nothing to show when the engine’s answer could not be read', async () => {

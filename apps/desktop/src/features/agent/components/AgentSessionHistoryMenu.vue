@@ -80,6 +80,11 @@ const props = withDefaults(
     reason: string | null
     /** The engine named a further page, so this list is not the whole history. */
     more: boolean
+    /** Whether that page is being read right now. Optional with a default, like the labels
+     *  beside it: the state is the caller's, and a caller with no list open is not reading one. */
+    moreBusy?: boolean
+    /** Why the last attempt at that page failed, in the gateway's own sentence. */
+    moreReason?: string | null
     /**
      * Whether the engine reported that it answers `session/close` — the panel's answer, from the
      * engine's own report, exactly as the history control's was.
@@ -120,7 +125,7 @@ const props = withDefaults(
      *  from the gap on the other side of it. */
     drop: 'down' | 'up'
   }>(),
-  { openable: false },
+  { openable: false, moreBusy: false, moreReason: null },
 )
 
 const emit = defineEmits<{
@@ -130,6 +135,8 @@ const emit = defineEmits<{
   ask: [sessionId: string]
   /** The user asked for a new session. The caller decides what that means and who does it. */
   open: []
+  /** The user asked for the page the engine named. The caller holds the cursor and the gateway. */
+  more: []
   /** The question in the footer was answered yes. */
   confirm: []
   /** The question in the footer was answered no. */
@@ -432,15 +439,39 @@ defineExpose({ element, focus })
     <!-- Outside the listbox, which may only own options, and drawn for a short list whether or not
          a search found anything: an engine that named a further page has not shown the whole
          table, and "no session matches" is only ever true of the page that was sent. A list that
-         read as complete would be the one answer worse than a short one. -->
-    <p
+         read as complete would be the one answer worse than a short one.
+
+         A button and not a sentence. The sentence said a page existed and offered no way to it,
+         which is this app's own worst shape — a surface claiming something the reader cannot
+         reach — so the words are the button's explanation (`title`) and the press is the act.
+         `disabled` while the read is in flight, because a second press would ask for the same
+         page twice; the label says which page and how far the list has come. -->
+    <div
       v-if="searchable && more"
       class="agent-history-more"
       role="presentation"
-      data-history-more
     >
-      {{ t('agent.panel.history.more') }}
-    </p>
+      <button
+        class="agent-history-more-btn"
+        type="button"
+        data-history-more
+        :title="t('agent.panel.history.more')"
+        :disabled="moreBusy"
+        :aria-busy="moreBusy ? 'true' : undefined"
+        @mousedown.prevent
+        @click="emit('more')"
+      >
+        {{ moreBusy ? t('agent.panel.history.moreLoad.loading') : t('agent.panel.history.moreLoad.load') }}
+      </button>
+      <p
+        v-if="moreReason !== null && moreReason !== undefined"
+        class="agent-history-more-reason"
+        data-history-more-failed
+        role="status"
+      >
+        {{ t('agent.panel.history.moreLoad.failed', { reason: moreReason }) }}
+      </p>
+    </div>
     <!-- The strip under the rows. `role=presentation` for the reason the notices carry it: this
          is a child of the listbox and not one of its options. -->
     <div
@@ -619,13 +650,39 @@ defineExpose({ element, focus })
   overflow-wrap: anywhere;
 }
 .agent-history-more {
-  margin: 0;
   padding: 6px 8px 2px;
   border-top: 1px solid var(--app-border);
   color: var(--app-muted);
   font-size: 11px;
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+.agent-history-more-btn {
+  min-height: 26px;
+  width: 100%;
+  padding: 0 8px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-elevated);
+  color: var(--app-text);
+  font-family: var(--app-font);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--app-motion-fast) var(--app-ease);
+}
+.agent-history-more-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--app-elevated) 84%, var(--app-accent-soft));
+}
+.agent-history-more-btn:disabled {
+  color: var(--app-muted);
+  cursor: default;
+}
+.agent-history-more-btn:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
+.agent-history-more-reason {
+  margin: 4px 0 0;
 }
 /* The strip under the rows: the question before a free, and the engine's answer after one. It is
    inside the listbox rather than a second popup because it is about a row that is on screen, and
