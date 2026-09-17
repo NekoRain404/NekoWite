@@ -177,7 +177,15 @@ impl PetFeatureState {
         // A disabled feature has nothing to show, so `visible` is not merely "the flag is set":
         // reporting a hidden-but-enabled pet for a feature with no windows would be a state a
         // window could act on and be wrong about.
-        let enabled = !host.instances().is_empty();
+        //
+        // "Something is showing" counts the ball as well as the character windows. The two are
+        // separate surfaces with separate switches (§5.1), so the table can be in the state where
+        // 显示角色窗口 is off and 显示悬浮球 is on — the pet is on screen and the feature is on, and a
+        // state that answered `enabled: false` there would be this field disagreeing with the
+        // switch it is named after. Nothing reads it in that state today (the only subscriber is a
+        // *character* window, and there is none), which is why the answer has to be right rather
+        // than merely harmless.
+        let enabled = !host.instances().is_empty() || host.ball().is_some();
         Self {
             enabled,
             visible: enabled && host.is_visible(),

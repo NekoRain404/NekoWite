@@ -47,12 +47,16 @@
  *   (`UnrecognizedCaller { observed: "pet-ball" }`), which is the structural half of 「the ball is
  *   a stable click target and must not be click-through」: the permission is granted to the pet's
  *   windows as a group, and the identity check is what keeps the ball from using it.
- * - **It follows the pet's switch, not the character list.** {@link PetWindowHost::open} — the
- *   call `feature_switch::apply` makes when `general.enabled` is written true — opens it, {@link
- *   PetWindowHost::set_visible} hides and shows it with the rest, and {@link
- *   PetWindowHost::disable} closes it. Its own switch (`general.ball`, upstream's stored flag,
- *   `lib.rs:331-345`) is read in the same place: the ball exists when the pet is on *and* the user
- *   wants it, and {@link PetWindowHost::set_ball_enabled} is how the second half reaches it.
+ * - **It follows its own switch, not the character list.** The ball exists when `general.ball` is
+ *   on *and* `general.enabled` is, and it is the character window's presence that no longer
+ *   decides: {@link PetWindowHost::open} — the call `feature_switch::apply` makes for the character
+ *   window — brings it up too, {@link PetWindowHost::ensure_ball} is the call that brings it up on
+ *   its own (the window that exists when 显示角色窗口 is off), {@link PetWindowHost::set_visible}
+ *   hides and shows it with the rest, and {@link PetWindowHost::disable} closes it. Its switch
+ *   (`general.ball`, upstream's stored flag, `lib.rs:331-345`) is read in
+ *   {@link Ball::ensure}; {@link PetWindowHost::set_ball_enabled} is how the preference reaches it,
+ *   and {@link PetWindowHost::close_characters} is the operation the character window's own switch
+ *   gets instead.
  *
  * **What the ball's window *is*, and how it answers its switch, is `ball.rs`.** The policy lived
  * here until it had a switch of its own to hold; this file keeps the one `PetSurfaces`, the
@@ -457,6 +461,18 @@ impl PetWindowHost {
         self.ball.set_enabled(&mut *self.surfaces, enabled)
     }
 
+    /// Bring the ball's window up if the user wants one and it is not up yet.
+    ///
+    /// The half [`Self::set_ball_enabled`] deliberately leaves out, and it is a call of its own
+    /// because of the state the pair exists for: with the character window switched off, the ball
+    /// is the *only* window, so nothing else in this host would ask for it. {@link Ball::ensure}
+    /// reads the switch, so this is idempotent and safe to call after {@link Self::open} has
+    /// already tried — an already-open ball returns without asking the compositor again.
+    pub fn ensure_ball(&mut self) -> Result<(), HostRefusal> {
+        self.ball
+            .ensure(&mut *self.surfaces, self.style, self.visible)
+    }
+
     /// Create the window for a character, or return the one already showing it (§7.1's 按需创建).
     ///
     /// Idempotent per character because the caller is a settings change: upstream's
@@ -599,6 +615,10 @@ impl PetWindowHost {
     /// can act on: the ball's failure to close *is* reported (`failed` carries the action and the
     /// compositor's words, which need no character), and the success is visible in the state that
     /// follows — the same way every other closed window's is.
+    ///
+    /// **The ball goes first**, and that is an order a caller can see in the compositor's own log:
+    /// it is not one of the cascade, so taking it down before walking the character windows keeps
+    /// that walk a loop over `instances` alone.
     pub fn disable(&mut self) -> TeardownReport {
         let mut report = TeardownReport::default();
         if let Err(refusal) = self.ball.close(&mut *self.surfaces) {
@@ -606,6 +626,22 @@ impl PetWindowHost {
             // again rather than being forgotten while the compositor still holds it.
             report.failed.push(refusal);
         }
+        let characters = self.close_characters();
+        report.closed.extend(characters.closed);
+        report.failed.extend(characters.failed);
+        report
+    }
+
+    /// Close every character window, and report which — the half of {@link Self::disable} that is
+    /// §5.1's 显示角色窗口 going off rather than the feature going off.
+    ///
+    /// A window the compositor would not close stays in the registry and is reported in `failed`,
+    /// for the reason `disable` gives: forgetting it here would leak the very thing this call
+    /// exists to clean up. The ball is deliberately not touched — it is a window with a switch of
+    /// its own, and a character switch that took it down would be the master switch wearing a
+    /// narrower name.
+    pub fn close_characters(&mut self) -> TeardownReport {
+        let mut report = TeardownReport::default();
         for instance in std::mem::take(&mut self.instances) {
             match self.surfaces.close(&instance.label) {
                 Ok(()) => report.closed.push(Closed {

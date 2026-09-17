@@ -66,15 +66,23 @@ export function createDesktopPetConnection(): PetHostConnection | null {
 }
 
 /**
- * The pet window's resolver, as `mountDesktopPet` takes one.
+ * The character window's resolver, as `mountDesktopPet` takes one.
  *
  * The dependency object is built here rather than in the entry because §10.1 makes that the
  * integrator's file and because the entry is a *boot*: it decides whether this page is the pet's,
  * and this decides what the pet talks to.
+ *
+ * **The platform is the ball's, built the same way and for the same ask.** `createBallPlatform`
+ * reads the window the page runs in and calls `startDragging` on it; nothing about it is the
+ * orb's, which is why the same call serves both resolvers rather than a second adapter being
+ * written here (and why the character window's drag costs one function it already had access to).
+ * What differs between the two windows is only the *type* of the dependency each takes — the ball
+ * gets a `PetWindowGateway`, this one the wider `PetWindowGateway` plus a lifecycle — and neither
+ * of them can reach the `snap` this build does not implement.
  */
 export function resolveDesktopPetDependencies(): DesktopPetDependencies | undefined {
   const connection = createDesktopPetConnection()
-  return connection ? { connection } : undefined
+  return connection ? { connection, platform: createBallPlatform() } : undefined
 }
 
 /**
@@ -88,7 +96,9 @@ export function resolveDesktopPetDependencies(): DesktopPetDependencies | undefi
  * The desktop's drag is supplied **only when there is a Tauri host behind the page**: the controls
  * it is built on are window calls, and a browser page has no window to drag. Without one the orb
  * says it cannot be moved, which is true there — the same rule as the connection above, applied to
- * the other thing this window can be without.
+ * the other thing this window can be without. The character window's resolver below reaches the
+ * same platform through the same call, so both of the pet's surfaces are handed a drag by one
+ * decision rather than two.
  */
 export function resolveDesktopPetBallDependencies():
   | DesktopPetBallDependencies

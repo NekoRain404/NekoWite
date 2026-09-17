@@ -1,12 +1,20 @@
 //! The feature switch, at the two moments this process learns what it is.
 //!
-//! `general.enabled` and `general.ball` are stored values, so the windows follow the *write* that
-//! set them — that is [`apply`], and `commands::desktop_pet_surface` reaches it from the one command
-//! that applies a settings write. What that leaves out is a launch: the switch is declared with a
-//! default (`settings::fields`, `GENERAL`), and a default that no write ever carried reached no
-//! window. A fresh install therefore rendered 「显示桌宠」 checked and drew nothing until the user
-//! happened to save an unrelated field on the same page — the defect `bundled-pets.md` reported and
-//! this module's [`restore`] closes.
+//! The pet's three switches — `general.enabled`, `general.characterWindow` and `general.ball` — are
+//! stored values, so the windows follow the *write* that set them — that is [`apply`], and
+//! `commands::desktop_pet_surface` reaches it from the one command that applies a settings write.
+//! What that leaves out is a launch: the switch is declared with a default (`settings::fields`,
+//! `GENERAL`), and a default that no write ever carried reached no window. A fresh install therefore
+//! rendered 「显示桌宠」 checked and drew nothing until the user happened to save an unrelated field on
+//! the same page — the defect `bundled-pets.md` reported and this module's [`restore`] closes.
+//!
+//! **Which windows a record opens, in one sentence.** With `enabled` off there is no pet window at
+//! all; with it on, each of the pet's two windows exists exactly when its *own* switch is on —
+//! `characterWindow` for the window the character is drawn in, `ball` for the floating ball. The two
+//! switches are peers and neither is a master, which is what makes 只开悬浮球 a state rather than a
+//! special case, and the rule is read in one place (here) so the page's controls and the host cannot
+//! disagree about what a field means (§5.3). The ball is not a side effect of the character window:
+//! a record with `characterWindow` off and `ball` on opens the ball and nothing else.
 //!
 //! **The rule both moments answer to, stated once.** The window agrees with what the settings page
 //! shows for the same record, arm for arm:
@@ -89,26 +97,46 @@ pub fn apply(host: &mut PetWindowHost, record: &PetSettingsRecord, character: &s
     let Some(enabled) = record.value("enabled").and_then(Value::as_bool) else {
         return false;
     };
-    // The ball's own switch first, because the `open` below is what brings both surfaces up: the
-    // host has to know the preference before it is asked for the windows that follow it.
-    match record.value("ball").and_then(Value::as_bool) {
-        Some(ball) => {
-            if let Err(refusal) = host.set_ball_enabled(ball) {
-                eprintln!("the pet's ball did not follow a saved setting: {refusal:?}");
-            }
+    // The ball's own switch first, because it is recorded rather than acted on: the host has to
+    // know the preference before it is asked for the window that follows it. A record without one
+    // is a record written by a build that had no such field — the schema's own default stands,
+    // which is what the host was built with.
+    if let Some(ball) = record.value("ball").and_then(Value::as_bool) {
+        if let Err(refusal) = host.set_ball_enabled(ball) {
+            eprintln!("the pet's ball did not follow a saved setting: {refusal:?}");
         }
-        // A record without one is a record written by a build that had no such field — the schema's
-        // own default stands, which is what the host was built with.
-        None => {}
     }
-    if enabled {
+    // The character window's own switch, and the third of the three this record carries. A record
+    // without one is a record written before the field existed, and what *that* record meant is the
+    // schema's own default too: `enabled` on meant the character window was there, so reading it as
+    // `true` is the only arm that does not take a window away from a record nobody edited.
+    let character_window = record
+        .value("characterWindow")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    if !enabled {
+        // §5.1's 启用 off: no pet window at all, whichever way the two switches above are set
+        // (§4's rollback — the switch, and nothing is deleted). The ball's preference was recorded
+        // a few lines up and stays the user's; what it does not do is keep a window up.
+        for refusal in host.disable().failed {
+            eprintln!("a pet window could not be closed: {refusal:?}");
+        }
+        return true;
+    }
+    if character_window {
         if let Err(refusal) = host.open(character) {
             eprintln!("the pet's window could not be opened for {character}: {refusal:?}");
         }
     } else {
-        for refusal in host.disable().failed {
-            eprintln!("a pet window could not be closed: {refusal:?}");
+        for refusal in host.close_characters().failed {
+            eprintln!("a character window could not be closed: {refusal:?}");
         }
+    }
+    // And the ball, which the call above only asked for when it opened a character window: with
+    // 显示角色窗口 off this is the one that brings the ball up, and with it on the ball is already
+    // there (or was refused, and this is the retry). `Ball::ensure` reads the preference.
+    if let Err(refusal) = host.ensure_ball() {
+        eprintln!("the pet's ball could not be opened: {refusal:?}");
     }
     true
 }

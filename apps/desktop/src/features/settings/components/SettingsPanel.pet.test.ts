@@ -533,6 +533,12 @@ describe('the dialog carries the pet’s pages, and what comes with them', () =>
     //     window's drag adapter, carried because the composition imports it for that window's
     //     resolver. It holds one call and reaches `platform/window.ts`, which is in this window's
     //     graph already.
+    //
+    //   - `services/pet-ball-input.ts` arrived with it and one window later. The character window
+    //     drags now (upstream moves its pet window from the sprite, `main.ts:555-613`), so
+    //     `DesktopPetRoot.vue` — which this window reaches through the barrel, above — imports the
+    //     gesture and the platform contract from it. It is the same cost as the line above and for
+    //     the same reason: nothing here mounts a pet window, so nothing here presses anything.
     expect(surface).toEqual([
       'features/desktop-pet/components/DesktopPetRoot.vue',
       'features/desktop-pet/components/PetBubble.vue',
@@ -552,6 +558,7 @@ describe('the dialog carries the pet’s pages, and what comes with them', () =>
       'features/desktop-pet/rendering/sprite-sheet.ts',
       'features/desktop-pet/rendering/sprite-slicer.ts',
       'features/desktop-pet/services/pet-appearance.ts',
+      'features/desktop-pet/services/pet-ball-input.ts',
       'features/desktop-pet/services/pet-ball-platform.ts',
       'features/desktop-pet/services/pet-bubble-layout.ts',
       'features/desktop-pet/services/pet-care-rules.ts',

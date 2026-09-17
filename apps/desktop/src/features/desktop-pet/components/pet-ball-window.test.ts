@@ -198,23 +198,6 @@ describe('the ball window draws what the host says', () => {
 })
 
 /**
- * A host whose appearance read answers a policy this file can change, wrapping the double.
- *
- * The double's own `appearance()` builds its arms from the character domain and carries no
- * `general` field, which is why the policy is supplied here: what is under test is the window's
- * handling of an answer, and the answer has to be one this file can move. Everything else — the
- * listener, the revision check, the channel an applied write is published on — is the double's.
- */
-function hostWithPolicy(policy: { motion: PetMotion }, characters: PetCharacterEntry[] = [KITTY]) {
-  const host = createMemoryPetGateway({ visible: true, characters })
-  const connection: PetWindowGateway = {
-    ...host,
-    appearance: async () => ({ status: 'unset', motion: policy.motion }),
-  }
-  return { host, connection }
-}
-
-/**
  * Write the 动效 setting the way the settings page does: through the host's own channel.
  *
  * `general` is the second domain this window draws from, and the write is an *applied* one, so the
@@ -231,9 +214,8 @@ async function setMotion(host: MemoryPetGateway, motion: PetMotion, revision: nu
 
 describe('the ball window and §5.2’s 动效', () => {
   it('stops the orb’s motion when the app’s setting says so, and starts it again when it does not', async () => {
-    const policy: { motion: PetMotion } = { motion: 'system' }
-    const { host, connection } = hostWithPolicy(policy)
-    mount(connection)
+    const host = createMemoryPetGateway({ visible: true, characters: [KITTY] })
+    mount(host)
     await flush()
 
     // The setting is 「跟随系统」, the schema's default: the orb keeps its own travel, and the
@@ -243,26 +225,27 @@ describe('the ball window and §5.2’s 动效', () => {
 
     // A user picks 「减少动效」 in the main window's settings. Before this wiring the value was
     // stored, drawn on 常规与交互 and read by nothing that moves: the orb scaled under the pointer
-    // either way.
-    policy.motion = 'reduced'
+    // either way. The write is the whole of the change — the appearance read answers the stored
+    // policy, so what moves the orb is the domain moving and nothing else.
     await setMotion(host, 'reduced', 1)
     await flush()
     expect(orb().classList.contains('is-still')).toBe(true)
 
     // And back, because the policy is read rather than latched — a user who returns to
     // 「跟随系统」 gets the orb's motion back without a restart.
-    policy.motion = 'system'
     await setMotion(host, 'system', 2)
     await flush()
     expect(orb().classList.contains('is-still')).toBe(false)
   })
 
   it('reads an appearance with no policy as the schema default, not as reduced', async () => {
-    // The double answers without the field at all, which is what an answer that did not come from
-    // this host looks like (a browser build, or a host from before the field existed). `reduced`
-    // there would invent a restriction the user never chose.
+    // An answer that carries no `motion` at all is what a host from before the field existed (or a
+    // browser build, which has no host at all) sends, and `reduced` there would invent a
+    // restriction the user never chose. The double carries the field on every arm, so the absence
+    // is supplied here rather than implied by it.
     const host = createMemoryPetGateway({ visible: true, characters: [KITTY] })
-    mount(host)
+    const connection: PetWindowGateway = { ...host, appearance: async () => ({ status: 'unset' }) }
+    mount(connection)
     await flush()
 
     expect(orb().classList.contains('is-still')).toBe(false)

@@ -14,6 +14,14 @@
  * a sheet that will not load each get a sentence. The alternative — an idle pet that knows nothing
  * — looks identical to a working one, and is wrong in the way that is hardest to notice.
  *
+ * **The character can be dragged, which is upstream's behaviour and was missing here.** Upstream
+ * moves its pet window from the sprite (`references/desktop-pet/windows/src/main.ts:555-613`), and
+ * this port had the permission, the gesture and the adapter for it and used all three on the orb
+ * alone — so the ball could be moved and the pet could not. The block below
+ * ({@link onPetPointerDown} onward) is the port of upstream's rule, and the two consequences worth
+ * knowing before reading it are that the drag handle is the sprite rather than the window, and
+ * that a window with a drag handle has to take the pointer for it.
+ *
  * Its few strings are literal English for now. The app's `i18n` cannot be imported here: it is
  * the whole dictionary, and §7.1's list of what this window must not carry is exactly that. §10.1
  * gives the pet's own namespace (`S/i18n/namespaces/desktop-pet.ts`, `i18n/index.ts`) to the
@@ -33,6 +41,16 @@ import { usePetDrawingFailure } from '../composables/use-pet-drawing-failure'
 import { usePetLifecycle } from '../composables/use-pet-lifecycle'
 import { usePetWindow } from '../composables/use-pet-window'
 import type { PetAppearanceView } from '../services/pet-appearance'
+// The ball's gesture, reused rather than restated. `pet-ball-input.ts` is where upstream's
+// click-versus-drag arithmetic was ported from `floating-ball.ts`, and the character window's
+// drag needs exactly that arithmetic — the same 4 px threshold, the same 280 ms click window, the
+// same screen-coordinate reading (see that file's header) — so this is the *one* implementation
+// both of the pet's surfaces call, and the character asks for it by the name the port gave it.
+import {
+  createBallGesture,
+  type BallPointer,
+  type PetBallPlatform,
+} from '../services/pet-ball-input'
 import { actOnPetMenu } from '../services/pet-menu-actions'
 import type { PetMenuAction } from '../services/pet-context-menu'
 import PetBubble from './PetBubble.vue'
@@ -65,6 +83,24 @@ const props = withDefaults(
     height?: number
     /** Animation mapping from settings; fields left out keep upstream's defaults. */
     animation?: Partial<AnimationConfig>
+    /**
+     * The desktop's drag, when this build has one — the same object `PetBallWindow.vue` hands the
+     * orb, because it is the same ask of the same compositor.
+     *
+     * Absent → this window cannot move the character, and it says so rather than offering a drag
+     * that does nothing (§7.2's 「不伪装已支持」): the sprite is not a drag handle, so the window
+     * does not take the pointer for one (see {@link dragHandle}), and the sprite's own tooltip is
+     * the one sentence this surface has room for.
+     */
+    platform?: PetBallPlatform | null
+    /**
+     * Injected for tests (§10.2): the clock a press is measured against.
+     *
+     * The same seam `PetFloatingBall.vue` takes under the same name, and *not* the clock the
+     * bubble reads — `usePetWindow`'s `now` is the host's epoch milliseconds, and this is a
+     * monotonic reading whose differences decide whether a press was short enough to be a click.
+     */
+    now?: (() => number) | null
     /** Injected for tests (§10.2): the sprite's frame clock and image factory. */
     clock?: SpriteClock
     createImage?: ImageFactory
@@ -82,6 +118,8 @@ const props = withDefaults(
     width: 160,
     height: 180,
     animation: undefined,
+    platform: null,
+    now: undefined,
     clock: undefined,
     createImage: undefined,
     readPixels: undefined,
@@ -121,37 +159,6 @@ const menuAt = ref<{ x: number; y: number } | null>(null)
 const bubble = ref<InstanceType<typeof PetBubble> | null>(null)
 
 /**
- * What this window has for the pointer to act on, which is what decides whether it takes the
- * pointer at all — the whole of `usePetClickThrough`'s rule.
- *
- * Two things today, and they are the whole list: the bubble, whose rows open a task and whose
- * right-click opens the menu, and the menu itself. **The character is deliberately not on it.**
- * §7.2's 「角色可点区」 is a target this window does not meet yet, because nothing here handles a
- * pointer on the sprite: `PetSprite` exposes `hitTest` and `geometry` for a shell that does not
- * exist (both are `defineExpose`d and nothing calls them), so a click on the character reaches
- * this window and does nothing but raise WebKit's own context menu. When that shell lands, the
- * sprite becomes a third entry — and the trade-off has to be decided again rather than inherited,
- * because one switch for the whole window means a character the pointer can always act on makes
- * the whole 260x320 rectangle interactive again, which is the defect this rule exists to remove.
- */
-const needsInput = computed(() => Boolean(bubble.value?.visible) || menuAt.value !== null)
-
-/**
- * The window's own input region (§7.2's 鼠标穿透), asked for the first time below and re-asked
- * whenever `needsInput` moves.
- *
- * Absent when the window has no host connection, which is a state this component already renders:
- * a window with no host is a window that never has anything to click, and the compositor's default
- * — take the clicks — is what it keeps.
- */
-const clickThrough = props.connection
-  ? usePetClickThrough({
-      setClickThrough: (ignore) => props.connection!.setClickThrough(ignore),
-      needsInput: () => needsInput.value,
-    })
-  : null
-
-/**
  * What to draw: the host's read when there is one, the caller's props otherwise.
  *
  * `appearance.motion` (§5.2's 动效) is deliberately not read here. This window's surface has no
@@ -160,7 +167,9 @@ const clickThrough = props.connection
  * `references/desktop-pet/windows/src/styles.css:1280-1287`) has no counterpart in this port. The
  * orb is the surface that moves, so `PetBallWindow.vue` is where the policy is applied; a
  * `reduce-motion` rule added here without a surface to apply it to would be a class nothing could
- * see.
+ * see. **The drag did not change that**: its two states are a shade and a cursor rather than a
+ * travel, and neither declares a `transition`, so they hold under the reduced policy and this
+ * window still has nothing for the setting to remove.
  *
  * `appearance.bubbleOpacity` *is* read here, and it is the same test in the other direction: the
  * bubble is in this window, so §5.2's 气泡与消息 opacity has something to change on this surface —
@@ -187,6 +196,210 @@ const {
   onLoadError: onSheetFailure,
   onUnavailable: onSpriteUnavailable,
 } = usePetDrawingFailure({ imageUrl, drawing })
+
+/**
+ * The character's drag: the ball's rule, on the surface the user actually grabs.
+ *
+ * **Upstream drags its pet window, and this port did not.** `references/desktop-pet/windows/src/
+ * main.ts:555-613` binds the gesture to the sprite canvas and to the bubble, and its comment says
+ * why the drag is measured by hand rather than handed to `data-tauri-drag-region`. Two lines of it
+ * are the whole of what this block ports:
+ *
+ *   - `:588-590` a press that does not land on the sprite does not start a drag —
+ *     `pet.spriteRect && !pet.hitTest(...)` returns early, 「so clicks on the empty area around the
+ *     pet don't drag the window」. {@link onPetPointerDown} is that line, and `PetSprite`'s
+ *     `hitTest` and `geometry` — exposed by D2 for a shell that did not exist until now — are
+ *     finally its callers.
+ *   - `:594` a press that moves more than 4 px is a drag, and `:600-603` a press released without
+ *     moving is a click. That arithmetic is `pet-ball-input.ts`'s, where upstream's
+ *     `floating-ball.ts` was ported from, so this component calls {@link createBallGesture} rather
+ *     than restating it: the two surfaces are asked to behave alike, and a second threshold
+ *     written here is the defect the sharing prevents.
+ *
+ * Three things this block decides that the orb's does not have to:
+ *
+ *   - **The drag handle is the character, and only the character.** A press on the transparent
+ *     part of the canvas's box reaches this window and starts nothing. The *window* still takes
+ *     the press — see {@link needsInput} on what that costs — but the drag never begins from it.
+ *   - **A sprite that has not drawn a frame yet is still grabbable.** Upstream allowed the press
+ *     through while the sheet was loading, 「so the pet is never untouchable」 (`:588-589`), and
+ *     that case is reachable here for the same reason: `hitTest` answers false when there is no
+ *     sprite rect to test against. So the *rect* is what refuses a press, never the miss — a
+ *     drawn sprite that was missed is refused, a sprite that has not drawn yet is not.
+ *   - **The click lands nowhere — and that is upstream's own default, not a gap left here.**
+ *     Upstream's `onPetClick` (`:570-580`) reads `ap_left_click_action` and returns immediately
+ *     when it is `none`, which is what that key reads as when it has never been written. So a
+ *     fresh upstream install and this build do the same thing with a press that did not wander:
+ *     nothing. What is left is the gesture's other half read as the refusal it is — a press that
+ *     does not wander is *not* a drag, which is the whole reason the arithmetic exists. It is not
+ *     an emit either: this component's only consumer is the entry that mounts it, and an event
+ *     nobody hears is a promise of a bubble that this build has not designed
+ *     (`desktop-pet-port-ledger.md:114`).
+ */
+const gesture = createBallGesture()
+const pressed = ref(false)
+const dragging = ref(false)
+/** The sprite, for the two things only it can answer: where it drew, and whether a point hit it. */
+const sprite = ref<InstanceType<typeof PetSprite> | null>(null)
+
+/** Whether this desktop can move the character at all: the one thing the sprite's tooltip is about. */
+const movable = computed(() => typeof props.platform?.startDrag === 'function')
+
+/**
+ * Whether what is on screen is something the pointer can act on by dragging it.
+ *
+ * The sprite branch's own three terms plus the capability — exactly the condition the template
+ * uses for the canvas — so the window can never take the pointer for a character it is not
+ * drawing, and never stays click-through while drawing one it could move.
+ */
+const dragHandle = computed(
+  () => movable.value && drawing.value && Boolean(imageUrl.value) && !drawingFailure.value,
+)
+
+/**
+ * What the sprite's tooltip says, in the orb's own words — one sentence for one state, so the two
+ * surfaces cannot describe the same machine differently (§5.2's 「不能用的控件要说出来」).
+ *
+ * A `title` on a canvas that is `aria-hidden` is a pointer's affordance rather than an
+ * announcement, and that is the honest reach here: a window drag is a compositor gesture with no
+ * keyboard equivalent, so this surface has no key to answer and no role worth claiming.
+ */
+const spriteHint = computed(() =>
+  movable.value ? 'Drag to move' : 'This desktop cannot move it',
+)
+
+/** The cursor reading a gesture is measured from: screen coordinates, and the caller's clock. */
+function pointerOf(event: PointerEvent): BallPointer {
+  return {
+    screenX: event.screenX,
+    screenY: event.screenY,
+    at: props.now ? props.now() : performance.now(),
+  }
+}
+
+/**
+ * Hand the pointer to the sprite for the rest of the press, so the move and the release arrive
+ * even when the cursor leaves the character. The orb's own call, for its reason: a capture is
+ * released by the browser and cannot be leaked.
+ */
+function capture(event: PointerEvent, on: boolean): void {
+  const element = event.currentTarget as HTMLElement | null
+  if (!element || typeof event.pointerId !== 'number') return
+  try {
+    if (on) element.setPointerCapture(event.pointerId)
+    else element.releasePointerCapture(event.pointerId)
+  } catch {
+    // No active pointer to capture (a synthesized event, or one the compositor already took).
+  }
+}
+
+/**
+ * Where the press landed, in the canvas's own coordinates.
+ *
+ * Read from the element's box rather than from `event.offsetX`, which upstream used (`:589`):
+ * `offsetX` is relative to whichever node the browser dispatched to, and a hit test whose
+ * coordinate space depends on that is one a test cannot drive.
+ */
+function spritePoint(event: PointerEvent): { x: number; y: number } {
+  const box = (event.currentTarget as HTMLElement | null)?.getBoundingClientRect()
+  return { x: event.clientX - (box?.left ?? 0), y: event.clientY - (box?.top ?? 0) }
+}
+
+function onPetPointerDown(event: PointerEvent): void {
+  // Only the primary button, as the orb does and as upstream did (`:583`): a right-click belongs
+  // to whatever the window opens for it, and arming a press here would let it become a drag.
+  if (event.button !== 0) return
+  if (!dragHandle.value) return
+  const surface = sprite.value
+  const rect = surface?.geometry().spriteRect ?? null
+  const point = spritePoint(event)
+  if (rect && !surface?.hitTest(point.x, point.y)) return
+  capture(event, true)
+  if (gesture.down(pointerOf(event)) === 'pressed') pressed.value = true
+}
+
+function onPetPointerMove(event: PointerEvent): void {
+  if (gesture.move(pointerOf(event)) === 'drag-start') startDrag()
+}
+
+function onPetPointerUp(event: PointerEvent): void {
+  capture(event, false)
+  pressed.value = false
+  // The outcome is not read: `up` is called for what it forgets — a press must not outlive its
+  // release — and a click has nowhere to go here (see this block's header).
+  gesture.up(pointerOf(event))
+}
+
+/** The compositor owns the pointer from here, which arrives as a cancel rather than a release. */
+function onPetPointerCancel(): void {
+  pressed.value = false
+  gesture.cancel()
+}
+
+function startDrag(): void {
+  const beginDrag = props.platform?.startDrag
+  // Nothing to move: the tooltip already says so, and `dragHandle` refused the press.
+  if (!beginDrag) return
+  dragging.value = true
+  pressed.value = false
+  void endDrag(beginDrag.call(props.platform))
+}
+
+async function endDrag(started: Promise<void>): Promise<void> {
+  try {
+    // Resolves when the operating-system drag is over — upstream's `finally` (`main.ts:597`) and
+    // the orb's own `endDrag`, which waits for the same thing.
+    await started
+  } catch {
+    // A drag the compositor refused leaves the character where it was. There is nothing to undo.
+  }
+  dragging.value = false
+  gesture.cancel()
+  try {
+    await props.platform?.snap?.()
+  } catch {
+    // A host that cannot snap keeps the character where the user put it, which is a place they chose.
+  }
+}
+
+/**
+ * What this window has for the pointer to act on, which is what decides whether it takes the
+ * pointer at all — the whole of `usePetClickThrough`'s rule.
+ *
+ * Three things, and they are the whole list: the bubble, whose rows open a task and whose
+ * right-click opens the menu; the menu itself; and the character, now that it is a drag handle.
+ *
+ * **The third entry is the trade-off this rule used to defer, and it is paid rather than avoided.**
+ * `usePetClickThrough`'s header states why the compositor's switch is per window and not per
+ * pixel, so "the character can be grabbed" and "the empty part of the 260x320 box passes clicks
+ * through" cannot both hold: a click-through window is sent no pointer events at all, which is
+ * what makes the choice one-way. The character is what is chosen — and only where it can actually
+ * be grabbed, because {@link dragHandle} is false without the capability, so a desktop whose
+ * compositor cannot do it keeps the pass-through it had.
+ *
+ * Declared after the drawing states rather than beside the bubble, and that is a runtime
+ * constraint rather than a preference: a watcher evaluates its getter as it is set up
+ * (`usePetClickThrough` watches this one), so a `needsInput` naming a binding declared below it
+ * would throw on mount rather than on the first change.
+ */
+const needsInput = computed(
+  () => Boolean(bubble.value?.visible) || menuAt.value !== null || dragHandle.value,
+)
+
+/**
+ * The window's own input region (§7.2's 鼠标穿透), asked for the first time below and re-asked
+ * whenever `needsInput` moves.
+ *
+ * Absent when the window has no host connection, which is a state this component already renders:
+ * a window with no host is a window that never has anything to click, and the compositor's default
+ * — take the clicks — is what it keeps.
+ */
+const clickThrough = props.connection
+  ? usePetClickThrough({
+      setClickThrough: (ignore) => props.connection!.setClickThrough(ignore),
+      needsInput: () => needsInput.value,
+    })
+  : null
 
 const notice = computed<string | null>(() => {
   const state = lifecycle?.state.value
@@ -270,8 +483,17 @@ defineExpose({ lifecycle })
          standing still. That covers the sheet that will not load and the canvas with no 2D context,
          and for the second it is also what makes the sentence reachable at all — the sentence is
          drawn in `notice`'s own element, which this branch otherwise wins. -->
+    <!-- The sprite is the drag handle, so the four pointer listeners and the three state classes
+         are on it rather than on the window: they fall through to `PetSprite`'s own canvas, which
+         is the element upstream bound them to too (`main.ts:582`). A press on the transparent part
+         of the canvas's box still reaches the window — the compositor's switch has no shape — and
+         `onPetPointerDown` is what refuses to start anything from it. -->
     <PetSprite
       v-if="drawing && imageUrl && !drawingFailure"
+      ref="sprite"
+      class="pet-root__sprite"
+      :class="{ 'is-movable': movable, 'is-pressed': pressed, 'is-dragging': dragging }"
+      :title="spriteHint"
       :image-url="imageUrl"
       :state="mood"
       :width="spriteWidth"
@@ -282,6 +504,10 @@ defineExpose({ lifecycle })
       :read-pixels="readPixels"
       :on-load-error="onSheetFailure"
       :on-unavailable="onSpriteUnavailable"
+      @pointerdown="onPetPointerDown"
+      @pointermove="onPetPointerMove"
+      @pointerup="onPetPointerUp"
+      @pointercancel="onPetPointerCancel"
     />
     <p
       v-else-if="notice"
@@ -338,6 +564,33 @@ body {
   flex: 0 1 auto;
   min-height: 0;
   align-self: stretch;
+}
+
+/* The character is the drag handle, so the canvas is the element that says so. `grab` only where
+   there is a drag to make — §5.2's 「不能用的控件要说出来」, and the same rule the orb's hint follows:
+   a cursor promising movement on a desktop that cannot move the window is the lie the tooltip
+   beside it is there to avoid. */
+.pet-root__sprite.is-movable {
+  cursor: grab;
+  /* Pointer events, not mouse events: the press must keep being measured while the cursor is over
+     the desktop, and the browser must not claim the gesture first. The orb's line, for its reason. */
+  touch-action: none;
+}
+
+/* The orb's two states, translated to a surface that may not be scaled. The orb presses to
+   `scale(0.96)` and drags at `scale(1.01)`; a pixel-art sprite scaled by 0.96 lands between its
+   pixels and is drawn as a smear, so the same two states are a shade here. Neither declares a
+   `transition`, which is what keeps the paragraph above `appearance` true: this window still has
+   no CSS animation or transition for §5.2's 动效 to turn off, so a reduce-motion rule added here
+   would be a class nothing could see — and the states stay, because they say what the pointer is
+   doing rather than decorating it. */
+.pet-root__sprite.is-pressed {
+  filter: brightness(0.92);
+}
+
+.pet-root__sprite.is-dragging {
+  cursor: grabbing;
+  filter: brightness(1.06);
 }
 
 .pet-root__notice {

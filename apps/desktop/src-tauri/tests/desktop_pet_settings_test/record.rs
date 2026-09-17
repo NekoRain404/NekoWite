@@ -55,10 +55,14 @@ fn every_arm_serializes_the_way_the_contract_spells_it() {
         serde_json::to_value(read_domain(domain, stored.as_ref())).expect("a load serializes")
     };
 
+    // The two numbers here moved with the schema: 3 is the version this build writes and 4 is one
+    // ahead of it. They stay literals rather than `PET_SETTINGS_SCHEMA_VERSION` so that a bump is
+    // a deliberate act — the arm below asserts what a *newer* record does, and a version that
+    // followed the constant would stop being newer the day someone bumped it.
     let current = read(
         Some(stored(
             "general",
-            2,
+            3,
             3,
             json!({ "enabled": true, "motion": "system" }),
         )),
@@ -66,16 +70,16 @@ fn every_arm_serializes_the_way_the_contract_spells_it() {
     );
     assert_eq!(current["status"], "current");
     assert_eq!(current["record"]["domain"], "general");
-    assert_eq!(current["record"]["schemaVersion"], 2);
+    assert_eq!(current["record"]["schemaVersion"], 3);
     assert_eq!(current["record"]["revision"], 3);
     assert_eq!(current["record"]["values"]["motion"], "system");
 
     assert_eq!(
         read(
-            Some(stored("general", 3, 1, json!({}))),
+            Some(stored("general", 4, 1, json!({}))),
             PetSettingsDomain::General
         ),
-        json!({ "status": "read-only", "reason": "schema-newer", "foundVersion": 3 })
+        json!({ "status": "read-only", "reason": "schema-newer", "foundVersion": 4 })
     );
     assert_eq!(
         read(None, PetSettingsDomain::Care),
@@ -136,10 +140,11 @@ fn every_arm_serializes_the_way_the_contract_spells_it() {
     ));
     assert_eq!(refused["status"], "refused");
     assert_eq!(refused["reason"], "invalid-value");
-    // Schema order, field by field: `enabled` is declared before `motion`, and `ball` after it.
+    // Schema order, field by field: `enabled` is declared before `motion`, `ball` after it, and
+    // `characterWindow` — appended when the second per-window switch arrived — last.
     assert_eq!(
         refused["message"],
-        "general.enabled:wrong-type, general.motion:missing, general.ball:missing"
+        "general.enabled:wrong-type, general.motion:missing, general.ball:missing, general.characterWindow:missing"
     );
 
     let newer = outcome(decide_write(
@@ -156,7 +161,7 @@ fn every_arm_serializes_the_way_the_contract_spells_it() {
         json!({
             "status": "refused",
             "reason": "schema-newer",
-            "message": "general is at schema 9; this build writes 2",
+            "message": "general is at schema 9; this build writes 3",
         })
     );
 }
@@ -212,15 +217,17 @@ fn a_document_that_is_not_a_record_reads_as_unreadable() {
 /// which is exactly what a caller would then write back.
 #[test]
 fn a_record_from_a_newer_build_is_read_only_and_carries_the_version_it_found() {
+    // 4 is one past the schema this build writes (3, since `general.characterWindow` arrived); the
+    // number is written out rather than derived so that the next bump has to come through here.
     let load = read_domain(
         PetSettingsDomain::General,
-        Some(&stored("general", 3, 4, json!({ "enabled": false }))),
+        Some(&stored("general", 4, 4, json!({ "enabled": false }))),
     );
     assert_eq!(
         load,
         PetSettingsLoad::ReadOnly {
             reason: ReadOnlyReason::SchemaNewer,
-            found_version: 3,
+            found_version: 4,
         }
     );
     assert!(
@@ -346,7 +353,7 @@ fn a_write_at_another_revision_is_a_conflict_carrying_what_is_stored() {
 fn a_newer_store_refuses_a_write_before_anything_else() {
     let stored = record(
         PetSettingsDomain::General,
-        3,
+        4,
         4,
         json!({ "enabled": true, "motion": "system" }),
     );
@@ -359,7 +366,7 @@ fn a_newer_store_refuses_a_write_before_anything_else() {
         decide_write(&stored, &write),
         PetSettingsUpdate::Refused {
             reason: RefusalReason::SchemaNewer,
-            message: "general is at schema 3; this build writes 2".to_string(),
+            message: "general is at schema 4; this build writes 3".to_string(),
         }
     );
 }

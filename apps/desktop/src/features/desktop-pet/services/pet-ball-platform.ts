@@ -26,7 +26,11 @@ import { getWindowControls, type WindowControls } from '../../../platform/window
 import type { PetBallPlatform } from './pet-ball-input'
 
 /**
- * The ball's window, as the drag needs it, over the app's window controls.
+ * The window this page runs in, as the drag needs it, over the app's window controls.
+ *
+ * One factory for both of the pet's surfaces: the ball's resolver and the character window's
+ * (`desktop-pet-composition.ts`) each build one, and what it returns is the *window's* drag rather
+ * than either surface's — the name is the ball's because the ball is where the port used it first.
  *
  * `controls` is a parameter so the behaviour can be exercised without a Tauri host — the same
  * injection `pet-ball-input.ts` asks for with the platform itself, one level down. The product

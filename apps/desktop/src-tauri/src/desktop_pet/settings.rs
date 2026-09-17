@@ -43,15 +43,18 @@ pub use fields::{Field, Kind, MemberRule};
 pub use store::{PetSettingsStore, SETTINGS_DIR};
 pub use values::{Problem, ProblemKind, Readout};
 
-/// The schema version this build writes, D7d's bump to 2.
+/// The schema version this build writes: D7d's bump to 2, and the bump to 3 that added
+/// `general.characterWindow`.
 ///
-/// 2 is 1 plus the animation, phrase and layout fields the ledger's remaining rows needed, and the
-/// bump is what makes the read-only rule do its work in the other direction: a build that only
-/// knows version 1 meets a version-2 record, reports `read-only` and leaves it alone instead of
-/// reading the fields it recognises, defaulting the ones it does not, and writing that back over
-/// the user's animation mapping. `pet-contracts/config.ts` declares the same number, and
-/// `the_schema_version_is_the_typescript_one` reads it off disk.
-pub const PET_SETTINGS_SCHEMA_VERSION: i64 = 2;
+/// 2 is 1 plus the animation, phrase and layout fields the ledger's remaining rows needed; 3 is 2
+/// plus the second of the pet's two per-window switches. Each bump is what makes the read-only rule
+/// do its work in the other direction: a build that only knows the older version meets the newer
+/// record, reports `read-only` and leaves it alone instead of reading the fields it recognises,
+/// defaulting the ones it does not, and writing that back over what the user chose — for
+/// `characterWindow` that would be a window they had switched off coming back.
+/// `pet-contracts/config.ts` declares the same number, and `the_schema_version_is_the_typescript_one`
+/// reads it off disk.
+pub const PET_SETTINGS_SCHEMA_VERSION: i64 = 3;
 
 /// The revision a domain that has never been written is at.
 ///

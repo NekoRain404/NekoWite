@@ -23,6 +23,9 @@ import type { PetWindowGateway } from '../platform/gateways/pet-contracts'
 import type { ImageFactory } from '../features/desktop-pet/rendering/sprite-sheet'
 import type { SheetPixelReader } from '../features/desktop-pet/rendering/sprite-slicer'
 import type { SpriteClock } from '../features/desktop-pet/rendering/animation-bindings'
+// The window's drag contract, as a type only: `createBallPlatform()` — the one implementation —
+// lives in the feature and is the composition's to call, and this entry only carries what it built.
+import type { PetBallPlatform } from '../features/desktop-pet/services/pet-ball-input'
 // By path, and deliberately not through `features/desktop-pet/index.ts`: that entry is the
 // feature's public API *for other callers* — the settings page mounts `PetCarePanel` through it —
 // and reaching it from here would put the whole of it in this window's source graph, the care
@@ -52,6 +55,17 @@ export const DESKTOP_PET_ROOT_ID = 'desktop-pet'
  */
 export interface DesktopPetDependencies {
   connection: PetWindowGateway
+  /**
+   * The desktop's drag, when this build has one — the same object, built the same way, as the one
+   * `DesktopPetBallDependencies.platform` carries to the other window.
+   *
+   * It is a parameter for the reason §7.2 gives: a desktop that cannot move a window does not
+   * implement `startDrag`, so the character is not a drag handle there and the window says so
+   * instead of looking movable. Nothing in this file builds one — `createBallPlatform()` is
+   * `desktop-pet-composition.ts`'s to call, because "is there a Tauri window behind this page" is
+   * the composition's question and not an entry's.
+   */
+  platform?: PetBallPlatform | null
   /**
    * The sprite's resources, injected (§10.2's 注入……资源 rule).
    *
@@ -104,6 +118,9 @@ export function mountDesktopPet(
     // uses. A second connection here would be a second cached adapter.
     gateway: connection,
     connection,
+    // Absent is a state and not a gap: a caller that built no platform (every test, and the
+    // browser build) is handing the window a desktop that cannot move it, and the sprite says so.
+    platform: dependencies?.platform ?? null,
     ...sprite,
   })
   app.mount(host)

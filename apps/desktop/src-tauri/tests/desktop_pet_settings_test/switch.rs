@@ -263,6 +263,233 @@ fn the_unselected_identity_opens_the_pet_window() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// The pet's two windows, each on its own switch
+// ---------------------------------------------------------------------------
+
+/// **只开悬浮球.** With 显示角色窗口 off and 显示悬浮球 on there is no character window and there is a
+/// ball — the state the pair of switches exists for, and the one the master switch could not say.
+///
+/// The published state is asserted too, and it is the half that is easy to get wrong: `enabled` is
+/// whether the pet has a window on the desktop at all, so a state that answered "off" here would be
+/// the interface and the backend disagreeing about one record (§5.3).
+#[test]
+fn a_write_that_wants_only_the_ball_opens_the_ball_and_no_character_window() {
+    let (mut host, surfaces) = support::host();
+    let state = apply_feature_switch(
+        &mut host,
+        &record(
+            PetSettingsDomain::General,
+            &[
+                ("enabled", json!(true)),
+                ("characterWindow", json!(false)),
+                ("ball", json!(true)),
+            ],
+        ),
+        "cat",
+    );
+
+    assert_eq!(
+        state,
+        Some(PetFeatureState {
+            enabled: true,
+            visible: true
+        }),
+        "the pet is on and one of its windows is up"
+    );
+    assert!(surfaces.character_opens().is_empty());
+    assert!(host.instances().is_empty());
+    assert_eq!(
+        surfaces.ball_open(),
+        Some((BALL_LABEL.to_string(), DESKTOP_PET_BALL_PAGE.to_string()))
+    );
+    assert_eq!(host.ball().map(|label| label.as_str()), Some(BALL_LABEL));
+}
+
+/// And the same pair of switches the other way round, from a pet that is already up: the character
+/// window closes, the ball does not, and nothing about the character's switch reaches the ball.
+#[test]
+fn turning_the_character_window_off_closes_it_and_leaves_the_ball_where_it_is() {
+    let (mut host, surfaces) = support::host();
+    let instance = host.open("cat").expect("a window");
+    assert!(host.ball().is_some(), "the ball came up with the pet");
+
+    let state = apply_feature_switch(
+        &mut host,
+        &record(
+            PetSettingsDomain::General,
+            &[
+                ("enabled", json!(true)),
+                ("characterWindow", json!(false)),
+                ("ball", json!(true)),
+            ],
+        ),
+        "cat",
+    );
+
+    assert_eq!(
+        state,
+        Some(PetFeatureState {
+            enabled: true,
+            visible: true
+        }),
+        "the feature's state is not the character window's"
+    );
+    assert!(host.instances().is_empty());
+    assert!(surfaces
+        .state()
+        .closed
+        .contains(&instance.label.as_str().to_string()));
+    assert_eq!(surfaces.live(), vec![BALL_LABEL.to_string()]);
+}
+
+/// The switch back on opens the character window again, and only that window: the ball is already
+/// up, and a second one is what an `ensure` that ignored its own state would leave on the desktop.
+#[test]
+fn turning_the_character_window_back_on_reopens_it_without_a_second_ball() {
+    let (mut host, surfaces) = support::host();
+    let off = record(
+        PetSettingsDomain::General,
+        &[
+            ("enabled", json!(true)),
+            ("characterWindow", json!(false)),
+            ("ball", json!(true)),
+        ],
+    );
+    apply_feature_switch(&mut host, &off, "cat");
+    assert!(host.instances().is_empty());
+
+    let on = record(
+        PetSettingsDomain::General,
+        &[
+            ("enabled", json!(true)),
+            ("characterWindow", json!(true)),
+            ("ball", json!(true)),
+        ],
+    );
+    apply_feature_switch(&mut host, &on, "cat");
+
+    assert_eq!(host.instances().len(), 1, "the character window is back");
+    assert_eq!(host.instances()[0].character_id, "cat");
+    assert_eq!(
+        surfaces
+            .opened()
+            .iter()
+            .filter(|(label, _)| label == BALL_LABEL)
+            .count(),
+        1,
+        "the ball was up already"
+    );
+}
+
+/// The master switch off takes a ball-only pet down, which is §4's rollback read against the new
+/// pair: `enabled` is not one of the two window switches, and neither of them can keep a window
+/// alive underneath it.
+#[test]
+fn the_master_switch_takes_a_ball_only_pet_down() {
+    let (mut host, surfaces) = support::host();
+    let state = apply_feature_switch(
+        &mut host,
+        &record(
+            PetSettingsDomain::General,
+            &[
+                ("enabled", json!(false)),
+                ("characterWindow", json!(false)),
+                ("ball", json!(true)),
+            ],
+        ),
+        "cat",
+    );
+
+    assert_eq!(
+        state,
+        Some(PetFeatureState {
+            enabled: false,
+            visible: false
+        })
+    );
+    assert!(surfaces.opened().is_empty(), "nothing at all was opened");
+    assert!(host.ball().is_none());
+    assert!(host.ball_enabled(), "the preference is still the user's");
+}
+
+/// A record that carries no `characterWindow` at all, handed straight to the switch: the other
+/// half of the same arm, one layer down.
+///
+/// No store produces one — `values::read_values` fills every field the schema declares, on the read
+/// path and on the write path both — so this is a record built outside it, and the value the
+/// switch falls back to is what such a record *means*: `enabled` on was a pet, and a pet was a
+/// character window. Read as `false` instead, every one of those records would lose its window to
+/// this build.
+#[test]
+fn a_record_that_carries_no_character_window_switch_opens_the_character_window() {
+    let (mut host, surfaces) = support::host();
+    let mut values = defaults(PetSettingsDomain::General);
+    values.remove("characterWindow");
+    let record = PetSettingsRecord {
+        domain: PetSettingsDomain::General,
+        schema_version: PET_SETTINGS_SCHEMA_VERSION,
+        revision: 1,
+        values,
+    };
+
+    apply_feature_switch(&mut host, &record, "cat");
+
+    assert_eq!(surfaces.character_opens().len(), 1);
+    assert_eq!(host.instances()[0].character_id, "cat");
+    assert_eq!(
+        surfaces.ball_open(),
+        Some((BALL_LABEL.to_string(), DESKTOP_PET_BALL_PAGE.to_string()))
+    );
+}
+
+/// A record written before the field existed — the arm the whole shape has to be safe for. Nothing
+/// in the stored file says anything about a character window, and what that record meant when it
+/// was written is what it has to keep meaning: `enabled` on was a pet, both windows of it.
+#[test]
+fn a_record_from_before_the_switch_existed_opens_the_windows_it_always_did() {
+    let (store, data) = support::store("startup-before-characterWindow");
+    write_record(
+        &store,
+        PET_SETTINGS_SCHEMA_VERSION - 1,
+        json!({ "enabled": true, "motion": "system", "ball": true }),
+    );
+    let (mut host, surfaces) = support::host();
+
+    restore(&mut host, &store);
+
+    assert_eq!(surfaces.character_opens().len(), 1);
+    assert_eq!(host.instances()[0].character_id, UNSELECTED_CHARACTER);
+    assert_eq!(
+        surfaces.ball_open(),
+        Some((BALL_LABEL.to_string(), DESKTOP_PET_BALL_PAGE.to_string()))
+    );
+}
+
+/// **And the record that must not gain a window.** This is every user who has ever turned the pet
+/// off: `enabled: false` with `ball` left at its default `true`, written by a build that had no
+/// character-window field. Read as "the ball follows `ball` alone" it would put a ball on their
+/// desktop at the next launch — a window they never asked for, appearing because of an upgrade.
+#[test]
+fn a_record_from_before_the_switch_existed_and_switched_off_opens_nothing() {
+    let (store, data) = support::store("startup-before-switched-off");
+    write_record(
+        &store,
+        PET_SETTINGS_SCHEMA_VERSION - 1,
+        json!({ "enabled": false, "motion": "system", "ball": true }),
+    );
+    let (mut host, surfaces) = support::host();
+
+    restore(&mut host, &store);
+
+    assert!(
+        surfaces.opened().is_empty(),
+        "the pet was switched off and stayed off"
+    );
+    assert!(host.instances().is_empty());
+    assert!(host.ball().is_none(), "and no ball appeared either");
+}
+
 /// A window system that refuses everything, so the enable path's handling of a real failure has a
 /// way to be reached without inventing one.
 struct RefusingSurfaces;
@@ -475,6 +702,27 @@ fn stored(data: &Path, domain: PetSettingsDomain, changes: &[(&str, Value)]) -> 
     store
 }
 
+/// One `general` record written straight to disk, at a schema version of the caller's choosing.
+///
+/// The launch cases about a record *this build did not write* need the file itself: a record put
+/// through `PetSettingsStore::apply` is stamped with this build's version and carries every field
+/// the schema declares, which is exactly what those cases must not have.
+fn write_record(store: &PetSettingsStore, version: i64, values: Value) {
+    let path = store.path_of(PetSettingsDomain::General);
+    std::fs::create_dir_all(path.parent().expect("a settings directory")).expect("a directory");
+    std::fs::write(
+        &path,
+        serde_json::to_string(&json!({
+            "domain": "general",
+            "schemaVersion": version,
+            "revision": 1,
+            "values": values,
+        }))
+        .expect("a JSON document"),
+    )
+    .expect("a written record");
+}
+
 /// **A fresh install shows its pet.** `general.enabled` defaults to true, and before this path
 /// existed nothing applied it: the switch rendered checked — it is read from the same schema — and
 /// no window existed, because the only caller of the enable path was a settings *write*. The first
@@ -553,6 +801,33 @@ fn a_stored_ball_off_opens_the_character_and_not_the_ball() {
     assert_eq!(surfaces.character_opens().len(), 1);
     assert_eq!(surfaces.ball_open(), None);
     assert!(!host.ball_enabled());
+}
+
+/// And the other half of the pair, at the one moment no window exists yet: a stored 只开悬浮球 opens
+/// the ball and no character window at all.
+///
+/// This is the arm `restore` exists for — nothing has asked the host for a window, so a switch the
+/// launch path does not read is a choice that only takes effect once the user opens the settings
+/// page and saves something.
+#[test]
+fn a_stored_character_window_off_opens_the_ball_and_not_the_character() {
+    let (store, data) = support::store("startup-ball-only");
+    stored(
+        &data,
+        PetSettingsDomain::General,
+        &[("characterWindow", json!(false))],
+    );
+    let (mut host, surfaces) = support::host();
+
+    restore(&mut host, &store);
+
+    assert!(surfaces.character_opens().is_empty());
+    assert!(host.instances().is_empty());
+    assert_eq!(
+        surfaces.ball_open(),
+        Some((BALL_LABEL.to_string(), DESKTOP_PET_BALL_PAGE.to_string()))
+    );
+    assert_eq!(host.ball().map(|label| label.as_str()), Some(BALL_LABEL));
 }
 
 /// A record from a newer build is the one arm a launch does **not** act on.

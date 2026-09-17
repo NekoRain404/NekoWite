@@ -49,9 +49,14 @@ const props = withDefaults(
      */
     connection?: PetWindowGateway | null
     /**
-     * The desktop's drag and snap, when this build has one. Absent is the honest state today: the
-     * pet's capability holds no window-movement permission and there is no snap command, so the
-     * orb says 「This desktop cannot move it」 rather than offering a drag that does nothing.
+     * The desktop's drag and snap, when this build has one.
+     *
+     * The composition supplies it wherever the page has a Tauri window behind it
+     * (`resolveDesktopPetBallDependencies`), and `capabilities/desktop-pet.json` grants the
+     * `pet-*` windows the one permission the drag calls — so it is present in the product, and the
+     * orb's tooltip reads 「Drag to move」 there. Absent stays a state rather than a gap: a browser
+     * page, or a caller that passes none, is a desktop that cannot move the orb, and it says so
+     * instead of offering a drag that does nothing (§7.2).
      */
     platform?: PetBallPlatform | null
     /** Injected for tests (§10.2): passed to the orb, and through it to the sprite. */

@@ -142,6 +142,12 @@ export interface PetSettingsValues {
      * all, so it defaults on and turns the feature *off*; §7.1's explicit opt-in
      * requirement is about the pet staying resident after its window is closed, which
      * is a different switch from whether the pet exists.
+     *
+     * It is the master gate and not one of the two windows: with this off there is no
+     * pet window at all, whichever way `characterWindow` and `ball` are set. Each
+     * window then follows its *own* switch on top of this one — the rule is one
+     * sentence, read in one place (`feature_switch.rs`), so that the page's control
+     * and the host's read cannot disagree about what a field means.
      */
     enabled: boolean
     /**
@@ -151,16 +157,29 @@ export interface PetSettingsValues {
      */
     motion: 'system' | 'reduced'
     /**
-     * §5.1's 悬浮球: whether the floating ball is one of the pet's windows.
+     * §5.1's 悬浮球: whether the floating ball's window is one of the pet's.
      *
      * It defaults on, which is what upstream's own stored flag means (`read_ball_visible`'s
      * `unwrap_or(true)`) and what this app did before the field existed — the switch makes
-     * the existing behaviour a choice rather than changing it. It is a preference about
-     * *one* of the pet's windows and not a second master switch: the ball is on the
-     * desktop when this is on and `enabled` is on, and switching the pet off takes it
-     * down with everything else.
+     * the existing behaviour a choice rather than changing it. Upstream's own
+     * 「Show floating ball」 row (`windows/settings.html:50-52`) is what this ports: the ball
+     * follows *this* flag and nothing else, so it is still there when the character's window
+     * is not. `enabled` remains the master gate above it.
      */
     ball: boolean
+    /**
+     * §5.1's 显示角色窗口 / the plan's 「主角色显示」 — upstream's 「Show main pet」
+     * (`windows/settings.html:69-71`, applied by `set_pet_visible`, `src-tauri/src/lib.rs:613-623`),
+     * which is a port and not an addition: upstream can show the ball without the character,
+     * which is exactly what that row exists to allow.
+     *
+     * It decides whether the pet's *character* window exists, and it is the second of the two
+     * per-window switches beside `ball` — neither of them is a master switch. It defaults on,
+     * which is what upstream's own `checked` means and what this build did before the field
+     * existed, so a stored record read by this build opens exactly the windows it opened
+     * before. Off with `ball` on is the choice the pair exists for: 「只开悬浮球」.
+     */
+    characterWindow: boolean
   }
   character: {
     /**
@@ -294,7 +313,7 @@ export interface PetSettingsValues {
 
 /** The defaults §5.3 requires each schema to state outright. */
 export const PET_SETTINGS_DEFAULTS: { [D in PetSettingsDomain]: PetSettingsValues[D] } = {
-  general: { enabled: true, motion: 'system', ball: true },
+  general: { enabled: true, motion: 'system', ball: true, characterWindow: true },
   character: {
     characterId: null,
     size: 160,
@@ -427,12 +446,14 @@ export type PetSettingsWrite = {
  * The schema version this build writes.
  *
  * 2 is 1 plus the animation, phrase and layout fields the ledger's remaining rows needed
- * (D7d). The bump is what makes §10.2's rule do its work in the other direction: a build
- * that only knows version 1 meets a version-2 record, reports `read-only` and leaves it
+ * (D7d). 3 is 2 plus `general.characterWindow`, the second of the pet's two per-window
+ * switches. The bump is what makes §10.2's rule do its work in the other direction: a build
+ * that only knows the older version meets the newer record, reports `read-only` and leaves it
  * alone, instead of reading the fields it recognises, defaulting the ones it does not and
- * writing that back over the user's animation mapping.
+ * writing that back over what the user chose — which for a field like `characterWindow` would
+ * bring back a window they had switched off.
  */
-export const PET_SETTINGS_SCHEMA_VERSION = 2
+export const PET_SETTINGS_SCHEMA_VERSION = 3
 
 /**
  * What reading a domain produced.

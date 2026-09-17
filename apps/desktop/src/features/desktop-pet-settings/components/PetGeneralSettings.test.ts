@@ -124,9 +124,10 @@ describe('every control writes the domain it belongs to', () => {
     expect(await storedValues(gateway, 'general')).toEqual({
       enabled: false,
       motion: 'reduced',
-      // The ball's switch is on this page too and this case never touched it: it is written
-      // whole-domain, so what a page does not edit keeps the value it was read with.
+      // The two window switches are on this page too and this case never touched them: a write is
+      // the whole domain, so what a page does not edit keeps the value it was read with.
       ball: true,
+      characterWindow: true,
     })
 
     // The window behaviour this page owns is `view.alwaysOnTop`, and it is the same kind of check
@@ -151,6 +152,51 @@ describe('every control writes the domain it belongs to', () => {
     // The master switch is untouched: the two are one `general` record and two decisions, which
     // is the whole point of the field — a user who wants the character and not the ball.
     expect((await storedValues(gateway, 'general')).enabled).toBe(true)
+  })
+
+  it('reaches the character window’s own switch, which is what makes 只开悬浮球 writable', async () => {
+    const gateway = createMemoryPetGateway({ capabilities: ALL_AVAILABLE })
+    mount(gateway)
+    await flush()
+
+    const characterWindow = fieldControl<HTMLInputElement>(
+      t('settings.pet.general.characterWindow'),
+      'input',
+    )
+    expect(characterWindow.checked).toBe(true)
+    expect(characterWindow.disabled).toBe(false)
+    characterWindow.click()
+    await flush(DEBOUNCE_PLUS)
+
+    // The two switches are one `general` record and two decisions: the ball was not touched, and
+    // neither was the master switch — off-with-the-ball-on is the write that says 「只开悬浮球」.
+    expect((await storedValues(gateway, 'general'))).toEqual({
+      enabled: true,
+      motion: 'system',
+      ball: true,
+      characterWindow: false,
+    })
+  })
+
+  it('disables the character window’s switch while the pet is off, and says why', async () => {
+    const gateway = createMemoryPetGateway({ capabilities: ALL_AVAILABLE })
+    await seed(gateway, 'general', { enabled: false })
+    mount(gateway)
+    await flush()
+
+    // The same §5.2 arm the ball's switch gets, on the other window: with 显示桌宠 off there is no
+    // pet window at all, so this preference can have no visible effect until it is on.
+    const characterWindow = fieldControl<HTMLInputElement>(
+      t('settings.pet.general.characterWindow'),
+      'input',
+    )
+    expect(characterWindow.disabled).toBe(true)
+    characterWindow.click()
+    await flush(DEBOUNCE_PLUS)
+    expect((await storedValues(gateway, 'general')).characterWindow).toBe(true)
+    const notes = [...document.querySelectorAll<HTMLElement>('.settings-section .settings-note')]
+      .map((note) => note.textContent ?? '')
+    expect(notes.some((note) => note.includes(t('settings.pet.general.characterWindowNote')))).toBe(true)
   })
 
   it('disables the ball’s switch while the pet is off, and says why', async () => {
@@ -282,6 +328,7 @@ describe('restoring this page', () => {
       enabled: true,
       motion: 'system',
       ball: true,
+      characterWindow: true,
     })
     expect((await storedValues(gateway, 'view')).alwaysOnTop).toBe(true)
     // §5.3 「恢复本页默认只影响当前域」: the reset reached this page's two domains and no others,

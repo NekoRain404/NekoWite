@@ -127,9 +127,11 @@ async function openSession(
 
 describe('every field D7d added', () => {
   it('is declared by the schema, and the version says so', () => {
-    // The bump is what makes §10.2 protect the new fields: a build that only knows version 1
-    // meets a version-2 record and leaves it alone instead of defaulting what it cannot read.
-    expect(PET_SETTINGS_SCHEMA_VERSION).toBe(2)
+    // The bump is what makes §10.2 protect the new fields: a build that only knows the older
+    // version meets the newer record and leaves it alone instead of defaulting what it cannot
+    // read. The number moved to 3 when `general.characterWindow` arrived, and it is written out
+    // here rather than compared with itself so that the next bump comes through this line.
+    expect(PET_SETTINGS_SCHEMA_VERSION).toBe(3)
     for (const { domain, field } of ROUND_TRIPS) {
       expect(Object.keys(PET_SETTINGS_DEFAULTS[domain])).toContain(field)
     }

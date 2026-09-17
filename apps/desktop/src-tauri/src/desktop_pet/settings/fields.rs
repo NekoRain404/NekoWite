@@ -85,11 +85,14 @@ pub struct Field {
     pub kind: Kind,
 }
 
-/// The fields of `general`: §5.1's 启用 and the motion policy.
+/// The fields of `general`: §5.1's 启用, the two per-window switches, and the motion policy.
 const GENERAL: &[Field] = &[
     // §5.1's 启用, and §4's rollback: turning this off stops the pet and cancels nothing else — no
     // agent task, no note save, and no character, care progress or history. It defaults on and
     // turns the feature *off*, for the reason `pet-contracts/config.ts` gives.
+    //
+    // The master gate and not one of the two windows: with this off there is no pet window at all,
+    // whichever way the two below are set. Each window then follows its own switch on top of it.
     Field {
         name: "enabled",
         kind: Kind::Bool(true),
@@ -113,6 +116,19 @@ const GENERAL: &[Field] = &[
     // exists when this is on and 启用 is on, which is why it is 常规与交互's row and not its own page.
     Field {
         name: "ball",
+        kind: Kind::Bool(true),
+    },
+    // §5.1's 显示角色窗口 — the plan's 「主角色显示」, which is upstream's 「Show main pet」
+    // (`references/desktop-pet/windows/settings.html:69-71`, applied by `set_pet_visible`,
+    // `windows/src-tauri/src/lib.rs:613-623`). A port and not an addition: upstream can show its
+    // ball without the character, and that row is how.
+    //
+    // The second of the two per-window switches beside `ball`, and the reason the pair exists:
+    // 启用 governs the feature, these two govern its windows, and off-with-`ball`-on is 「只开悬浮球」.
+    // On by default because that is what upstream's own `checked` means and what this build did
+    // before the field existed, so no stored record gains or loses a window by being read here.
+    Field {
+        name: "characterWindow",
         kind: Kind::Bool(true),
     },
 ];

@@ -147,8 +147,9 @@ pub fn desktop_pet_update_settings<R: tauri::Runtime>(
     Ok(outcome)
 }
 
-/// The feature switch, as the two things it does to the windows: §5.1's 启用 and §4's rollback —
-/// and the *other* switch on the same record, §5.1's 悬浮球 (`general.ball`).
+/// The feature switch, as the three things it does to the windows: §5.1's 启用 and §4's rollback,
+/// and the two per-window switches on the same record — 显示角色窗口 (`general.characterWindow`) and
+/// 悬浮球 (`general.ball`).
 ///
 /// `general.enabled` is a settings *value*, so the windows follow the write that set it rather than
 /// a watcher on a file — and an applied `general` write is one of the two moments the answer is

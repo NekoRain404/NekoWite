@@ -17,9 +17,12 @@
 //! `references/.../src-tauri/src/lib.rs:334-339`) and its settings page has had a 「Show floating
 //! ball」 row all along; this build's `general` domain had no such field, so the ball followed the
 //! master switch and a user who wanted the character but not the ball could not say so. It is
-//! `general.ball` now, and the rule is `!`upstream's: the ball is one of the pet's windows, so it
-//! exists when the master switch is on *and* this one is — a ball with the pet switched off would be
-//! a surface the switch the user pulled does not govern.
+//! `general.ball` now, and the rule is upstream's: the ball exists when this switch is on, and
+//! nothing about the character window decides it — a ball on its own, with no character window at
+//! all, is the state the pair of switches exists for (「只开悬浮球」). The one gate above it is
+//! `general.enabled`, §5.1's master switch and §4's rollback, which takes *every* pet window down
+//! and is not a window's own switch: a ball with the feature switched off would be a surface the
+//! switch the user pulled does not govern.
 //!
 //! Ported from that file at commit `be171a01273a1ed92a27bcdf72f8a58768bac421` (MIT, `Copyright (c)
 //! 2026 Nguyễn Thành Đạt`): `BALL_W`/`BALL_H` and the 24/80 margins are its numbers, and the
@@ -105,9 +108,11 @@ impl Ball {
     /// state believing there is no window, so the next enable asks again instead of reporting a
     /// window that is not there.
     ///
-    /// **The switch is read here and not by the caller.** The host's `open` is what the enable path
-    /// calls, and it is also what a character pick calls — the ball comes up with either, which is
-    /// what makes "the ball is on" mean "the pet is on and the ball is wanted" in one place.
+    /// **The switch is read here and not by the caller.** Three callers reach it — the host's
+    /// `open` (the enable path, and a character pick), `PetWindowHost::ensure_ball` (the write that
+    /// turns 显示角色窗口 off, where the ball is the window that stays), and nothing else — and none
+    /// of them asks whether the ball is wanted: what "the ball is on" means is decided here, once,
+    /// in `if !self.enabled` below.
     ///
     /// The presentation is the *host's* ([`PetWindowHost::style`]) rather than this file's
     /// constant, because one of its flags is a setting (`view.alwaysOnTop`) and the ball is one of
@@ -143,11 +148,13 @@ impl Ball {
 
     /// Turn the switch on or off, and do what the answer means for the window that is up.
     ///
-    /// **On does not open.** The same applied write that carries `ball: true` also carries
-    /// `enabled` — it is one `general` record — and `apply` asks the host for its windows right
-    /// after this, so the open happens there rather than twice here. What this call must not do is
-    /// open a window with the master switch off, which is what an unconditional `ensure` would do:
-    /// the ball would appear on a desktop whose pet the user had just switched off.
+    /// **On does not open.** The same applied write that carries `ball: true` also carries the rest
+    /// of the `general` record — `enabled`, and the character window's own switch — and
+    /// `feature_switch::apply` asks the host for each of its windows right after this, so the open
+    /// happens there rather than twice here. What this call must not do is open a window with the
+    /// master switch off, which is what an unconditional `ensure` would do: the ball would appear on
+    /// a desktop whose pet the user had just switched off. {@link Ball::ensure} is the other half,
+    /// and it is where the preference reaches a window — `PetWindowHost::ensure_ball` calls it.
     pub(super) fn set_enabled(
         &mut self,
         surfaces: &mut dyn PetSurfaces,
@@ -202,11 +209,14 @@ impl Ball {
     /// Where the ball goes: upstream's default corner, and never off the screen.
     ///
     /// Upstream *restored* a dragged position from a file and clamped it, defaulting to the
-    /// bottom-right (`:350-358`); there is no stored position here because nothing can move the ball
-    /// yet — the drag that would is a capability the ball's own file grants and no page asks for a
-    /// position from — so this is the default, and a stored position arrives with whatever gives the
-    /// ball its snap. An unreadable work area is not substituted with a guessed screen (§7.2): the
-    /// ball goes to the margins and the compositor has the last word.
+    /// bottom-right (`:350-358`); there is no stored position here because nothing *remembers* one.
+    /// The drag itself landed — both of the pet's surfaces have one, the orb and the character
+    /// window — but the window it moved is only moved for as long as the compositor is doing it:
+    /// §7.2's `position-restore` row is still `unverified`, nothing writes a position to a file, and
+    /// a launched window therefore opens at this default again, which is what `position` is. A
+    /// stored position arrives with whatever gives the ball its snap. An unreadable work area is not
+    /// substituted with a guessed screen (§7.2): the ball goes to the margins and the compositor has
+    /// the last word.
     fn position(&self, surfaces: &dyn PetSurfaces) -> Placement {
         let (width, height) = BALL_WINDOW_SIZE;
         let Some(area) = surfaces.work_area() else {

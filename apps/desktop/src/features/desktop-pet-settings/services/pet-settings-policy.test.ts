@@ -68,11 +68,19 @@ describe('a stored object: version policy', () => {
   it('reads a record of this build as current, values and revision intact', () => {
     const outcome = readPetSettingsDomain(
       'general',
+      // The stored blob omits `characterWindow`, which a record of this build would always carry:
+      // a field a stored object does not have is *absent* rather than unusable, so it takes the
+      // schema's default and the read is still `current` (see `pet-settings-values.ts`).
       stored('general', { enabled: false, motion: 'reduced', ball: false }),
     )
     expect(outcome.status).toBe('current')
     if (outcome.status !== 'current') return
-    expect(outcome.record.values).toEqual({ enabled: false, motion: 'reduced', ball: false })
+    expect(outcome.record.values).toEqual({
+      enabled: false,
+      motion: 'reduced',
+      ball: false,
+      characterWindow: true,
+    })
     expect(outcome.record.revision).toBe(1)
     expect(outcome.record.schemaVersion).toBe(PET_SETTINGS_SCHEMA_VERSION)
   })
@@ -309,10 +317,16 @@ describe('unknown fields: dropped when stored, refused when submitted', () => {
       enabled: true,
       motion: 'system',
       ball: true,
+      characterWindow: true,
       ap_something_upstream: 'kept? no',
     })
-    expect(Object.keys(read.values).sort()).toEqual(['ball', 'enabled', 'motion'])
-    expect(read.values).toEqual({ enabled: true, motion: 'system', ball: true })
+    expect(Object.keys(read.values).sort()).toEqual(['ball', 'characterWindow', 'enabled', 'motion'])
+    expect(read.values).toEqual({
+      enabled: true,
+      motion: 'system',
+      ball: true,
+      characterWindow: true,
+    })
   })
 
   it('refuses a submitted write carrying a key this build does not know', () => {
@@ -323,6 +337,7 @@ describe('unknown fields: dropped when stored, refused when submitted', () => {
         enabled: true,
         motion: 'system',
         ball: true,
+        characterWindow: true,
         futureField: 1,
       }),
     ).toEqual([{ path: 'general.futureField', kind: 'unknown-field' }])
@@ -332,6 +347,7 @@ describe('unknown fields: dropped when stored, refused when submitted', () => {
     expect(petSettingsValueProblems('general', { enabled: true })).toEqual([
       { path: 'general.motion', kind: 'missing' },
       { path: 'general.ball', kind: 'missing' },
+      { path: 'general.characterWindow', kind: 'missing' },
     ])
     expect(petSettingsValueProblems('project', null)).toEqual([{ path: 'project', kind: 'wrong-type' }])
   })
@@ -357,10 +373,29 @@ describe('the member fields', () => {
 
   it('has no third motion value: the pet may reduce further, never undo the system choice', () => {
     expect(
-      petSettingsValueProblems('general', { enabled: true, motion: 'full', ball: true }),
+      petSettingsValueProblems('general', {
+        enabled: true,
+        motion: 'full',
+        ball: true,
+        characterWindow: true,
+      }),
     ).toEqual([{ path: 'general.motion', kind: 'unknown-member' }])
-    expect(petSettingsValueProblems('general', { enabled: true, motion: 'system', ball: true })).toEqual([])
-    expect(petSettingsValueProblems('general', { enabled: true, motion: 'reduced', ball: true })).toEqual([])
+    expect(
+      petSettingsValueProblems('general', {
+        enabled: true,
+        motion: 'system',
+        ball: true,
+        characterWindow: true,
+      }),
+    ).toEqual([])
+    expect(
+      petSettingsValueProblems('general', {
+        enabled: true,
+        motion: 'reduced',
+        ball: true,
+        characterWindow: true,
+      }),
+    ).toEqual([])
   })
 
   it('keeps every roam mode representable, including the ones a machine cannot do', () => {
@@ -517,7 +552,7 @@ describe('the write decision: schema, atomicity', () => {
     expect(outcome.status).toBe('refused')
     if (outcome.status !== 'refused') return
     expect(outcome.message).toBe(
-      'general.enabled:wrong-type, general.motion:unknown-member, general.ball:missing',
+      'general.enabled:wrong-type, general.motion:unknown-member, general.ball:missing, general.characterWindow:missing',
     )
   })
 
@@ -568,7 +603,12 @@ describe('the scoped reset', () => {
 
   it('carries one domain’s fields and no other domain’s', () => {
     const general = resetPetSettingsDomain('general', 1)
-    expect(Object.keys(general.values).sort()).toEqual(['ball', 'enabled', 'motion'])
+    expect(Object.keys(general.values).sort()).toEqual([
+      'ball',
+      'characterWindow',
+      'enabled',
+      'motion',
+    ])
     for (const foreign of [
       'characterId',
       'size',
@@ -598,7 +638,11 @@ describe('the scoped reset', () => {
   })
 
   it('goes through the revision gate like any other write', () => {
-    const before = record('general', { enabled: true, motion: 'reduced', ball: true }, 5)
+    const before = record(
+      'general',
+      { enabled: true, motion: 'reduced', ball: true, characterWindow: true },
+      5,
+    )
     const stale = decidePetSettingsWrite(before, resetPetSettingsDomain('general', 4))
     expect(stale.status).toBe('conflict')
     const fresh = decidePetSettingsWrite(before, resetPetSettingsDomain('general', 5))

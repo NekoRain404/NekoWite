@@ -158,6 +158,15 @@ describe('the pet entry is one lightweight window and not a second application',
     // the build is not in. The rule it carries is a function of what this window is showing, and
     // nothing in it reads the pointer, because a click-through window is sent no pointer events.
     //
+    // **Two more landed with the character window's drag, and neither is a new capability.**
+    // Upstream drags its pet window from the sprite (`windows/src/main.ts:555-613`) and this port
+    // had only ever used the gesture on the orb, so `DesktopPetRoot.vue` now calls
+    // `createBallGesture` and holds a `PetBallPlatform` — which is `pet-ball-input.ts` and
+    // `pet-ball-platform.ts` above, already in the graph through the composition and now called
+    // from this window rather than merely carried. What that costs is a threshold, a click window
+    // and one `startDragging` per gesture; what the alternative costs is a second measurement of
+    // the same four pixels in a window that is not allowed a second copy of a rule.
+    //
     // **And the feature's public entry is deliberately *not* in this list.** `features/desktop-pet/index.ts`
     // is where outside callers go (§13.11) — the settings page takes the care panel from it — and
     // reaching it from here would put the whole of it in this window: the care panel, its rules,
@@ -186,11 +195,12 @@ describe('the pet entry is one lightweight window and not a second application',
       'features/desktop-pet/rendering/sprite-sheet.ts',
       'features/desktop-pet/rendering/sprite-slicer.ts',
       'features/desktop-pet/services/pet-appearance.ts',
-      // The ball's drag adapter, carried in because the composition imports it for the *other*
-      // window's resolver (`desktop-pet-composition.ts`). Nothing in this window calls it: the
-      // character window has no drag affordance, which is why the capability that permits the
-      // drag names `pet-ball` alone (`capabilities/desktop-pet-ball.json`). Recorded rather than
-      // hidden, the same way the catalogue contract below is.
+      // The drag, in its two modules: the gesture the character window's press is measured by
+      // (`pet-ball-input.ts`, the port of upstream's `floating-ball.ts` arithmetic) and the
+      // adapter over the app's window controls (`pet-ball-platform.ts`, which the composition
+      // now builds for *this* window's resolver as well as the ball's). Both names are the
+      // ball's because the ball is where the port used them first; both are called here.
+      'features/desktop-pet/services/pet-ball-input.ts',
       'features/desktop-pet/services/pet-ball-platform.ts',
       'features/desktop-pet/services/pet-bubble-layout.ts',
       'features/desktop-pet/services/pet-context-menu.ts',
@@ -210,8 +220,9 @@ describe('the pet entry is one lightweight window and not a second application',
       'platform/gateways/pet-contracts/platform.ts',
       'platform/gateways/pet-contracts/task.ts',
       'platform/gateways/tauri-pet.ts',
-      // The app's shared window controls, reached through the ball's drag adapter (above). One
-      // module for the whole application, so this is a carry rather than a second adapter.
+      // The app's shared window controls, reached through the drag adapter (above). One module
+      // for the whole application, so this is a carry rather than a second adapter — and it is
+      // what the character's drag ultimately calls.
       'platform/window.ts',
       'styles/palettes.css',
       'styles/tokens.css',
@@ -244,8 +255,9 @@ describe('the pet entry is one lightweight window and not a second application',
     // `@tauri-apps/api` is the window's host connection and nothing else — `invoke` and `listen`,
     // no plugin, no `@tauri-apps/plugin-notification`, no process control (§4 removes the second
     // quit path, and the ledger's dependency table is where each of those was decided).
-    // `@tauri-apps/api/window` is the ball's drag adapter arriving through the shared composition;
-    // this window calls none of it (`pet-ball-platform.ts` above).
+    // `@tauri-apps/api/window` is the drag adapter arriving through the shared composition, and
+    // this window *does* call it now: the sprite is a drag handle, so the character asks the
+    // compositor for the same gesture the orb does (`pet-ball-platform.ts` above).
     expect(packagesFrom(ENTRY)).toEqual([
       '@tauri-apps/api/core',
       '@tauri-apps/api/event',

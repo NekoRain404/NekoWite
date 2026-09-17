@@ -20,10 +20,19 @@
  * the ledger and the plan both file it under 气泡与消息, so the control lives on that page and
  * `message.opacity` carries it.
  *
- * The ball's switch is *disabled while the pet is off*, and that is the honest treatment of a
- * preference about one of the pet's windows: it is still stored, still meaningful and still the
- * user's, but it can have no visible effect until 显示桌宠 is on — and §5.2 forbids a control that
- * looks like it should do something and cannot. The note under it says the same thing in words.
+ * The pet has two windows and each has its own switch, which is what 「悬浮球和桌宠可以单独开关」 asks
+ * for: 显示角色窗口 governs the window the character is drawn in, 显示悬浮球 governs the ball, and
+ * neither is subordinate to the other — off-with-the-ball-on is the state 「只开悬浮球」 names. That is
+ * upstream's own shape, ported rather than invented: upstream's 「Show main pet」 row
+ * (`references/desktop-pet/windows/settings.html:69-71`) hides the pet while its 「Show floating
+ * ball」 row (`:50-52`) is a separate flag, and its ball is spawned from that flag alone
+ * (`windows/src-tauri/src/lib.rs:884-887`), so upstream can show the ball without the character too.
+ *
+ * 显示桌宠 is the one switch above them: it is §5.1's 启用 and §4's rollback, and with it off there is
+ * no pet window at all. Both window switches are *disabled while it is off* — they are still stored,
+ * still meaningful and still the user's, but they can have no visible effect until it is on, and
+ * §5.2 forbids a control that looks like it should do something and cannot. The notes say the same
+ * thing in words, and the ball's says which switch is which.
  *
  * §7.2 decides which of the window behaviours may be offered. A control whose capability this
  * machine was not verified to have is shown *disabled, with the finding's own words* — the mode
@@ -123,6 +132,9 @@ function setEnabled(value: boolean): void {
 function setBall(value: boolean): void {
   general.edit('ball', value)
 }
+function setCharacterWindow(value: boolean): void {
+  general.edit('characterWindow', value)
+}
 function setMotion(value: string | number): void {
   general.edit('motion', value === 'reduced' ? 'reduced' : 'system')
 }
@@ -170,6 +182,18 @@ function resetPage(): void {
         >
       </label>
       <span class="settings-note">{{ t('settings.pet.general.ballNote') }}</span>
+
+      <label class="settings-field settings-toggle">
+        <span>{{ t('settings.pet.general.characterWindow') }}</span>
+        <input
+          class="checkbox"
+          type="checkbox"
+          :disabled="!generalValues.enabled"
+          :checked="generalValues.characterWindow"
+          @change="setCharacterWindow(($event.target as HTMLInputElement).checked)"
+        >
+      </label>
+      <span class="settings-note">{{ t('settings.pet.general.characterWindowNote') }}</span>
 
       <label
         class="settings-field"

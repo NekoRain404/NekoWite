@@ -30,6 +30,16 @@
  *   - The gesture is an object rather than five module-level variables (`:30-35`). Upstream had
  *     one ball per webview so module scope *was* that ball; §7.1 allows several characters, and
  *     two balls sharing one press would drag each other.
+ *
+ * **Both of the pet's surfaces read this rule now, and that is why nothing here is duplicated.**
+ * Upstream drags its *pet* window as well as its ball (`windows/src/main.ts:555-613`, bound to the
+ * sprite canvas), and this port had the gesture, the platform and the permission without ever
+ * asking the character window for any of them — the ball could be moved and the pet could not. So
+ * `DesktopPetRoot.vue` calls {@link createBallGesture} and takes a {@link PetBallPlatform} too,
+ * rather than measuring its own four pixels. Nothing about the rule is the ball's except the names,
+ * and the names are the ball's because `floating-ball.ts` is where it was ported from: one
+ * threshold, one click window, one reader of screen coordinates — and a second copy in the
+ * character window is the defect the sharing exists to prevent.
  */
 
 /** How far the cursor may move and still count as a click. Upstream `floating-ball.ts:17`. */
@@ -130,7 +140,7 @@ export function createBallGesture(): BallGesture {
 }
 
 /**
- * The desktop, as the ball's gestures need it.
+ * The desktop, as the pet's drags need it — the ball's and the character window's alike.
  *
  * Two methods, both a continuation of a gesture, and both optional: a desktop that cannot do
  * one of them does not implement it, which is a stronger statement than a method that returns
@@ -147,6 +157,10 @@ export interface PetBallPlatform {
    * forbids, and §7.2's position-reset affordance belongs to the host that owns the position.
    */
   startDrag?(): Promise<void>
-  /** Park the ball against an edge once the drag is over. Upstream's `snap_floating_ball` (`:222`). */
+  /**
+   * Park the window against an edge once the drag is over. Upstream's `snap_floating_ball`
+   * (`:222`), which only the ball had — the character window calls it too if a host ever
+   * implements one, and none does today (`pet-ball-platform.ts` says why).
+   */
   snap?(): Promise<void>
 }

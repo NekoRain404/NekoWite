@@ -1,20 +1,23 @@
 /**
  * The double's character library, and the appearance a window would draw from it.
  *
- * The two reads `appearance()` answers are the two the real host joins: what the library holds,
- * and what the `character` settings domain names. Keeping both here — rather than letting a test
- * hand in a pre-built appearance — is what makes the *flow* reachable from a test: a page writes
- * `characterId` through the double's settings, and the next `appearance()` read is the state that
- * follows. A double that answered a canned appearance could not show a character being chosen at
- * all, which is the one thing this read exists for.
+ * The reads `appearance()` answers are the ones the real host joins: what the library holds, what
+ * the `character` domain names, and the two policies that ride the read from the domains a pet
+ * window may not read for itself (`general`'s `motion`, `message`'s `bubbleOpacity`). Keeping them
+ * here — rather than letting a test hand in a pre-built appearance — is what makes the *flow*
+ * reachable from a test: a page writes `characterId` through the double's settings, and the next
+ * `appearance()` read is the state that follows. A double that answered a canned appearance could
+ * not show a character being chosen at all, which is the one thing this read exists for.
  *
  * Split out of `../memory-pet` for the reason `./settings` is: it is a part of the double with its
  * own subject, and the composition next door is left as the surface a test reads.
  */
+import { PET_MOTION_DEFAULT, PET_SETTINGS_DEFAULTS } from '../pet-contracts'
 import type {
   PetAppearance,
   PetCatalogueReading,
   PetCharacterEntry,
+  PetMotion,
   PetSettingsValues,
 } from '../pet-contracts'
 import type { MemoryPetSettings } from './settings'
@@ -22,7 +25,7 @@ import type { MemoryPetSettings } from './settings'
 export interface MemoryPetCharacters {
   /** Every character the double's library holds. */
   library(): PetCharacterEntry[]
-  /** What a pet window would draw, derived from the library and the stored selection. */
+  /** What a pet window would draw, derived from the library and the stored settings. */
   appearance(): PetAppearance
   /** One import, as the real command's dialog produces: a new entry, or a refusal. */
   importCharacter(): PetCharacterEntry
@@ -65,10 +68,10 @@ export function createPetCharacterDouble(
   /**
    * The `character` domain, as the host would read it for an appearance.
    *
-   * The one cast in this file: a record's `values` is the union of all seven domains' shapes, and
-   * TypeScript cannot narrow it by a variable domain (the same limitation `./settings` records for
-   * its write path). It is read here for one literal domain, so what comes back is that domain's
-   * shape and the cast says so.
+   * One of this file's three casts, and all three are for the same reason: a record's `values` is
+   * the union of all seven domains' shapes, and TypeScript cannot narrow it by a variable domain
+   * (the same limitation `./settings` records for its write path). Each read below is for one
+   * literal domain, so what comes back is that domain's shape and the cast says so.
    */
   function storedCharacter(): { selected: string | null; values: PetSettingsValues['character'] } {
     const load = settings.read('character')
@@ -83,6 +86,42 @@ export function createPetCharacterDouble(
     return { selected: values.characterId, values }
   }
 
+  /**
+   * The `general` record's motion policy, as the host reads it into every appearance arm.
+   *
+   * `Motion::of`'s own rule (`desktop_pet/character_view.rs`): `reduced` is the only value that
+   * asks for less, and everything else — an absent member, a value nothing wrote, and a `general`
+   * record from a build this one may not read — is the schema's default. That last arm answers
+   * where {@link storedCharacter} throws for the same case, and the difference is the host's: the
+   * character record decides whether there is a character to draw at all, while the policy rides
+   * every arm, a fresh install's included.
+   */
+  function storedMotion(): PetMotion {
+    const load = settings.read('general')
+    if (load.status === 'read-only') return PET_MOTION_DEFAULT
+    const values = load.record.values as PetSettingsValues['general']
+    return values.motion === 'reduced' ? 'reduced' : PET_MOTION_DEFAULT
+  }
+
+  /**
+   * The `message` record's bubble alpha, as the host reads it into every appearance arm.
+   *
+   * `BubbleOpacity::of`'s rule: a member that is not a number takes the schema's default (0.92,
+   * upstream's `ap_opacity` and the value the bubble was drawn with before the field existed),
+   * and a `message` record this build may not read takes it too — a transparency the user never
+   * chose is a change to what they see, not a default. What is *in range* is not this function's
+   * question: the rule is the schema's own and the drawing side applies it (`petBubbleOpacityOf`),
+   * exactly as the host's store normalizes the record before the command reads it.
+   */
+  function storedBubbleOpacity(): number {
+    const load = settings.read('message')
+    if (load.status === 'read-only') return PET_SETTINGS_DEFAULTS.message.opacity
+    const values = load.record.values as PetSettingsValues['message']
+    return typeof values.opacity === 'number'
+      ? values.opacity
+      : PET_SETTINGS_DEFAULTS.message.opacity
+  }
+
   return {
     library() {
       return [...installed]
@@ -90,13 +129,21 @@ export function createPetCharacterDouble(
 
     appearance(): PetAppearance {
       const { selected, values } = storedCharacter()
-      if (selected === null) return { status: 'unset' }
+      // The two facts that are not the character's, read once and carried on every arm — a fresh
+      // install's ball still moves and its bubble is still drawn, so an appearance that only
+      // arrived with a chosen character would leave the one surface this build has that moves
+      // unreduced and the bubble at whatever the window's own constant said.
+      const motion = storedMotion()
+      const bubbleOpacity = storedBubbleOpacity()
+      if (selected === null) return { status: 'unset', motion, bubbleOpacity }
       const entry = installed.find((candidate) => candidate.characterId === selected)
       if (entry === undefined) {
         return {
           status: 'missing',
           characterId: selected,
           detail: 'it is not installed in the character library',
+          motion,
+          bubbleOpacity,
         }
       }
       if (entry.files === 'damaged') {
@@ -104,6 +151,8 @@ export function createPetCharacterDouble(
           status: 'missing',
           characterId: selected,
           detail: 'its files are not what the library recorded',
+          motion,
+          bubbleOpacity,
         }
       }
       return {
@@ -122,6 +171,8 @@ export function createPetCharacterDouble(
         idleClips: values.idleClips,
         idleMode: values.idleMode,
         idleIntervalMs: values.idleIntervalSeconds * 1000,
+        motion,
+        bubbleOpacity,
       }
     },
 

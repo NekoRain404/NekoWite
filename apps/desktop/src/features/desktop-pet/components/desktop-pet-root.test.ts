@@ -419,28 +419,28 @@ describe('the bubble is drawn at the alpha the host read carried', () => {
     document.querySelector<HTMLElement>('.pet-bubble')?.style.getPropertyValue('--pet-bubble-alpha')
 
   /**
-   * The same host, with the appearance read answering one alpha.
+   * The `message` domain's own write, as §5.2's 气泡与消息 page makes it.
    *
-   * The in-memory double answers the character shape and carries neither of the two facts that
-   * ride this read (`memory-pet/characters.ts` sends none), so a case about *this* field has to
-   * supply the answer — the same substitution the ball's own tests make for the motion policy.
+   * Through the host's channel rather than by handing the window a hand-built appearance: the
+   * double answers the alpha out of the settings store it shares with the gateway, so what these
+   * cases drive is the chain a user's save takes — the route the ball's own policy cases use.
    */
-  function connectionWithAlpha(host: MemoryPetGateway, alpha: () => number) {
-    return {
-      ...host,
-      appearance: async () => ({
-        status: 'unset' as const,
-        motion: 'system' as const,
-        bubbleOpacity: alpha(),
-      }),
-    }
+  async function setAlpha(host: MemoryPetGateway, opacity: number, revision: number): Promise<void> {
+    await host.updateSettings({
+      domain: 'message',
+      revision,
+      values: { ...PET_SETTINGS_DEFAULTS.message, opacity },
+    })
   }
 
   it('uses the alpha the read carried, over a task the bubble is showing', async () => {
     const host = createMemoryPetGateway({ visible: true })
+    // Stored before the window opens, so the read this case is about is the one that draws the
+    // first frame — an alpha the window had to re-read could pass here for the wrong reason.
+    await setAlpha(host, 0.6, 1)
     mount({
       gateway: host,
-      connection: connectionWithAlpha(host, () => 0.6),
+      connection: host,
       createImage: imagesFor(() => true),
       readPixels: twoCells,
     })
@@ -455,10 +455,9 @@ describe('the bubble is drawn at the alpha the host read carried', () => {
 
   it('re-reads it when another window writes the message domain', async () => {
     const host = createMemoryPetGateway({ visible: true })
-    let alpha = 0.92
     mount({
       gateway: host,
-      connection: connectionWithAlpha(host, () => alpha),
+      connection: host,
       createImage: imagesFor(() => true),
       readPixels: twoCells,
     })
@@ -466,17 +465,14 @@ describe('the bubble is drawn at the alpha the host read carried', () => {
     host.startRun()
     await flush()
     await flush()
+    // The schema's own default, which is what a store holding no `opacity` answers: 0.92 is the
+    // value the bubble was drawn with before the field existed.
     expect(drawnAlpha()).toBe('92%')
 
     // A settings page saving the bubble's opacity. The window is already on screen, and the only
     // thing that tells it the domain moved is the `pet-settings-changed` frame: without the
     // listener, the surface would keep the alpha it was mounted with until the pet was restarted.
-    alpha = 0.7
-    await host.updateSettings({
-      domain: 'message',
-      revision: 1,
-      values: { ...PET_SETTINGS_DEFAULTS.message, opacity: 0.7 },
-    })
+    await setAlpha(host, 0.7, 1)
     await flush()
 
     expect(drawnAlpha()).toBe('70%')

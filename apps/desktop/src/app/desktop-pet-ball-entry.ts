@@ -42,12 +42,16 @@ export const DESKTOP_PET_BALL_ROOT_ID = 'desktop-pet-ball'
 export interface DesktopPetBallDependencies {
   connection: PetWindowGateway
   /**
-   * The desktop's drag and snap, when this build has one.
+   * The desktop's drag, when this build has one.
    *
-   * Nothing supplies it today: the pet's capability holds no window-movement permission and there
-   * is no snap command, so the orb states that it cannot be moved rather than offering a drag that
-   * does nothing (§7.2). It is a parameter so that the window which gives the ball its drag passes
-   * it here rather than through a second entry.
+   * `resolveDesktopPetBallDependencies` supplies it wherever the page has a Tauri window behind
+   * it, and `capabilities/desktop-pet.json` hands the `pet-*` windows the one permission the drag
+   * calls — so the ball can be moved in the product. It stays a parameter because "is there a
+   * window to drag" is the composition's question rather than an entry's, and because a test or a
+   * browser page hands over nothing: the orb then states that it cannot be moved rather than
+   * offering a drag that does nothing (§7.2). `snap` — the reference's other half, which parked
+   * the window against an edge — is still absent, and `pet-ball-platform.ts` is where that is
+   * argued.
    */
   platform?: PetBallPlatform | null
   /**

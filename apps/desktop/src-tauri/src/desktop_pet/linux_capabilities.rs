@@ -304,10 +304,17 @@ const REQUIREMENTS: [Requirement; 11] = [
         needs: "a compositor that maps a window without focusing it",
         instead: "the pet takes focus when it appears, and gives it back when closed",
     },
+    // Both of the pet's surfaces drag with it, and both ask the same way: the orb
+    // (`PetFloatingBall.vue`) and the character (`DesktopPetRoot.vue`) each call
+    // `PetBallPlatform.startDrag` once per gesture, over the one `core:window:allow-start-dragging`
+    // grant `capabilities/desktop-pet.json` hands the `pet-*` windows. What the fallback column
+    // describes is the other machine: a compositor that will not take the gesture leaves the window
+    // where the host placed it, and the pet states that rather than looking movable — the orb in
+    // its hint, the character in its own.
     Requirement {
         fallback: "clamped-position",
         needs: "the compositor's own move gesture for a client window",
-        instead: "dragging asks the compositor to move the window",
+        instead: "dragging asks the compositor to move the window, and one it will not move keeps the place the host put it in",
     },
     Requirement {
         fallback: "clamped-position",

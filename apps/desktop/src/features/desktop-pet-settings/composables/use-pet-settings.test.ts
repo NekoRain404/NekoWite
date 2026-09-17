@@ -171,7 +171,12 @@ describe('the draft, the debounce and the close path', () => {
     // user's second change is reported as somebody else's edit.
     expect(session.status.value).toBe('saved')
     const stored = await storedRecordOf(gateway, 'general')
-    expect(stored.values).toEqual({ enabled: false, motion: 'reduced', ball: true })
+    expect(stored.values).toEqual({
+      enabled: false,
+      motion: 'reduced',
+      ball: true,
+      characterWindow: true,
+    })
     expect(stored.revision).toBe(3)
   })
 
@@ -188,13 +193,19 @@ describe('the draft, the debounce and the close path', () => {
 
     expect(session.status.value).toBe('pending')
     expect(session.dirty.value).toBe(true)
-    expect(session.values.value).toEqual({ enabled: false, motion: 'reduced', ball: true })
+    expect(session.values.value).toEqual({
+      enabled: false,
+      motion: 'reduced',
+      ball: true,
+      characterWindow: true,
+    })
     await tick()
     expect(session.status.value).toBe('saved')
     expect((await storedRecordOf(gateway, 'general')).values).toEqual({
       enabled: false,
       motion: 'reduced',
       ball: true,
+      characterWindow: true,
     })
   })
 })

@@ -11,6 +11,13 @@
  * The third suite is the menu routing: three actions, two of which are host calls and one of which
  * is the window's own surface. That distinction is the whole reason `actOnPetMenu` returns an
  * outcome instead of `void`.
+ *
+ * The second suite is the drag, and it covers **both** of the pet's windows: the ball has had the
+ * platform since the permission landed, and the character window asks for the same one now that
+ * its sprite is a drag handle (`DesktopPetRoot.vue`). What is asserted here is the composition's
+ * half — that a window with a host is handed a real `startDrag` and a window without one is handed
+ * nothing — because whether the *page* calls it is the component's own evidence, in
+ * `DesktopPetRoot.drag.test.ts`.
  */
 import { afterEach, describe, expect, it } from 'vitest'
 import type { PetFeatureState, PetGateway, PetTaskProjection } from '../platform/gateways/pet-contracts'
@@ -45,8 +52,12 @@ describe('the pet runs on the host or on nothing', () => {
     expect(createDesktopPetConnection()).toBe(connection)
     // The dependencies carry the connection itself — one object, which the root hands to its
     // lifecycle as a `PetGateway` and to its own wiring as the wider surface. A `{ gateway }` here
-    // would be a second field for the same value, and the entry would have to pass it twice.
-    expect(resolveDesktopPetDependencies()).toEqual({ connection })
+    // would be a second field for the same value, and the entry would have to pass it twice. The
+    // second field is the desktop's drag, asserted by name below so this stays an exact shape: a
+    // third key added here would fail this line, which is the review the dependency object wants.
+    const dependencies = resolveDesktopPetDependencies()
+    expect(dependencies).toEqual({ connection, platform: expect.anything() })
+    expect(typeof dependencies?.platform?.startDrag).toBe('function')
   })
 
   it('answers nothing at all where there is no host', async () => {
@@ -60,7 +71,7 @@ describe('the pet runs on the host or on nothing', () => {
   })
 })
 
-describe('the ball’s drag, and where it comes from', () => {
+describe('the drag, and where it comes from', () => {
   it('hands the ball window a platform, built on the app’s own window controls', async () => {
     setHost(true)
     const { resolveDesktopPetBallDependencies } = await composition()
@@ -83,6 +94,36 @@ describe('the ball’s drag, and where it comes from', () => {
     // Not a platform whose methods resolve and move nothing: a browser page has no window to drag,
     // and the orb says so rather than looking movable.
     expect(resolveDesktopPetBallDependencies()).toBeUndefined()
+  })
+
+  it('hands the character window the same drag the ball gets, and nothing more', async () => {
+    setHost(true)
+    const { resolveDesktopPetDependencies, resolveDesktopPetBallDependencies } =
+      await composition()
+
+    const character = resolveDesktopPetDependencies()?.platform
+    const ball = resolveDesktopPetBallDependencies()?.platform
+
+    // One adapter, two windows: `createBallPlatform` reads the window the page runs in, which is
+    // the same question whichever of the pet's pages is asking. What the character window gains
+    // with it is the drag on the sprite — `DesktopPetRoot.vue` mounts the same
+    // `createBallGesture` the orb does — and the evidence that it is mounted is in that
+    // component's own suite, not here.
+    expect(typeof character?.startDrag).toBe('function')
+    expect(character?.snap).toBe(ball?.snap)
+    // The whole point of the two resolvers handing over the same shape: nothing here grew a
+    // position, a geometry or a monitor read on the way to a drag that the compositor owns.
+    expect(Object.keys(character ?? {})).toEqual(['startDrag'])
+  })
+
+  it('hands the character window nothing where there is no host', async () => {
+    setHost(false)
+    const { resolveDesktopPetDependencies } = await composition()
+
+    // The same absence read from the other resolver: no platform means the sprite is not a drag
+    // handle, so it has no `grab` cursor and no 「Drag to move」 — and, because `dragHandle` is one
+    // of the terms the input region is computed from, the window keeps the pass-through it had.
+    expect(resolveDesktopPetDependencies()).toBeUndefined()
   })
 })
 
