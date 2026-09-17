@@ -89,13 +89,18 @@ export type SettingOrigin =
  * `needsRuntime`, whether the section could do anything with no engine running — and nothing read
  * either of them. The first was a second spelling of the export names twenty lines above it that
  * nothing checked, kept "so a navigation can bind it without a second lookup table" by a
- * navigation that was never built; the second was worse than unused, because it was a *claim*, and
- * the pages answer it in the opposite direction from the one the field asserted: the permission
- * page draws the backend's own 「no engine is running」 rather than a gap
- * (`AgentPermissionGrants.vue` → `SettingsPanel.agents.test.ts:442`), and `skills` carries the
- * note that a navigation hiding it while the rail is off "would be hiding the page in the state it
- * is built for". §13.11's rule for this file's *exports* — a name is exported when a second real
- * caller exists, rather than in case one appears — is the same rule, applied to a field.
+ * navigation that was never built.
+ *
+ * The second was worse than unused, because it was a *claim*, and the pages it claimed about are
+ * the ones that refuse it. `permission`, marked `true`, draws the backend's own 「no engine is
+ * running」 as a state of its own rather than being hidden (`AgentPermissionGrants.vue`'s
+ * `notRunning`, asserted at `SettingsPanel.agents.test.ts:442`); `skills`, marked `false` and so
+ * agreeing with the note the entry carried, is the arm that shows why agreement is not enough —
+ * the note already says a navigation that hid it while the rail is off "would be hiding the page
+ * in the state it is built for", which is the argument against that navigation existing at all.
+ * A field whose yes and whose no both lead away from the thing it was written for is a field with
+ * no reader, and §13.11's rule for this file's *exports* — a name is exported when a second real
+ * caller exists, rather than in case one appears — is the same rule applied to a field.
  * `index.test.ts` is where that stays true.
  */
 export interface AgentSettingsSection {
@@ -110,8 +115,11 @@ export const AGENT_SETTINGS_SECTIONS: readonly AgentSettingsSection[] = [
   // per engine, and the two pages are about the same (engine, profile) pair.
   { id: 'configuration' },
   // §8.2's page reads and changes *directories* — the profile's own and the two another tool
-  // owns — so it does everything it does with no engine running at all, which is the case the
-  // deleted `needsRuntime` flag got wrong by saying otherwise.
+  // owns — so it does everything it does with no engine running at all. This is the one entry the
+  // deleted `needsRuntime` flag got *right*, and the reason it still had to go: what it recorded
+  // was the first half of a sentence a navigation would have had to finish, and the note it
+  // carried here — "a navigation that hid it while the rail is off would be hiding the page in
+  // the state it is built for" — was already the argument against that navigation existing.
   { id: 'skills' },
   { id: 'commands' },
   { id: 'mcp' },
