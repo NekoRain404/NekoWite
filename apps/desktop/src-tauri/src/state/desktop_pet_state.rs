@@ -94,9 +94,9 @@ impl DesktopPetState {
         // *saved* setting becomes a running behaviour, and the only other moment the answer is known
         // to this process.
         // The feed's own assembly (`PetTaskFeed::for_app`) is the pet module's, not this file's: it
-        // reads the settings store, the ledger's file and the one channel this build implements,
-        // and all three are the pet's. What is here is the one thing it cannot have of its own —
-        // the directory the app keeps its files in.
+        // reads the settings store, the ledger's file and the session's notification channel, and
+        // all three are the pet's. What is here is the one thing it cannot have of its own — the
+        // directory the app keeps its files in.
         let data = data_dir(app);
         let tasks = match &data {
             Ok(directory) => PetTaskFeed::for_app(directory, system_clock()() as i64),
@@ -122,12 +122,24 @@ impl DesktopPetState {
     /// is what the product uses — not a smaller shape written to make the test easy. Nothing is
     /// restored here: a test that wants the startup path drives
     /// [`DesktopPetState::restore_switch`] with its own directory.
+    ///
+    /// **The feed is the app's, channel and all.** A case that ends a run through this state
+    /// therefore reaches the session's real notification daemon and puts a toast on the screen of
+    /// whoever is running the suite — which is correct for the product and is not something a test
+    /// usually wants. One that does not want it builds the feed itself and passes it to
+    /// [`DesktopPetState::with_tasks`], pointing the channel at a bus the test started
+    /// (`tests/desktop_pet_ipc_test/wiring.rs`, and `tests/desktop_pet_notification_channel_test.rs`
+    /// for the channel on its own).
     pub fn with_surfaces(surfaces: Box<dyn PetSurfaces>) -> Self {
         Self::with_tasks(surfaces, PetTaskFeed::new())
     }
 
     /// The state with both substitutes: the port, and the feed a test built itself.
-    fn with_tasks(surfaces: Box<dyn PetSurfaces>, tasks: PetTaskFeed) -> Self {
+    ///
+    /// Public for the reason above: what a test needs to keep out of a desktop is the *feed*, and
+    /// the feed is a value the caller can assemble — `PetTaskFeed::with_notifications` takes the
+    /// channel, the switches and the history (§10.2's injection, at the one seam a state has).
+    pub fn with_tasks(surfaces: Box<dyn PetSurfaces>, tasks: PetTaskFeed) -> Self {
         Self {
             host: Mutex::new(PetWindowHost::new(surfaces)),
             observations: Mutex::new(Observations::new()),

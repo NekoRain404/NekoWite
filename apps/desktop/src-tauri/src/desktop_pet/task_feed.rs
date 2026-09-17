@@ -58,7 +58,7 @@ use crate::agent_runtime::events::{AgentEventEnvelope, AgentIdentity};
 use crate::agent_runtime::snapshot::SessionSnapshot;
 
 use super::history::{HistoryStore, TaskHistory};
-use super::notification_delivery::NoChannel;
+use super::notification_delivery::system_channel;
 use super::notification_policy::{
     NotificationOutcome, NotificationPolicy, NotificationPreferences, TaskFact,
 };
@@ -126,15 +126,16 @@ impl Default for PetTaskFeed {
 impl PetTaskFeed {
     /// A feed with no tasks, the real clock, and the ledger this build runs with.
     ///
-    /// The channel is [`NoChannel`] because this build has none: adding the Tauri notification
-    /// plugin is the integrator's dependency change (`notification_delivery.rs`), and the failing
-    /// channel is what §7.2's `unread-list` fallback is stated from — every notice the ledger
-    /// decides on leaves an unread row that says `failed`, which is the honest version of "the app
-    /// cannot show you a toast". It is not a placeholder: a build that gains the plugin replaces
-    /// this one argument.
+    /// The channel is the system's (`notification_delivery.rs`): on Linux the session's own
+    /// notification daemon, over D-Bus, and [`NoChannel`](super::notification_delivery::NoChannel)
+    /// only where there is no bus to reach — the arm §7.2's `unread-list` fallback is stated from,
+    /// where every notice the ledger decides on leaves an unread row that says `failed`. The
+    /// channel is chosen here rather than passed in because a feed with no app is still the app's
+    /// feed: a caller who wants another one says so through
+    /// [`Self::with_notifications`].
     pub fn new() -> Self {
         Self::with_notifications(NotificationPolicy::new(
-            Box::new(NoChannel::new()),
+            system_channel(),
             NotificationPreferences::default(),
             TaskHistory::new(),
         ))
@@ -165,9 +166,8 @@ impl PetTaskFeed {
     /// the switches the notification page writes ([`settings::notification_preferences`], read
     /// once because the alternative is a file read on the driver's task for every frame), the rows
     /// the last run left (`history::store`, so a reminder survives a crash), the history they were
-    /// read into, and the channel — which this build does not have, so every notice the ledger
-    /// decides on fails visibly and leaves the row unread (§7.2's `unread-list` fallback, stated
-    /// rather than substituted).
+    /// read into, and the channel — which is the session's own notification daemon as of the moment
+    /// this file stopped claiming there was none.
     ///
     /// **One store, not two.** The instance that reads the ledger is the one the feed saves
     /// through, and that is not tidiness: a `HistoryStore` remembers what a *newer* build's file
@@ -196,7 +196,7 @@ impl PetTaskFeed {
             None => TaskHistory::new(),
         };
         Self::with_ledger(
-            NotificationPolicy::new(Box::new(NoChannel::new()), stored_switches(data), history),
+            NotificationPolicy::new(system_channel(), stored_switches(data), history),
             ledger,
         )
     }

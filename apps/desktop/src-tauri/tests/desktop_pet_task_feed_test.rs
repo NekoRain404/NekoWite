@@ -35,9 +35,9 @@ use nekowite_lib::desktop_pet::settings::{
 };
 use nekowite_lib::desktop_pet::task_projection::{PetTaskState, SessionKey};
 use nekowite_lib::desktop_pet::{
-    DeliveryState, HistoryStore, NotificationDelivery, NotificationOutcome, NotificationPolicy,
-    NotificationPreferences, PetNotice, PetTaskFeed, SaveOutcome, TaskHistory, TaskRecord,
-    HISTORY_SCHEMA_VERSION, LEDGER_FILE, PET_TASKS_CHANNEL, UNREAD_MAX_AGE_MS,
+    DeliveryState, HistoryStore, NoChannel, NotificationDelivery, NotificationOutcome,
+    NotificationPolicy, NotificationPreferences, PetNotice, PetTaskFeed, SaveOutcome, TaskHistory,
+    TaskRecord, HISTORY_SCHEMA_VERSION, LEDGER_FILE, PET_TASKS_CHANNEL, UNREAD_MAX_AGE_MS,
 };
 
 const AGENT: &str = "opencode";
@@ -75,8 +75,20 @@ fn envelope(
 }
 
 /// A feed with one instance installed and one run in flight, as a prompt leaves it.
+///
+/// Built with a channel that cannot reach a desktop, and that is not a shortcut: `PetTaskFeed::new`
+/// now carries the app's own channel (`notification_delivery.rs`), so a case here that ended a run
+/// through it would raise a real notification on whoever is running the suite. That is not a
+/// hypothesis — `dbus-monitor` on the live session bus recorded six `Notify` calls to the session's
+/// own daemon from these tests, with these bodies, before this line existed. What these cases are
+/// about is the list a window reads, so the channel is the one thing they substitute — exactly as
+/// the ledger cases below substitute it for `Recording`.
 fn running() -> PetTaskFeed {
-    let feed = PetTaskFeed::new();
+    let feed = PetTaskFeed::with_notifications(NotificationPolicy::new(
+        Box::new(NoChannel::new()),
+        NotificationPreferences::default(),
+        TaskHistory::new(),
+    ));
     feed.install(&identity("epoch-1"))
         .expect("the lock is fresh");
     feed.started(&identity("epoch-1"), SESSION, "run-0")

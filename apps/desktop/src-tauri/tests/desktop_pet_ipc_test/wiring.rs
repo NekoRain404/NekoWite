@@ -10,6 +10,9 @@
 //! `commands.rs` next door drives the window operations; these two are here rather than there
 //! because their subject is the runtime's tasks, not the windows.
 
+use std::io::{BufRead, BufReader};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
@@ -20,8 +23,12 @@ use tauri::Manager;
 use nekowite_lib::agent_runtime::events::{AgentEventEnvelope, AgentEventKind, AgentIdentity};
 use nekowite_lib::commands::desktop_pet as pet_commands;
 use nekowite_lib::commands::desktop_pet::PET_TASK_OPEN_CHANNEL;
+use nekowite_lib::desktop_pet::notification_delivery::SystemNotifications;
 use nekowite_lib::desktop_pet::task_projection::PetTaskState;
-use nekowite_lib::desktop_pet::{DeliveryState, NotificationOutcome};
+use nekowite_lib::desktop_pet::{
+    DeliveryState, NotificationOutcome, NotificationPolicy, NotificationPreferences, PetTaskFeed,
+    TaskHistory,
+};
 use nekowite_lib::state::DesktopPetState;
 
 use crate::support::{FakeSurfaces, MAIN_WINDOW};
@@ -47,6 +54,102 @@ fn desktop_pet_open_task<R: tauri::Runtime>(
 
 struct Pet {
     app: tauri::App<tauri::test::MockRuntime>,
+}
+
+/// A session bus of this test's own, with no notification daemon on it and no way to start one.
+///
+/// The app's channel is the session's own daemon, so a case that ended a run through the state
+/// `with_surfaces` builds would raise a real toast on whoever is running the suite. Pointing the
+/// channel at a bus this test started is how it stays a test: it exercises the app's own
+/// `SystemNotifications` — the same type, the same call, the same classification — against a bus on
+/// which nothing owns `org.freedesktop.Notifications`.
+///
+/// `<standard_session_servicedirs/>` is what has to be absent for that to be true. A stock session
+/// bus *activates* `org.freedesktop.Notifications` from the desktop's own `.service` file the moment
+/// anything addresses it — measured on this machine: a plain `dbus-daemon --session` answered
+/// `GetCapabilities` with a daemon's capability list, having started one on demand. The policy
+/// below is the system's own, verbatim; only service activation is missing.
+const BUS_CONFIG: &str = r#"<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <keep_umask/>
+  <listen>unix:tmpdir=/tmp</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+"#;
+
+/// Which bus this is, for the config file's name.
+static NEXT_BUS: AtomicUsize = AtomicUsize::new(0);
+
+struct PrivateBus {
+    child: Child,
+    config: std::path::PathBuf,
+    address: String,
+}
+
+impl PrivateBus {
+    fn start() -> Self {
+        let config = std::env::temp_dir().join(format!(
+            "nekowite-ipc-wiring-bus-{}-{}.conf",
+            std::process::id(),
+            NEXT_BUS.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&config, BUS_CONFIG).expect("a config file this test can write");
+        let mut child = Command::new("dbus-daemon")
+            .arg(format!("--config-file={}", config.display()))
+            .args(["--print-address=1", "--nofork"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("dbus-daemon is installed (the `dbus` package)");
+        let stdout = child.stdout.take().expect("the pipe just asked for");
+        let mut address = String::new();
+        let read = BufReader::new(stdout).read_line(&mut address).unwrap_or(0);
+        assert!(read > 0, "dbus-daemon printed no address");
+        Self {
+            child,
+            config,
+            address: address.trim().to_string(),
+        }
+    }
+}
+
+impl Drop for PrivateBus {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = std::fs::remove_file(&self.config);
+    }
+}
+
+/// The app's state, with the app's own channel pointed at `bus`.
+///
+/// `with_surfaces` alone would put `SystemNotifications` on the *session* bus, which for a run of
+/// this suite means the real desktop. What is substituted is where that channel connects, not what
+/// it is — see `tests/desktop_pet_notification_channel_test.rs` for the same channel measured
+/// against a daemon that answers.
+fn app_on(bus: &PrivateBus) -> Pet {
+    let surfaces = FakeSurfaces::new();
+    let tasks = PetTaskFeed::with_notifications(NotificationPolicy::new(
+        Box::new(SystemNotifications::at(bus.address.as_str())),
+        NotificationPreferences::default(),
+        TaskHistory::new(),
+    ));
+    let app = mock_builder()
+        .manage(DesktopPetState::with_tasks(Box::new(surfaces), tasks))
+        .invoke_handler(tauri::generate_handler![
+            desktop_pet_tasks,
+            desktop_pet_open_task
+        ])
+        .build(mock_context(noop_assets()))
+        .expect("the pet's task surface builds");
+    Pet { app }
 }
 
 fn app() -> Pet {
@@ -177,12 +280,25 @@ fn the_list_a_window_reads_is_the_list_a_frame_left() {
 #[test]
 fn a_completion_is_recorded_for_the_user_by_the_ledger_the_app_holds() {
     // The reminder half of the same wiring, asserted against the state the app actually manages:
-    // `DesktopPetState::with_surfaces` builds the feed, and the feed builds §6.3's ledger with this
-    // build's own channel — the one that always fails (`notification_delivery.rs`), because there
-    // is no notification plugin. What this case holds down is the chain a completion travels:
-    // frame → projection → ledger → the row the user keeps, with the delivery that could not happen
-    // recorded rather than reported as a success.
-    let pet = app();
+    // `DesktopPetState` builds the feed, and the feed builds §6.3's ledger with this build's own
+    // channel — `SystemNotifications`, a real D-Bus call to the session's notification daemon
+    // (`notification_delivery.rs`). What this case holds down is the chain a completion travels:
+    // frame → projection → ledger → the row the user keeps, with the delivery recorded either way.
+    //
+    // **Why the channel is pointed at a bus this test started.** The premise this case used to
+    // carry — "this build has no channel" — stopped being true when the channel landed, and the
+    // delivery is real: driven against the live session bus, the same code put a `Notify` on it
+    // and the desktop's own daemon closed the notification it had shown. Asserting that here would
+    // make the case depend on the machine it runs on, and raise a toast on whoever runs it. So the
+    // one thing substituted is *where the app's channel connects*: the same type, the same call and
+    // the same classification, against a bus where nothing owns `org.freedesktop.Notifications`
+    // and nothing can be activated to own it. `no-channel` is then a fact about that bus, which is
+    // what it always meant: nothing on this session can show a notification.
+    //
+    // The delivered arm is measured too, and by the channel's own target
+    // (`tests/desktop_pet_notification_channel_test.rs`), where a daemon the test serves answers.
+    let bus = PrivateBus::start();
+    let pet = app_on(&bus);
     let main = window(&pet, MAIN_WINDOW);
     let state = pet.app.state::<DesktopPetState>();
     state.tasks.install(&identity()).expect("a fresh feed");
@@ -221,7 +337,10 @@ fn a_completion_is_recorded_for_the_user_by_the_ledger_the_app_holds() {
         .expect("a fresh ledger")
         .expect("the burst was due");
     let NotificationOutcome::DeliveryFailed { notice, failure } = &outcome else {
-        panic!("this build has no channel, so nothing can have been delivered: {outcome:?}");
+        panic!(
+            "nothing on this test's own bus owns org.freedesktop.Notifications, so nothing can \
+             have been delivered: {outcome:?}"
+        );
     };
     assert_eq!(failure.kind(), "no-channel");
     assert_eq!(
