@@ -383,6 +383,13 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
           `session ${sessionId} is already open in this runtime`,
         )
       }
+      // `load-in-flight` — the third refusal this call has in the contract, for a second load of
+      // the same session while the first is still on the wire — is deliberately not modelled here:
+      // this body never suspends, so two loads cannot overlap in it and there is no moment at
+      // which one could be told the other is coming back. A `await` invented to make the arm
+      // reachable would be a suspension the real thing does not have, which is the wrong direction
+      // for a double; the host that *does* await the engine answers it
+      // (`SessionError::LoadInFlight`), and the contract documents it.
       const identity: AgentIdentity = {
         agentId: options.agentId,
         profileId: options.profileId,
