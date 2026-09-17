@@ -88,6 +88,14 @@ export function usePetWindow(options: PetWindowOptions): PetWindow {
    * One domain: the character is the only settings fact this window draws. A comparison rather
    * than a re-read of everything, and the *only* reason this listener exists is that a write in
    * another window is otherwise invisible here — which is what would have made a poll necessary.
+   *
+   * **`general` is deliberately not here**, and the reason is a fact about this surface rather
+   * than about the setting: the read carries `general.motion` too (see `pet-appearance.ts`), and
+   * this window has no CSS motion for it to change — upstream's kill list turns off `#pet.bob`
+   * (`references/desktop-pet/windows/src/styles.css:1280-1287`), a bob this port never carried,
+   * and the sprite's own frames are the drawing rather than an animation beside it. The ball
+   * window is the surface that moves, and `PetBallWindow.vue` is where the policy is applied.
+   * Re-reading here would be a call per motion change that changes nothing on this surface.
    */
   function onSettingsChanged(change: PetSettingsChange): void {
     if (change.domain !== 'character') return

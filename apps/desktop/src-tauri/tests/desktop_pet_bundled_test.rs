@@ -23,7 +23,7 @@
 use std::path::{Path, PathBuf};
 
 use nekowite_lib::desktop_pet::bundled::{seed, Seeded, BUNDLED_CHARACTER_ID};
-use nekowite_lib::desktop_pet::character_view::{appearance, entries};
+use nekowite_lib::desktop_pet::character_view::{appearance, entries, stored_motion};
 use nekowite_lib::desktop_pet::resources::{
     CharacterKind, CharacterLibrary, EntryState, InstallRequest,
 };
@@ -121,7 +121,11 @@ fn a_fresh_install_has_a_character_to_draw() {
         .record()
         .expect("a record after the selection")
         .clone();
-    match appearance(&record, Some(&library)) {
+    // The motion policy rides the same answer, and this read is the one the command performs:
+    // `general` is the domain a pet window may not read for itself, so the appearance carries it.
+    // Nothing has written `general` here, so it is the schema's own default.
+    let motion = stored_motion(&store);
+    match appearance(&record, motion, Some(&library)) {
         nekowite_lib::desktop_pet::PetAppearance::Ready { sheet_path, .. } => {
             assert!(
                 Path::new(&sheet_path).is_file(),

@@ -151,7 +151,17 @@ const clickThrough = props.connection
     })
   : null
 
-/** What to draw: the host's read when there is one, the caller's props otherwise. */
+/**
+ * What to draw: the host's read when there is one, the caller's props otherwise.
+ *
+ * `appearance.motion` (§5.2's 动效) is deliberately not read here. This window's surface has no
+ * CSS animation or transition to turn off — the sprite is a canvas whose frames *are* the pet, and
+ * the one animation upstream's reduce-motion removes from this window (`#pet.bob`,
+ * `references/desktop-pet/windows/src/styles.css:1280-1287`) has no counterpart in this port. The
+ * orb is the surface that moves, so `PetBallWindow.vue` is where the policy is applied; a
+ * `reduce-motion` rule added here without a surface to apply it to would be a class nothing could
+ * see.
+ */
 const appearance = computed<PetAppearanceView | null>(() => window_?.appearance.value ?? null)
 const imageUrl = computed(() => appearance.value?.imageUrl ?? props.imageUrl)
 const spriteWidth = computed(() => appearance.value?.width ?? props.width)

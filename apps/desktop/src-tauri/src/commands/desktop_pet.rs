@@ -438,12 +438,25 @@ pub fn desktop_pet_tasks(
 /// *granted* — [`allow_character_sheet`] below extends the asset protocol by exactly this file,
 /// which is the rule `commands/fs.rs` settled for the vault's images: one `allow_file` per
 /// resolved file, never a directory, and never a scope entry for the library.
+///
+/// It reads two domains, and the second is the one a pet window cannot read for itself: `general`
+/// supplies the motion policy ([`crate::desktop_pet::Motion`]) — §5.2's 「跟随系统/应用设置」, which
+/// the 常规与交互 page writes and which nothing on the desktop followed until this read carried it.
+/// `capabilities/desktop-pet.json` deliberately holds no `desktop_pet_read_settings`, so a window
+/// that asked for a domain would be a window that could read every field of the pet's settings;
+/// what it is handed instead is the one policy it draws with, read here from the same store.
 #[tauri::command]
 pub fn desktop_pet_appearance<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> Result<crate::desktop_pet::PetAppearance, String> {
     use tauri::Manager;
     let store = settings_store(&app)?;
+    // A `general` record this build may not read (a newer build's, §10.2) is answered with the
+    // schema's own default rather than guessed at: the windows are told the policy this build was
+    // built with, which is the arm every other unreadable field takes. The character record below
+    // is the one that decides whether there is a window to draw at all, and *its* read-only arm is
+    // still an error — a choice exists there and cannot be honoured.
+    let motion = crate::desktop_pet::character_view::stored_motion(&store);
     let record = match store.read(PetSettingsDomain::Character) {
         PetSettingsLoad::Current { record } | PetSettingsLoad::Migrated { record, .. } => record,
         // No record: a fresh install. Nothing is chosen, which is a state the window draws as a
@@ -451,7 +464,7 @@ pub fn desktop_pet_appearance<R: tauri::Runtime>(
         PetSettingsLoad::Defaults {
             reason: DefaultsReason::Absent,
             ..
-        } => return Ok(crate::desktop_pet::PetAppearance::Unset),
+        } => return Ok(crate::desktop_pet::PetAppearance::Unset { motion }),
         // There is a file and it is not a record this build can read. Reported rather than read as
         // "nothing chosen": a corrupt record is not an empty one, and drawing nothing for one
         // would hide the corruption behind a state the user could not tell from a fresh install.
@@ -475,7 +488,7 @@ pub fn desktop_pet_appearance<R: tauri::Runtime>(
         }
     };
     let library = app.try_state::<CharacterLibrary>();
-    let appearance = crate::desktop_pet::appearance(&record, library.as_deref());
+    let appearance = crate::desktop_pet::appearance(&record, motion, library.as_deref());
     if let crate::desktop_pet::PetAppearance::Ready { sheet_path, .. } = &appearance {
         allow_character_sheet(&app, Path::new(sheet_path));
     }

@@ -112,10 +112,11 @@ export type {
   PetCatalogueReading,
 } from './pet-contracts/catalogue'
 
-export { isPetAppearance } from './pet-contracts/appearance'
+export { isPetAppearance, PET_MOTION_DEFAULT, petMotionOf } from './pet-contracts/appearance'
 export type {
   PetAppearance,
   PetCharacterEntry,
+  PetMotion,
   PetSettingsChange,
 } from './pet-contracts/appearance'
 

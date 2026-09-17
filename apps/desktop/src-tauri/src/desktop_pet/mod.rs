@@ -64,8 +64,8 @@ pub use ball::{BALL_LABEL, BALL_WINDOW_SIZE, DESKTOP_PET_BALL_PAGE};
 pub use bundled::{seed, Seeded, BUNDLED_CHARACTER_ID, BUNDLED_CHARACTER_NAME};
 pub use care_ledger::{CareLedger, CareOutcome, CareSummary, DAY_WINDOW, MEAL_XP};
 pub use character_view::{
-    appearance, entries, free_character_id, refusal_sentence, PetAppearance, PetCharacterEntry,
-    PetCharacterFiles,
+    appearance, entries, free_character_id, refusal_sentence, Motion, PetAppearance,
+    PetCharacterEntry, PetCharacterFiles,
 };
 pub use feature_switch::{chosen_character, UNSELECTED_CHARACTER};
 pub use history::{

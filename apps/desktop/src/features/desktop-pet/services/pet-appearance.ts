@@ -13,8 +13,8 @@
  * re-checked them would be the second rule; the only judgement made below is about *what to say*
  * when the host has nothing to draw.
  */
-import { PET_SETTINGS_DEFAULTS } from '../../../platform/gateways/pet-contracts'
-import type { PetAppearance } from '../../../platform/gateways/pet-contracts'
+import { PET_SETTINGS_DEFAULTS, petMotionOf } from '../../../platform/gateways/pet-contracts'
+import type { PetAppearance, PetMotion } from '../../../platform/gateways/pet-contracts'
 import type { AnimationConfig } from '../rendering/animation-bindings'
 
 /**
@@ -33,6 +33,16 @@ export interface PetAppearanceView {
   height: number
   /** The animation mapping from settings, validated. */
   animation: Partial<AnimationConfig>
+  /**
+   * How far this window may move (`general.motion`, §5.2's 「跟随系统/应用设置」).
+   *
+   * On every arm, including the two that draw nothing: the ball is a window whether or not a
+   * character is chosen, and it is the surface here that moves. What a window does with it is the
+   * window's — the ball stops its own transitions and lets its CSS answer the system's own
+   * preference — and the value is the stored policy rather than a decision, so a window that also
+   * asks its engine keeps the two from being confused for one another.
+   */
+  motion: PetMotion
   /** What to say instead of drawing, or null when there is something to draw. */
   notice: string | null
 }
@@ -54,11 +64,16 @@ const BASE_HEIGHT = 180
  * than to nothing — a character with a corrupt size is still a character.
  */
 export function petAppearanceView(read: PetAppearance): PetAppearanceView {
+  // Read once for every arm: the policy is the window's, and a window that draws nothing still
+  // moves (the ball's `unset` is a fresh install). `petMotionOf` is where an answer that carries
+  // none becomes the schema's default, which is the reading of a value this build cannot act on.
+  const motion = petMotionOf(read)
   if (read.status === 'unset') {
     return {
       imageUrl: null,
       ...box(PET_SETTINGS_DEFAULTS.character.size),
       animation: {},
+      motion,
       notice: 'No character is selected.',
     }
   }
@@ -67,6 +82,7 @@ export function petAppearanceView(read: PetAppearance): PetAppearanceView {
       imageUrl: null,
       ...box(PET_SETTINGS_DEFAULTS.character.size),
       animation: {},
+      motion,
       notice: `The character "${read.characterId}" cannot be drawn: ${read.detail}.`,
     }
   }
@@ -79,6 +95,7 @@ export function petAppearanceView(read: PetAppearance): PetAppearanceView {
       idleMode: read.idleMode,
       idleIntervalMs: read.idleIntervalMs,
     },
+    motion,
     notice: null,
   }
 }

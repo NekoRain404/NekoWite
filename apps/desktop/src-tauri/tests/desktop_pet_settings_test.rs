@@ -13,6 +13,8 @@
 //!   and refuses a read-only destination, and a write race whose loser finds out and changes nothing.
 //! - `switch.rs` — §5.1's 启用 as it actually happens: an applied `general` write opens the pet's
 //!   window, and the switch going off closes every one of them without deleting anything.
+//! - `motion.rs` — §5.2's 动效 as a pet window receives it: the policy the `general` record holds
+//!   rides the appearance read, because a pet window may not read a settings domain for itself.
 //! - `schema.rs` — the mirror itself, compared against `pet-contracts/config.ts` and
 //!   `pet-settings-values.ts`, so a field or a rule added on one side alone fails a test.
 //!
@@ -28,6 +30,8 @@
 //! One target and one command: `cargo test --test desktop_pet_settings_test` runs all of them,
 //! because a test in a file nobody runs is not evidence.
 
+#[path = "desktop_pet_settings_test/motion.rs"]
+mod motion;
 #[path = "desktop_pet_settings_test/record.rs"]
 mod record;
 #[path = "desktop_pet_settings_test/schema.rs"]

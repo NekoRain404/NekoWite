@@ -7,6 +7,12 @@
 //! the join, and nothing here touches a window, a file or the network: it turns what those two
 //! already answered into the two shapes a window can draw.
 //!
+//! One fact a window is handed alongside them is not the character's: [`Motion`], which the
+//! `general` domain stores (§5.2's 「跟随系统/应用设置」) and which a pet window may not read for
+//! itself — `capabilities/desktop-pet.json` holds no settings read. It rides the appearance
+//! because the drawing and the policy are what one frame needs together, which is the same
+//! argument this module's own caller makes for handing out the sheet and the size in one answer.
+//!
 //! Three rules are structural:
 //!
 //! - **"Nothing is chosen" and "the choice cannot be honoured" are different answers.** A fresh
@@ -32,7 +38,7 @@ use super::resources::{
     is_path_component, CharacterKind, CharacterLibrary, EntryState, LibraryEntry, PackageProblem,
     ResourceRefusal,
 };
-use super::settings::PetSettingsRecord;
+use super::settings::{PetSettingsDomain, PetSettingsRecord, PetSettingsStore};
 
 /// The sheet a pack carried, as the manifest recorded it, and nothing else about the pack.
 ///
@@ -89,12 +95,15 @@ pub enum PetCharacterFiles {
 #[serde(tag = "status", rename_all = "kebab-case")]
 pub enum PetAppearance {
     /// No character is chosen. The window says so and draws nothing.
-    Unset,
+    Unset {
+        motion: Motion,
+    },
     /// A character is chosen and cannot be produced, with the reason in the host's words.
     Missing {
         #[serde(rename = "characterId")]
         character_id: String,
         detail: String,
+        motion: Motion,
     },
     /// Draw this.
     Ready {
@@ -120,7 +129,70 @@ pub enum PetAppearance {
         /// renderer's own unit is what crosses the wire — the conversion happens once, here).
         #[serde(rename = "idleIntervalMs")]
         idle_interval_ms: u64,
+        motion: Motion,
     },
+}
+
+/// How far the pet's windows may move, from `general.motion`.
+///
+/// The *stored policy* and not a decision: the system's own `prefers-reduced-motion` is a question
+/// each window asks its own engine (the ball answers it in CSS today), so what crosses this wire
+/// is only what the user chose in the app. A host that answered `Reduced` for a machine whose
+/// system asked for less would be inventing a restriction, and one that answered `System` for a
+/// user who chose `reduced` would be dropping the one §5.2 requires the pet to follow
+/// (「跟随系统/应用设置；桌宠可更保守，不能反向解除全局限制」).
+///
+/// **On every arm, and not part of [`Drawing`].** The ball is one of the pet's windows whether or
+/// not a character is chosen — it draws upstream's plain orb in the `Unset` arm — so a policy that
+/// only arrived with `Ready` would leave the one surface this build has that moves unreduced in
+/// the state a fresh install is in. It is not the character's, which is why it is not a `Drawing`
+/// field: the character record does not hold it and `general` does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Motion {
+    /// Follow the system's own preference, which is the schema's default.
+    System,
+    /// The user asked for less motion than the system does.
+    Reduced,
+}
+
+impl Motion {
+    /// The member `settings::fields`' `GENERAL` declares as the default, and therefore the reading
+    /// of every value this build cannot act on: an absent field on a record an older build wrote,
+    /// a member nothing recognises, and a `general` record from a newer build — which §10.2 keeps
+    /// this build from reading at all, and which cannot be guessed into `Reduced` because a
+    /// restriction the user did not ask for is a change, not a default.
+    pub const DEFAULT: Self = Self::System;
+
+    /// The policy a `general` record holds.
+    ///
+    /// The store normalized the record on the way out of the file (`settings::values`), so a member
+    /// other than the one below is either the other declared member or a value nothing wrote —
+    /// and both take the schema's default, the arm [`Drawing::of`] takes for its own fields.
+    pub fn of(record: &PetSettingsRecord) -> Self {
+        match record.value("motion").and_then(serde_json::Value::as_str) {
+            Some("reduced") => Self::Reduced,
+            _ => Self::DEFAULT,
+        }
+    }
+}
+
+/// The policy a store holds for the pet's windows.
+///
+/// The one read [`appearance`]'s caller performs, and a function rather than three lines in the
+/// command because a test asserting what a window is handed should go through the same arm — the
+/// alternative is a second copy of the rule that the two can drift apart on.
+///
+/// A `general` record this build may not read is answered with [`Motion::DEFAULT`] rather than
+/// guessed at. That arm is `store.read`'s `ReadOnly` — a record a newer build wrote, which §10.2
+/// keeps this build from reading — and the alternative (`Reduced`) would be inventing a
+/// restriction the user never asked for, while the window would still honour the system's own
+/// preference through its own engine.
+pub fn stored_motion(store: &PetSettingsStore) -> Motion {
+    store
+        .read(PetSettingsDomain::General)
+        .record()
+        .map_or(Motion::DEFAULT, Motion::of)
 }
 
 /// Every character the library holds, oldest install last.
@@ -162,18 +234,27 @@ fn entry_of(entry: &LibraryEntry) -> PetCharacterEntry {
 /// is `None` when this build could not open one at all, which is the same class of answer as a
 /// character that is not installed: the choice exists and cannot be honoured, and the reason
 /// differs only in the sentence.
-pub fn appearance(record: &PetSettingsRecord, library: Option<&CharacterLibrary>) -> PetAppearance {
+///
+/// `motion` is the `general` record's policy rather than a field of this one — see [`Motion`] for
+/// why a window is handed it with its drawing facts instead of asking for it, and
+/// `commands::desktop_pet::desktop_pet_appearance` for the read that supplies it.
+pub fn appearance(
+    record: &PetSettingsRecord,
+    motion: Motion,
+    library: Option<&CharacterLibrary>,
+) -> PetAppearance {
     let chosen = record
         .value("characterId")
         .and_then(serde_json::Value::as_str);
     let drawing = Drawing::of(record);
     let Some(chosen) = chosen else {
-        return PetAppearance::Unset;
+        return PetAppearance::Unset { motion };
     };
     let Some(library) = library else {
         return PetAppearance::Missing {
             character_id: chosen.to_string(),
             detail: "this build has no character library to read it from".to_string(),
+            motion,
         };
     };
     let entry = match library.list() {
@@ -187,6 +268,7 @@ pub fn appearance(record: &PetSettingsRecord, library: Option<&CharacterLibrary>
                     "the character library could not be read: {}",
                     refusal_sentence(&refusal)
                 ),
+                motion,
             }
         }
     };
@@ -194,11 +276,13 @@ pub fn appearance(record: &PetSettingsRecord, library: Option<&CharacterLibrary>
         return PetAppearance::Missing {
             character_id: chosen.to_string(),
             detail: "it is not installed in the character library".to_string(),
+            motion,
         };
     };
     let unavailable = |detail: String| PetAppearance::Missing {
         character_id: chosen.to_string(),
         detail,
+        motion,
     };
     if let EntryState::Incomplete { missing } = &entry.state {
         return unavailable(format!(
@@ -242,6 +326,7 @@ pub fn appearance(record: &PetSettingsRecord, library: Option<&CharacterLibrary>
         idle_clips: drawing.idle_clips,
         idle_mode: drawing.idle_mode,
         idle_interval_ms: drawing.idle_interval_ms,
+        motion,
     }
 }
 
@@ -620,7 +705,7 @@ mod tests {
         let (library, _data) = library("cjk-ready");
         let sheet = install_named(&library, "喵喵", "喵喵", "精灵图.png");
 
-        let answer = appearance(&record(Some("喵喵"), 200), Some(&library));
+        let answer = appearance(&record(Some("喵喵"), 200), Motion::DEFAULT, Some(&library));
 
         let PetAppearance::Ready {
             character_id,
@@ -691,8 +776,8 @@ mod tests {
         let (library, _data) = library("unset");
 
         assert_eq!(
-            appearance(&record(None, 200), Some(&library)),
-            PetAppearance::Unset
+            appearance(&record(None, 200), Motion::DEFAULT, Some(&library)),
+            PetAppearance::Unset { motion: Motion::DEFAULT }
         );
     }
 
@@ -701,7 +786,7 @@ mod tests {
         let (library, _data) = library("ready");
         let sheet = install(&library, "kitty", "Kitty");
 
-        let answer = appearance(&record(Some("kitty"), 200), Some(&library));
+        let answer = appearance(&record(Some("kitty"), 200), Motion::DEFAULT, Some(&library));
 
         let PetAppearance::Ready {
             character_id,
@@ -731,11 +816,12 @@ mod tests {
     fn a_character_that_is_not_installed_is_named_rather_than_emptied() {
         let (library, _data) = library("absent-character");
 
-        let answer = appearance(&record(Some("ghost"), 200), Some(&library));
+        let answer = appearance(&record(Some("ghost"), 200), Motion::DEFAULT, Some(&library));
 
         let PetAppearance::Missing {
             character_id,
             detail,
+            ..
         } = answer
         else {
             panic!("a choice that cannot be honoured is not a ready one");
@@ -750,7 +836,7 @@ mod tests {
         let sheet = install(&library, "kitty", "Kitty");
         std::fs::remove_file(&sheet).expect("the sheet is there to remove");
 
-        let answer = appearance(&record(Some("kitty"), 200), Some(&library));
+        let answer = appearance(&record(Some("kitty"), 200), Motion::DEFAULT, Some(&library));
 
         let PetAppearance::Missing { detail, .. } = answer else {
             panic!("the sheet is not there to draw");
@@ -772,7 +858,7 @@ mod tests {
         document["sheet"]["file"] = serde_json::Value::String("../outside.png".to_string());
         std::fs::write(&manifest, document.to_string()).expect("the manifest is writable");
 
-        let answer = appearance(&record(Some("kitty"), 200), Some(&library));
+        let answer = appearance(&record(Some("kitty"), 200), Motion::DEFAULT, Some(&library));
 
         let PetAppearance::Missing { detail, .. } = answer else {
             panic!("a name that is a path is not a file");
@@ -784,7 +870,7 @@ mod tests {
     fn an_app_with_no_library_still_names_the_character_it_cannot_produce() {
         assert!(
             matches!(
-                appearance(&record(Some("kitty"), 200), None),
+                appearance(&record(Some("kitty"), 200), Motion::DEFAULT, None),
                 PetAppearance::Missing { .. }
             ),
             "no library is a reason, not an absence of a choice"
@@ -826,5 +912,59 @@ mod tests {
         assert!(named.contains("evil.png"), "{named}");
         assert!(named.contains("the library can hold"), "{named}");
         assert!(named.contains("may not contain"), "{named}");
+    }
+
+    /// A `general` record with one motion value written into it, or none.
+    fn general(motion: Option<&str>) -> PetSettingsRecord {
+        let mut record = PetSettingsRecord::defaults(PetSettingsDomain::General);
+        match motion {
+            Some(value) => {
+                record
+                    .values
+                    .insert("motion".to_string(), serde_json::Value::String(value.to_string()));
+            }
+            // Removed rather than set to the default, because "absent" is a state of its own: a
+            // record an older build wrote carries no such field at all.
+            None => {
+                record.values.remove("motion");
+            }
+        }
+        record
+    }
+
+    #[test]
+    fn a_policy_a_window_cannot_act_on_is_read_as_the_schemas_default() {
+        // The store normalizes a record on the way out of the file, so an unrecognised member is
+        // one nothing wrote — and the arm for it is the schema's default rather than a guess. The
+        // one that matters: `reduced` invents a restriction if it is wrong, so a value that is
+        // *not* `reduced` must never be read as it.
+        assert_eq!(Motion::of(&general(Some("reduced"))), Motion::Reduced);
+        assert_eq!(Motion::of(&general(Some("system"))), Motion::System);
+        assert_eq!(Motion::of(&general(None)), Motion::System);
+        assert_eq!(Motion::of(&general(Some("less"))), Motion::System);
+        assert_eq!(Motion::of(&general(Some(""))), Motion::System);
+    }
+
+    #[test]
+    fn the_policy_rides_every_appearance_arm_because_the_ball_draws_in_all_of_them() {
+        let (library, _data) = library("motion-arms");
+        install(&library, "kitty", "Kitty");
+        let reduced = Motion::Reduced;
+
+        // `Unset` is a fresh install, where the ball draws upstream's plain orb — and the orb is
+        // the surface this build has that moves, so a policy that only arrived with `Ready` would
+        // leave exactly the state a new user is in unreduced.
+        assert!(matches!(
+            appearance(&record(None, 200), reduced, Some(&library)),
+            PetAppearance::Unset { motion } if motion == reduced
+        ));
+        assert!(matches!(
+            appearance(&record(Some("ghost"), 200), reduced, Some(&library)),
+            PetAppearance::Missing { motion, .. } if motion == reduced
+        ));
+        assert!(matches!(
+            appearance(&record(Some("kitty"), 200), reduced, Some(&library)),
+            PetAppearance::Ready { motion, .. } if motion == reduced
+        ));
     }
 }

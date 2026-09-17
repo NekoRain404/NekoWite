@@ -40,14 +40,57 @@ export interface PetCharacterEntry {
 }
 
 /**
+ * How far the pet's windows may move, from `general.motion`.
+ *
+ * §5.2's reduce-motion rule: 「跟随系统/应用设置；桌宠可更保守，不能反向解除全局限制」 — the pet
+ * follows the app's setting and the system's, may reduce further than either, and may never lift
+ * one. There is no third member for the same reason the setting has none: an option that turned
+ * motion *up* past the system's own preference is a setting that cancels an accessibility choice.
+ *
+ * The *stored policy* and not a decision. The system's own `prefers-reduced-motion` is a question
+ * each window asks its own engine — the ball already answers it in CSS — so what a host reports
+ * here is only what the user chose in the app. `reduced` therefore means "at least this much less
+ * motion", never "exactly this much".
+ */
+export type PetMotion = 'system' | 'reduced'
+
+/**
+ * What a read that carries no policy means: the schema's own default for `general.motion`
+ * (`PET_SETTINGS_DEFAULTS.general`), which is the value the windows were built with.
+ */
+export const PET_MOTION_DEFAULT: PetMotion = 'system'
+
+/**
+ * The policy a read carries, or the schema's default where it carries none.
+ *
+ * A reader rather than a field access, because "absent" and "a value nothing recognises" have to
+ * be read the same way: the host always sends one (Rust's `Motion` is on every arm), so what
+ * reaches the second arm is an answer that did not come from this host — a double, or a build
+ * from before the field existed — and `system` is what this build was built with. Reading either
+ * as `reduced` would invent a restriction the user never asked for.
+ */
+export function petMotionOf(read: { motion?: PetMotion }): PetMotion {
+  return read.motion === 'reduced' ? 'reduced' : PET_MOTION_DEFAULT
+}
+
+/**
  * What the pet window draws, or why it draws nothing (`desktop_pet_appearance`).
  *
  * Three arms, and the two that draw nothing are deliberately not one: `unset` is a choice nobody
  * made, `missing` is a choice this build cannot honour — and a *read* that could not happen at all
  * is a rejected promise rather than a fourth arm, because it is the caller's failure to state
  * rather than a state of the character.
+ *
+ * **`motion` is on every arm, and it is not the character's.** It is `general`'s, and it rides
+ * this read because a pet window may not read a settings domain for itself
+ * (`capabilities/desktop-pet.json` holds no settings read) while the drawing and the policy are
+ * what one frame needs together. Every arm, because `unset` is a fresh install: the ball draws
+ * upstream's plain orb there, and the orb is a surface that moves.
  */
-export type PetAppearance =
+export type PetAppearance = {
+  /** The window's motion policy, from `general.motion`. See {@link petMotionOf} for an absent one. */
+  motion?: PetMotion
+} & (
   /** No character is chosen. */
   | { status: 'unset' }
   /** A character is chosen and cannot be produced, with the host's own reason. */
@@ -80,6 +123,7 @@ export type PetAppearance =
       idleMode: 'random' | 'sequential'
       idleIntervalMs: number
     }
+)
 
 /**
  * Whether an answer is one of the three arms above.

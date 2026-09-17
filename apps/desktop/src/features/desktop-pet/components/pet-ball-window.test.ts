@@ -17,6 +17,7 @@ import { createMemoryPetGateway, type MemoryPetGateway } from '../../../platform
 import {
   PET_SETTINGS_DEFAULTS,
   type PetCharacterEntry,
+  type PetMotion,
   type PetWindowGateway,
 } from '../../../platform/gateways/pet-contracts'
 import type { ImageFactory } from '../rendering/sprite-sheet'
@@ -193,6 +194,78 @@ describe('the ball window draws what the host says', () => {
     // do. A page with no Tauri behind it is what the entry's own composition answers.
     expect(orb().getAttribute('aria-label')).toBe('Desktop pet ball')
     expect(orb().getAttribute('title')).toMatch(/Right-click: settings/)
+  })
+})
+
+/**
+ * A host whose appearance read answers a policy this file can change, wrapping the double.
+ *
+ * The double's own `appearance()` builds its arms from the character domain and carries no
+ * `general` field, which is why the policy is supplied here: what is under test is the window's
+ * handling of an answer, and the answer has to be one this file can move. Everything else — the
+ * listener, the revision check, the channel an applied write is published on — is the double's.
+ */
+function hostWithPolicy(policy: { motion: PetMotion }, characters: PetCharacterEntry[] = [KITTY]) {
+  const host = createMemoryPetGateway({ visible: true, characters })
+  const connection: PetWindowGateway = {
+    ...host,
+    appearance: async () => ({ status: 'unset', motion: policy.motion }),
+  }
+  return { host, connection }
+}
+
+/**
+ * Write the 动效 setting the way the settings page does: through the host's own channel.
+ *
+ * `general` is the second domain this window draws from, and the write is an *applied* one, so the
+ * host publishes a change for it — which is the only way a ball already on the desktop hears about
+ * a click in the main window's settings.
+ */
+async function setMotion(host: MemoryPetGateway, motion: PetMotion, revision: number): Promise<void> {
+  await host.updateSettings({
+    domain: 'general',
+    revision,
+    values: { ...PET_SETTINGS_DEFAULTS.general, motion },
+  })
+}
+
+describe('the ball window and §5.2’s 动效', () => {
+  it('stops the orb’s motion when the app’s setting says so, and starts it again when it does not', async () => {
+    const policy: { motion: PetMotion } = { motion: 'system' }
+    const { host, connection } = hostWithPolicy(policy)
+    mount(connection)
+    await flush()
+
+    // The setting is 「跟随系统」, the schema's default: the orb keeps its own travel, and the
+    // system's own preference is a question its stylesheet asks the engine (the media query in
+    // `PetFloatingBall.vue`), not something this read decides.
+    expect(orb().classList.contains('is-still')).toBe(false)
+
+    // A user picks 「减少动效」 in the main window's settings. Before this wiring the value was
+    // stored, drawn on 常规与交互 and read by nothing that moves: the orb scaled under the pointer
+    // either way.
+    policy.motion = 'reduced'
+    await setMotion(host, 'reduced', 1)
+    await flush()
+    expect(orb().classList.contains('is-still')).toBe(true)
+
+    // And back, because the policy is read rather than latched — a user who returns to
+    // 「跟随系统」 gets the orb's motion back without a restart.
+    policy.motion = 'system'
+    await setMotion(host, 'system', 2)
+    await flush()
+    expect(orb().classList.contains('is-still')).toBe(false)
+  })
+
+  it('reads an appearance with no policy as the schema default, not as reduced', async () => {
+    // The double answers without the field at all, which is what an answer that did not come from
+    // this host looks like (a browser build, or a host from before the field existed). `reduced`
+    // there would invent a restriction the user never chose.
+    const host = createMemoryPetGateway({ visible: true, characters: [KITTY] })
+    mount(host)
+    await flush()
+
+    expect(orb().classList.contains('is-still')).toBe(false)
   })
 })
 

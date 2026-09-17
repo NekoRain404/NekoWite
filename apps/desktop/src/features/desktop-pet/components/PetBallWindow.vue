@@ -11,9 +11,10 @@
  *
  * - **It reads the appearance, and re-reads it when another window changes it.** This is what
  *   makes the ball wear the character instead of upstream's plain orb, and `desktop_pet_appearance`
- *   is in the pet capability for exactly this read. The `character` domain is the only settings
- *   fact the orb draws from, so a character chosen in the main window's settings reaches a ball
- *   that is already on the desktop — the rule `use-pet-window.ts` states for the character window.
+ *   is in the pet capability for exactly this read. The two domains the orb draws from are the
+ *   `character` one and `general.motion` (§5.2's 动效), so a character *or* a motion policy chosen
+ *   in the main window's settings reaches a ball that is already on the desktop — the rule
+ *   `use-pet-window.ts` states for the character window.
  * - **Right-click is upstream's 「right = Settings」** (`lib.rs:306-309`) and lands on `general`,
  *   which is where §5.1's 常规与交互 (启用、窗口行为、点击动作、悬浮球) lives. The left click is
  *   *not* wired: upstream opens its quick-bubble menu by growing this window to 300x420
@@ -27,9 +28,10 @@
  *   a stable click target that exists to be clicked — so `usePetClickThrough` is not mounted, and
  *   the host would refuse it anyway (the ball is not a character instance: `window_host.rs`).
  */
-import { onMounted, onScopeDispose, ref } from 'vue'
-import { isPetAppearance } from '../../../platform/gateways/pet-contracts'
+import { computed, onMounted, onScopeDispose, ref } from 'vue'
+import { isPetAppearance, PET_MOTION_DEFAULT } from '../../../platform/gateways/pet-contracts'
 import type {
+  PetMotion,
   PetSettingsChange,
   PetWindowGateway,
 } from '../../../platform/gateways/pet-contracts'
@@ -80,6 +82,25 @@ const imageUrl = ref<string | null>(null)
 /** The host's own words when it had none to draw, or when the read was refused. */
 const notice = ref<string | null>(null)
 
+/**
+ * What the windows are allowed to do, from the same read (`general.motion`).
+ *
+ * **This is the one surface §5.2's reduce-motion clause is about today.** The orb scales under the
+ * pointer, and that travel is motion: with the app's setting on `reduced` it stops, which is the
+ * behaviour upstream implements by toggling a `reduce-motion` class on its ball window
+ * (`references/desktop-pet/windows/src/floating-ball.ts:265-269`, and
+ * `windows/src/styles.css:1280-1287` for the list it turns off). The *system's* own
+ * `prefers-reduced-motion` is answered by the orb's own stylesheet and does not need to be folded
+ * in here — the two are independent ways into the same state, and reading the app's setting as
+ * "the system said so" would make the two indistinguishable.
+ *
+ * It starts at the schema's default rather than at nothing, so the first frame is drawn under the
+ * policy this build was built with: [`PET_MOTION_DEFAULT`], which the read replaces as soon as the
+ * host answers.
+ */
+const motion = ref<PetMotion>(PET_MOTION_DEFAULT)
+const reduceMotion = computed(() => motion.value === 'reduced')
+
 let unsubscribe: (() => void) | null = null
 let disposed = false
 
@@ -100,6 +121,9 @@ async function readAppearance(): Promise<void> {
     const view = petAppearanceView(read)
     imageUrl.value = view.imageUrl
     notice.value = view.notice
+    // Set on every answer, including the two that draw nothing: a policy is not a property of the
+    // character, and a write that turns it off has to reach a ball that is already on screen.
+    motion.value = view.motion
   } catch (cause) {
     if (disposed) return
     imageUrl.value = null
@@ -107,9 +131,14 @@ async function readAppearance(): Promise<void> {
   }
 }
 
-/** Another window wrote a setting: only the `character` domain changes what this one draws. */
+/**
+ * Another window wrote a setting. Two domains reach this window, and both arrive on this one read:
+ * `character` decides what it wears and `general` decides how far it may move (`general.motion`,
+ * which `desktop_pet_appearance` carries). Every other domain is ignored — a write to `care` or
+ * `notification` costs one comparison.
+ */
 function onSettingsChanged(change: PetSettingsChange): void {
-  if (change.domain !== 'character') return
+  if (change.domain !== 'character' && change.domain !== 'general') return
   void readAppearance()
 }
 
@@ -161,6 +190,7 @@ onScopeDispose(dispose)
     :clock="clock"
     :create-image="createImage"
     :title="notice ?? undefined"
+    :reduce-motion="reduceMotion"
     @open-settings="openSettings"
     @toggle-menu="onToggleMenu"
   />
