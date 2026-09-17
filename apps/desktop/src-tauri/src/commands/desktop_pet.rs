@@ -471,6 +471,10 @@ pub fn desktop_pet_appearance<R: tauri::Runtime>(
     // and a schema this build cannot read is not a reason to refuse the character too.
     let motion = crate::desktop_pet::character_view::stored_motion(&store);
     let bubble_opacity = crate::desktop_pet::character_view::stored_bubble_opacity(&store);
+    // And the rest of that domain: what the bubble shows and how it lays the rows out. Read through
+    // its own arm for the same reason, and on every appearance arm for the same reason the alpha is
+    // — this is the read that makes 气泡与消息's phrases and layout reach a surface at all.
+    let bubble_message = crate::desktop_pet::character_view::stored_bubble_message(&store);
     // The ball's size, for the one window that draws an orb rather than a whole character: the same
     // arrangement as the two above, and the reason `general.ballSize` reaches a page at all — the pet
     // windows hold no settings read (`capabilities/desktop-pet.json`).
@@ -486,8 +490,11 @@ pub fn desktop_pet_appearance<R: tauri::Runtime>(
             return Ok(crate::desktop_pet::PetAppearance::Unset {
                 motion,
                 bubble_opacity: bubble_opacity.value(),
+                // Moved rather than cloned: this arm returns from the command, and the two arms
+                // below it are exclusive.
+                bubble: bubble_message,
                 ball_size,
-            })
+            });
         }
         // There is a file and it is not a record this build can read. Reported rather than read as
         // "nothing chosen": a corrupt record is not an empty one, and drawing nothing for one
@@ -516,6 +523,7 @@ pub fn desktop_pet_appearance<R: tauri::Runtime>(
         &record,
         motion,
         bubble_opacity,
+        bubble_message,
         ball_size,
         library.as_deref(),
     );

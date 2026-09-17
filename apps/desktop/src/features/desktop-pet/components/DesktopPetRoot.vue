@@ -18,9 +18,9 @@
  * moves its pet window from the sprite (`references/desktop-pet/windows/src/main.ts:555-613`), and
  * this port had the permission, the gesture and the adapter for it and used all three on the orb
  * alone — so the ball could be moved and the pet could not. The block below
- * ({@link onPetPointerDown} onward) is the port of upstream's rule, and the two consequences worth
- * knowing before reading it are that the drag handle is the sprite rather than the window, and
- * that a window with a drag handle has to take the pointer for it.
+ * (`use-pet-drag.ts`) is the port of upstream's rule, and the two consequences worth knowing
+ * before reading it are that the drag handle is the sprite rather than the window, and that a
+ * window with a drag handle has to take the pointer for it.
  *
  * Its few strings are literal English for now. The app's `i18n` cannot be imported here: it is
  * the whole dictionary, and §7.1's list of what this window must not carry is exactly that. §10.1
@@ -37,20 +37,21 @@ import type { AnimationConfig, SpriteClock } from '../rendering/animation-bindin
 import type { ImageFactory } from '../rendering/sprite-sheet'
 import type { SheetPixelReader } from '../rendering/sprite-slicer'
 import { usePetClickThrough } from '../composables/use-pet-click-through'
+import { usePetDrag } from '../composables/use-pet-drag'
 import { usePetDrawingFailure } from '../composables/use-pet-drawing-failure'
 import { usePetLifecycle } from '../composables/use-pet-lifecycle'
 import { usePetWindow } from '../composables/use-pet-window'
-import type { PetAppearanceView } from '../services/pet-appearance'
+import {
+  PET_BUBBLE_VIEW_DEFAULTS,
+  type PetAppearanceView,
+  type PetBubbleView,
+} from '../services/pet-appearance'
 // The ball's gesture, reused rather than restated. `pet-ball-input.ts` is where upstream's
 // click-versus-drag arithmetic was ported from `floating-ball.ts`, and the character window's
 // drag needs exactly that arithmetic — the same 4 px threshold, the same 280 ms click window, the
 // same screen-coordinate reading (see that file's header) — so this is the *one* implementation
 // both of the pet's surfaces call, and the character asks for it by the name the port gave it.
-import {
-  createBallGesture,
-  type BallPointer,
-  type PetBallPlatform,
-} from '../services/pet-ball-input'
+import type { PetBallPlatform } from '../services/pet-ball-input'
 import { actOnPetMenu } from '../services/pet-menu-actions'
 import type { PetMenuAction } from '../services/pet-context-menu'
 import PetBubble from './PetBubble.vue'
@@ -184,6 +185,25 @@ const mood = computed(() => window_?.mood.value ?? props.mood)
 const tasks = computed<readonly PetTaskProjection[]>(() => lifecycle?.state.value.tasks ?? [])
 
 /**
+ * The bubble's content model and the line it says (§5.2's 气泡与消息 and 自定义词句).
+ *
+ * **These three props are what makes a whole settings page reach a surface.** `PetBubble` has taken
+ * a `layout` and a `phrases` prop since it was written, and nothing in the product passed either:
+ * the page at `features/desktop-pet-settings/components/PetBubbleSettings.vue` stored a layout mode,
+ * a row cap, a grouping, a filter, a separator and a row-field list, and this window drew a bubble
+ * from its own compiled-in defaults. That is this project's signature defect — a surface built,
+ * tested in isolation and mounted nowhere — and worse here than usual, because the window *did*
+ * draw a bubble: a user who wrote a phrase saw a bubble and not their words.
+ *
+ * A window with no host connection (`window_` is null) draws the renderer's own defaults, which is
+ * the layout this build's bubble has always had, so the no-host state is unchanged.
+ */
+const bubbleModel = computed<PetBubbleView>(
+  () => window_?.bubble.value ?? PET_BUBBLE_VIEW_DEFAULTS,
+)
+const line = computed(() => window_?.line.value ?? null)
+
+/**
  * The two states `PetSprite` reports when it cannot draw, and when they stop being true. Declared
  * after `imageUrl` and `drawing` because those are what its invalidation is *about*: a failure
  * belongs to one attempt, and it is cleared when that attempt's subject is replaced.
@@ -198,169 +218,27 @@ const {
 } = usePetDrawingFailure({ imageUrl, drawing })
 
 /**
- * The character's drag: the ball's rule, on the surface the user actually grabs.
+ * The character's drag — the gesture, the states it reports and the capability it needs.
  *
- * **Upstream drags its pet window, and this port did not.** `references/desktop-pet/windows/src/
- * main.ts:555-613` binds the gesture to the sprite canvas and to the bubble, and its comment says
- * why the drag is measured by hand rather than handed to `data-tauri-drag-region`. Two lines of it
- * are the whole of what this block ports:
+ * A composable rather than a block here: what this window *draws* and what a pointer can *do to it*
+ * are two subjects, and `use-pet-drag.ts` owns the second one whole, with the port's own rules and
+ * upstream's line references in its header. What stays here is the wiring the template needs.
  *
- *   - `:588-590` a press that does not land on the sprite does not start a drag —
- *     `pet.spriteRect && !pet.hitTest(...)` returns early, 「so clicks on the empty area around the
- *     pet don't drag the window」. {@link onPetPointerDown} is that line, and `PetSprite`'s
- *     `hitTest` and `geometry` — exposed by D2 for a shell that did not exist until now — are
- *     finally its callers.
- *   - `:594` a press that moves more than 4 px is a drag, and `:600-603` a press released without
- *     moving is a click. That arithmetic is `pet-ball-input.ts`'s, where upstream's
- *     `floating-ball.ts` was ported from, so this component calls {@link createBallGesture} rather
- *     than restating it: the two surfaces are asked to behave alike, and a second threshold
- *     written here is the defect the sharing prevents.
- *
- * Three things this block decides that the orb's does not have to:
- *
- *   - **The drag handle is the character, and only the character.** A press on the transparent
- *     part of the canvas's box reaches this window and starts nothing. The *window* still takes
- *     the press — see {@link needsInput} on what that costs — but the drag never begins from it.
- *   - **A sprite that has not drawn a frame yet is still grabbable.** Upstream allowed the press
- *     through while the sheet was loading, 「so the pet is never untouchable」 (`:588-589`), and
- *     that case is reachable here for the same reason: `hitTest` answers false when there is no
- *     sprite rect to test against. So the *rect* is what refuses a press, never the miss — a
- *     drawn sprite that was missed is refused, a sprite that has not drawn yet is not.
- *   - **The click lands nowhere — and that is upstream's own default, not a gap left here.**
- *     Upstream's `onPetClick` (`:570-580`) reads `ap_left_click_action` and returns immediately
- *     when it is `none`, which is what that key reads as when it has never been written. So a
- *     fresh upstream install and this build do the same thing with a press that did not wander:
- *     nothing. What is left is the gesture's other half read as the refusal it is — a press that
- *     does not wander is *not* a drag, which is the whole reason the arithmetic exists. It is not
- *     an emit either: this component's only consumer is the entry that mounts it, and an event
- *     nobody hears is a promise of a bubble that this build has not designed
- *     (`desktop-pet-port-ledger.md:114`).
+ * The sprite ref is this component's, because the template's `ref` attribute is what fills it; the
+ * composable is handed a getter over it so a re-render that replaces the instance is seen.
  */
-const gesture = createBallGesture()
-const pressed = ref(false)
-const dragging = ref(false)
-/** The sprite, for the two things only it can answer: where it drew, and whether a point hit it. */
 const sprite = ref<InstanceType<typeof PetSprite> | null>(null)
-
-/** Whether this desktop can move the character at all: the one thing the sprite's tooltip is about. */
-const movable = computed(() => typeof props.platform?.startDrag === 'function')
-
-/**
- * Whether what is on screen is something the pointer can act on by dragging it.
- *
- * The sprite branch's own three terms plus the capability — exactly the condition the template
- * uses for the canvas — so the window can never take the pointer for a character it is not
- * drawing, and never stays click-through while drawing one it could move.
- */
-const dragHandle = computed(
-  () => movable.value && drawing.value && Boolean(imageUrl.value) && !drawingFailure.value,
-)
-
-/**
- * What the sprite's tooltip says, in the orb's own words — one sentence for one state, so the two
- * surfaces cannot describe the same machine differently (§5.2's 「不能用的控件要说出来」).
- *
- * A `title` on a canvas that is `aria-hidden` is a pointer's affordance rather than an
- * announcement, and that is the honest reach here: a window drag is a compositor gesture with no
- * keyboard equivalent, so this surface has no key to answer and no role worth claiming.
- */
-const spriteHint = computed(() =>
-  movable.value ? 'Drag to move' : 'This desktop cannot move it',
-)
-
-/** The cursor reading a gesture is measured from: screen coordinates, and the caller's clock. */
-function pointerOf(event: PointerEvent): BallPointer {
-  return {
-    screenX: event.screenX,
-    screenY: event.screenY,
-    at: props.now ? props.now() : performance.now(),
-  }
-}
-
-/**
- * Hand the pointer to the sprite for the rest of the press, so the move and the release arrive
- * even when the cursor leaves the character. The orb's own call, for its reason: a capture is
- * released by the browser and cannot be leaked.
- */
-function capture(event: PointerEvent, on: boolean): void {
-  const element = event.currentTarget as HTMLElement | null
-  if (!element || typeof event.pointerId !== 'number') return
-  try {
-    if (on) element.setPointerCapture(event.pointerId)
-    else element.releasePointerCapture(event.pointerId)
-  } catch {
-    // No active pointer to capture (a synthesized event, or one the compositor already took).
-  }
-}
-
-/**
- * Where the press landed, in the canvas's own coordinates.
- *
- * Read from the element's box rather than from `event.offsetX`, which upstream used (`:589`):
- * `offsetX` is relative to whichever node the browser dispatched to, and a hit test whose
- * coordinate space depends on that is one a test cannot drive.
- */
-function spritePoint(event: PointerEvent): { x: number; y: number } {
-  const box = (event.currentTarget as HTMLElement | null)?.getBoundingClientRect()
-  return { x: event.clientX - (box?.left ?? 0), y: event.clientY - (box?.top ?? 0) }
-}
-
-function onPetPointerDown(event: PointerEvent): void {
-  // Only the primary button, as the orb does and as upstream did (`:583`): a right-click belongs
-  // to whatever the window opens for it, and arming a press here would let it become a drag.
-  if (event.button !== 0) return
-  if (!dragHandle.value) return
-  const surface = sprite.value
-  const rect = surface?.geometry().spriteRect ?? null
-  const point = spritePoint(event)
-  if (rect && !surface?.hitTest(point.x, point.y)) return
-  capture(event, true)
-  if (gesture.down(pointerOf(event)) === 'pressed') pressed.value = true
-}
-
-function onPetPointerMove(event: PointerEvent): void {
-  if (gesture.move(pointerOf(event)) === 'drag-start') startDrag()
-}
-
-function onPetPointerUp(event: PointerEvent): void {
-  capture(event, false)
-  pressed.value = false
-  // The outcome is not read: `up` is called for what it forgets — a press must not outlive its
-  // release — and a click has nowhere to go here (see this block's header).
-  gesture.up(pointerOf(event))
-}
-
-/** The compositor owns the pointer from here, which arrives as a cancel rather than a release. */
-function onPetPointerCancel(): void {
-  pressed.value = false
-  gesture.cancel()
-}
-
-function startDrag(): void {
-  const beginDrag = props.platform?.startDrag
-  // Nothing to move: the tooltip already says so, and `dragHandle` refused the press.
-  if (!beginDrag) return
-  dragging.value = true
-  pressed.value = false
-  void endDrag(beginDrag.call(props.platform))
-}
-
-async function endDrag(started: Promise<void>): Promise<void> {
-  try {
-    // Resolves when the operating-system drag is over — upstream's `finally` (`main.ts:597`) and
-    // the orb's own `endDrag`, which waits for the same thing.
-    await started
-  } catch {
-    // A drag the compositor refused leaves the character where it was. There is nothing to undo.
-  }
-  dragging.value = false
-  gesture.cancel()
-  try {
-    await props.platform?.snap?.()
-  } catch {
-    // A host that cannot snap keeps the character where the user put it, which is a place they chose.
-  }
-}
+const drag = usePetDrag({
+  platform: () => props.platform,
+  drawing: () => drawing.value,
+  sheet: () => imageUrl.value,
+  failed: () => Boolean(drawingFailure.value),
+  surface: () => sprite.value,
+  now: props.now,
+})
+const { pressed, dragging, movable, hint: spriteHint } = drag
+/** Whether the character is what the pointer can act on — read by `needsInput` below. */
+const dragHandle = drag.handle
 
 /**
  * What this window has for the pointer to act on, which is what decides whether it takes the
@@ -475,6 +353,8 @@ defineExpose({ lifecycle })
       :now="window_?.now.value ?? 0"
       :force-list="listOpen"
       :bubble-opacity="appearance?.bubbleOpacity"
+      :layout="bubbleModel.layout"
+      :line="line"
       @select="selectTask"
       @menu="openMenu"
     />
@@ -487,7 +367,7 @@ defineExpose({ lifecycle })
          are on it rather than on the window: they fall through to `PetSprite`'s own canvas, which
          is the element upstream bound them to too (`main.ts:582`). A press on the transparent part
          of the canvas's box still reaches the window — the compositor's switch has no shape — and
-         `onPetPointerDown` is what refuses to start anything from it. -->
+         `use-pet-drag.ts`'s `onPointerDown` is what refuses to start anything from it. -->
     <PetSprite
       v-if="drawing && imageUrl && !drawingFailure"
       ref="sprite"
@@ -504,10 +384,10 @@ defineExpose({ lifecycle })
       :read-pixels="readPixels"
       :on-load-error="onSheetFailure"
       :on-unavailable="onSpriteUnavailable"
-      @pointerdown="onPetPointerDown"
-      @pointermove="onPetPointerMove"
-      @pointerup="onPetPointerUp"
-      @pointercancel="onPetPointerCancel"
+      @pointerdown="drag.onPointerDown"
+      @pointermove="drag.onPointerMove"
+      @pointerup="drag.onPointerUp"
+      @pointercancel="drag.onPointerCancel"
     />
     <p
       v-else-if="notice"
@@ -580,11 +460,30 @@ body {
   user-select: none;
 }
 
-/* The bubble grows to its cap and no further; the sprite keeps its own box under it. */
+/* The bubble grows to its cap and no further, and is centred on the same axis as the character;
+   its own box is what gives the height back. */
 .pet-root__bubble {
   flex: 0 1 auto;
   min-height: 0;
-  align-self: stretch;
+  /* **No `align-self: stretch`, and that is the fix for a measured deviation.** Stretching the item
+     on the cross axis *replaces* the column's `align-items: center`, and a stretched item that
+     cannot reach its stretched size — this one is capped at `PET_BUBBLE_MAX_WIDTH` — is placed at
+     the **start** edge instead of being centred. So on both engines the bubble sat against the left
+     edge of the window however wide the window was: measured in Chromium (Playwright, the product's
+     own root in the page's own mount point) at a 320px character in the 420px window the host builds
+     for it, the surface came out at `x=0…260` — a left gap of 0 and a right gap of 160 — while the
+     sprite it belongs to was centred at `50…370`. At the default 160px character the window is
+     260px wide and there is no slack, so the two readings are identical there; the deviation needed
+     a window with room in it to show, which is why the case sweeps both sizes.
+
+     Upstream's column has no such rule (`references/desktop-pet/windows/src/styles.css:20-28`,
+     `.bubble` at `:38-58` carries only a `max-width`), so this was a porting deviation rather than a
+     decision: the bubble is centred by the container and lines up with the character under it.
+     The width still comes from `PetBubble.vue`'s own `width: 100%` clamped by that cap, so removing
+     this line does not let the surface take the whole window: a percentage width resolves against
+     the parent's content box and `max-width` caps it, which is what the containment half of the
+     same case asserts. `flex: 0 1 auto` above is the *main* axis and is what gives the height back,
+     so the two rules cannot be confused for one another. */
 }
 
 /* The character keeps the box the size setting gave it, whatever the window turns out to be.

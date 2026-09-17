@@ -208,6 +208,10 @@ async function openPetSection(page: Page, options: MountOptions = {}): Promise<v
   await expect(page.locator('#e2e-pet-settings .pet-settings')).toBeAttached()
 }
 
+/** One domain's stored values, as the window's own appearance read would find them. */
+const values = (page: Page, domain: string) =>
+  page.evaluate((name) => window.__petSettings?.read(name), domain)
+
 /** What the host says the feature state is — the double's store, read back through its own port. */
 const featureState = (page: Page) => page.evaluate(() => window.__petSettings?.feature())
 
@@ -444,6 +448,64 @@ test('the rail offers a page only when a component is behind it', async ({ page 
 // ---------------------------------------------------------------------------
 // The two window switches, the ball's size, and the preview
 // ---------------------------------------------------------------------------
+
+/**
+ * **The click path item 1 is judged by, first half.** A user opens the app, opens Settings, picks
+ * 桌宠 in the rail, then 气泡与消息 — and this is the page's own controls, driven through the real
+ * dialog at the real width and read back out of the store.
+ *
+ * What this case exists for is the sentence that used to be here instead: both blocks were a
+ * paragraph saying the settings could hold these values and that the bubble took no layout from
+ * them. The controls below replaced it, and the *second* half of the path — the store reaching the
+ * bubble — is `desktop-pet-bubble.spec.ts` and, in the engine that ships, `e2e/webkit/pet-probe.mjs`.
+ *
+ * Chromium, like everything else in this file: no window is created and nothing is composited.
+ */
+test('the bubble page draws the layout and phrase controls, and they write where the bubble reads', async ({ page }) => {
+  await bootAt(page, { width: 1280, height: 820 })
+  await openPetSection(page)
+  await openTab(page, 'bubble')
+
+  // The page a user reaches from the rail. Every one of these is a control §5.2 would otherwise
+  // have forbidden: before the `message` payload existed there was no surface reading any of them.
+  for (const hook of [
+    'pet-bubble-mode-compact',
+    'pet-bubble-rows',
+    'pet-bubble-grouping-flat',
+    'pet-bubble-filter-attention',
+    'pet-bubble-separator-arrow',
+    'pet-bubble-token-elapsed',
+    'pet-bubble-preset-standard',
+    'pet-bubble-phrases',
+    'pet-bubble-idle',
+  ]) {
+    await expect(page.locator(`#e2e-pet-settings [data-test="${hook}"]`)).toBeAttached()
+  }
+
+  // One of each kind of control, driven the way a user drives it.
+  await page.locator('#e2e-pet-settings [data-test="pet-bubble-mode-compact"]').click()
+  await slide(page.locator('#e2e-pet-settings [data-test="pet-bubble-rows"]'), 3)
+  await page.locator('#e2e-pet-settings [data-test="pet-bubble-separator-arrow"]').click()
+  const phrases = page.locator('#e2e-pet-settings [data-test="pet-bubble-phrases"]')
+  await phrases.fill('先喝口水\n整理一下引用')
+  await phrases.blur()
+  await page.locator('#e2e-pet-settings [data-test="pet-bubble-token-elapsed"]').check()
+
+  // Read back out of the `message` domain the pet window's appearance read comes from — the same
+  // store, so what is asserted here is what `desktop_pet_appearance` would hand a window.
+  await expect
+    .poll(async () => (await values(page, 'message'))?.layoutMode)
+    .toBe('compact')
+  const stored = await values(page, 'message')
+  expect(stored?.layoutMaxRows).toBe(3)
+  expect(stored?.separator).toBe('arrow')
+  expect(stored?.quickBubbles).toEqual(['先喝口水', '整理一下引用'])
+  // The field list is written whole, in the renderer's own order — the box that was checked is on
+  // and the preset it started from is what the rest of the list holds.
+  expect(
+    (stored?.tokens as { token: string; visible: boolean }[] | undefined)?.map((entry) => entry.token),
+  ).toEqual(['dot', 'agent', 'session', 'separator', 'message', 'stateLabel', 'elapsed'])
+})
 
 test('the two window switches are peers, and there is no master above them', async ({ page }) => {
   await openNote(page)

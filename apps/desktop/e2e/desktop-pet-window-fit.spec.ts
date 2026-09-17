@@ -52,49 +52,29 @@
  * to come through; this file follows whatever that rule says and fails if the browser cannot hold the
  * sprite in it.
  */
-import { readFileSync } from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { expect, test, type Page } from '@playwright/test'
 import { SHEET } from './support/petFixture'
 
 /**
- * The Rust file that owns the character window's geometry. Resolved from this file's own location,
- * the way `support/repoFs.ts` does it, so a clone anywhere reads its own tree.
+ * The window the host builds, and the boxes it is measured against — **read out of `window_host.rs`
+ * rather than restated here**, which is the opposite of what `desktop-pet-tasks.spec.ts` does with
+ * the bubble's cap.
+ *
+ * They live in `support/petWindow.ts` because `desktop-pet-bubble.spec.ts` measures surfaces inside
+ * the same window, and a second copy of the parse would be a second answer to "what box does the
+ * host ask the compositor for" — the kind that keeps measuring the box the product used to build
+ * after the rule moves. What this file measures is a *layout* property — "the browser puts this
+ * sprite inside this box" — and the numbers themselves are pinned on the Rust side
+ * (`tests/desktop_pet_settings_test/geometry.rs`), which is where a rule change has to come through;
+ * this file follows whatever that rule says and fails if the browser cannot hold the sprite in it.
  */
-const WINDOW_HOST_RS = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '..',
-  'src-tauri',
-  'src',
-  'desktop_pet',
-  'window_host.rs',
-)
-
-/** The text after `marker` on the same line, or a throw naming what moved. */
-function declaredAfter(text: string, marker: string): string {
-  const at = text.indexOf(marker)
-  if (at < 0) throw new Error(`${marker} is not in window_host.rs`)
-  const rest = text.slice(at + marker.length)
-  const end = rest.indexOf('\n')
-  return (end < 0 ? rest : rest.slice(0, end)).trim()
-}
-
-/** `CHARACTER_WINDOW_SLACK` and `CHARACTER_WINDOW_MIN_WIDTH`, as the rule declares them. */
-function windowRule(): { slack: [number, number]; floor: number } {
-  const text = readFileSync(WINDOW_HOST_RS, 'utf8')
-  const slack = declaredAfter(text, 'const CHARACTER_WINDOW_SLACK: (f64, f64) = (')
-    .replace(/\)\s*;.*$/, '')
-    .split(',')
-    .map((part) => Number(part.trim()))
-  const floor = Number(
-    declaredAfter(text, 'const CHARACTER_WINDOW_MIN_WIDTH: f64 = ').replace(/;.*$/, ''),
-  )
-  if (slack.length !== 2 || slack.some((n) => !Number.isFinite(n)) || !Number.isFinite(floor)) {
-    throw new Error(`the window rule could not be read: slack ${slack}, floor ${floor}`)
-  }
-  return { slack: [slack[0] as number, slack[1] as number], floor }
-}
+import {
+  hostWindow,
+  outside,
+  spriteBox,
+  type Box,
+  type WindowBox,
+} from './support/petWindow'
 
 /**
  * The sizes this file sweeps: `PET_NUMBER_RULES['character.size']` is `{ min: 64, max: 320, …,
@@ -102,29 +82,6 @@ function windowRule(): { slack: [number, number]; floor: number } {
  * reach, at the three places a layout can behave differently.
  */
 const SIZES = [64, 160, 320] as const
-
-/** A box in viewport coordinates, as `getBoundingClientRect()` gives it. */
-type Box = { left: number; top: number; right: number; bottom: number; width: number; height: number }
-/** A window box, the thing every other box below is judged against. */
-type WindowBox = { width: number; height: number }
-
-/** The sprite box a size implies: `pet-appearance.ts`'s `box()`, at the sheet's 160x180 aspect. */
-function spriteBox(size: number): WindowBox {
-  return { width: size, height: Math.round((size * 180) / 160) }
-}
-
-/**
- * The window the host builds for a character of this size: `character_window_size`, read out of
- * `window_host.rs` above — the sprite's own box plus the slack upstream's window had, floored at the
- * width the bubble's cap needs.
- */
-function hostWindow(size: number): WindowBox {
-  const { slack, floor } = windowRule()
-  return {
-    width: Math.max(size + slack[0], floor),
-    height: spriteBox(size).height + slack[1],
-  }
-}
 
 /** The bubble's own box, and the box inside it that scrolls. Null when the window shows none. */
 interface BubbleMeasurement {
@@ -288,11 +245,6 @@ async function mountAt(page: Page, size: number, window_: WindowBox, runs = 0): 
   // it. Waiting on the canvas rather than on a timeout: a box that never arrived is a failure to
   // report, not to wait out.
   await expect(page.locator('#desktop-pet canvas.pet-sprite')).toBeAttached()
-}
-
-/** How far a box is past each edge of the window: positive is outside, zero or less is inside. */
-function outside(box: Box, window_: WindowBox): Record<string, number> {
-  return { left: -box.left, top: -box.top, right: box.right - window_.width, bottom: box.bottom - window_.height }
 }
 
 /** One line of raw numbers, so a failure is read against the measurement rather than a guess. */

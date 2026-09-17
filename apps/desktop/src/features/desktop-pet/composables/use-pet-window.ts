@@ -35,7 +35,13 @@ import type {
 } from '../../../platform/gateways/pet-contracts'
 import type { SpriteClock } from '../rendering/animation-bindings'
 import { buildPetTaskView, type PetTaskMood } from '../services/pet-task-view'
-import { petAppearanceView, type PetAppearanceView } from '../services/pet-appearance'
+import {
+  PET_BUBBLE_VIEW_DEFAULTS,
+  petAppearanceView,
+  type PetAppearanceView,
+  type PetBubbleView,
+} from '../services/pet-appearance'
+import { pickPetPhrase } from '../services/pet-message-template'
 import type { PetHold } from './use-pet-lifecycle'
 
 export interface PetWindowOptions {
@@ -59,6 +65,23 @@ export interface PetWindow {
   readonly now: ShallowRef<number>
   /** §6.3's aggregate, as the row the sprite plays. */
   readonly mood: ComputedRef<PetTaskMood>
+  /**
+   * What the bubble shows and how (§5.2's 气泡与消息), as the last read carried it.
+   *
+   * Never null: before the host has answered it is the renderer's own defaults, which is the layout
+   * this build's bubble was drawn with — so a window whose read is still in flight draws the bubble
+   * it always did rather than nothing.
+   */
+  readonly bubble: ComputedRef<PetBubbleView>
+  /**
+   * The line the pet says when there is nothing to report, or null (§5.2's 自定义词句).
+   *
+   * `null` in two cases, and both are deliberate: `message.idle` is off, or the user has written no
+   * lines. The bubble draws nothing then, which is what a fresh install did before this existed —
+   * `message.quickBubbles` is empty by default on purpose, because those are the *user's* words and
+   * putting this build's own English in their mouth is not a default a schema should decide.
+   */
+  readonly line: ComputedRef<string | null>
   /** Read the appearance, and start listening for another window's change to it. */
   start: () => Promise<void>
   /** A click on a row: back to the session it belongs to (§6.2's 点击返回任务). */
@@ -177,6 +200,29 @@ export function usePetWindow(options: PetWindowOptions): PetWindow {
     buildPetTaskView({ tasks: options.tasks(), now: now.value }),
   )
 
+  /**
+   * The layout and the phrases, from the read. Not a copy of the domain: `PetBubble` resolves the
+   * layout through its own rule, so nothing here reads a field.
+   */
+  const bubble = computed<PetBubbleView>(() => appearance.value?.bubble ?? PET_BUBBLE_VIEW_DEFAULTS)
+
+  /**
+   * Which of the user's lines the pet says, picked by the mood — and picked *deterministically*.
+   *
+   * Upstream calls `pickMoodLine` on every mood transition and picks with `Math.random()`
+   * (`windows/src/main.ts:251-257`, the pick at `:256`). The same shape is kept here — a new mood may be a new
+   * line — but the pick is the project's own djb2 (`pickPetPhrase`), for a reason this window has
+   * and upstream's had too: the line is recomputed on every tick (`PET_TICK_MS`, 500ms), and a
+   * random pick on the render path would change the text twice a second, which is not a phrase the
+   * user can read. Seeded by the mood it is stable for as long as the mood is, which is the
+   * observable half of upstream's rule.
+   */
+  const line = computed<string | null>(() => {
+    const view_ = bubble.value
+    if (!view_.idle || view_.lines.length === 0) return null
+    return pickPetPhrase(view_.lines, view.value.mood)
+  })
+
   // §7.1's drawing scope: hiding the pet stops the drawing, and this timer is drawing. Registered
   // with the lifecycle rather than beside it, so there is one place that knows what a hold is.
   options.hold?.({ scope: 'drawing', release })
@@ -190,6 +236,8 @@ export function usePetWindow(options: PetWindowOptions): PetWindow {
     appearanceError,
     now,
     mood: computed(() => view.value.mood),
+    bubble,
+    line,
     start,
     select: async (task) => {
       // The key and nothing else: which window or session that becomes is the main window's

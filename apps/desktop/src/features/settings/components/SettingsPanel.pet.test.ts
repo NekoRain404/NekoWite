@@ -492,6 +492,7 @@ describe('the dialog carries the pet’s pages, and what comes with them', () =>
     expect(settings).toEqual([
       'features/desktop-pet-settings/components/DesktopPetSettings.vue',
       'features/desktop-pet-settings/components/DesktopPetSettingsSection.vue',
+      'features/desktop-pet-settings/components/PetBubbleLayoutSettings.vue',
       'features/desktop-pet-settings/components/PetBubbleSettings.vue',
       'features/desktop-pet-settings/components/PetCareSettings.vue',
       // §8's catalogue browser, which the character page renders. Its own component, so that
@@ -548,6 +549,11 @@ describe('the dialog carries the pet’s pages, and what comes with them', () =>
     //     `DesktopPetRoot.vue` — which this window reaches through the barrel, above — imports the
     //     gesture and the platform contract from it. It is the same cost as the line above and for
     //     the same reason: nothing here mounts a pet window, so nothing here presses anything.
+    //
+    //   - `composables/use-pet-drag.ts` is where that block *moved*: the root kept the drag inline
+    //     until it was past the file budget, and the block became this composable whole. The set of
+    //     modules reached is otherwise unchanged — the file is a move, not a new dependency — and
+    //     the cost is one more line of the same barrel kind.
     expect(surface).toEqual([
       'features/desktop-pet/components/DesktopPetRoot.vue',
       'features/desktop-pet/components/PetBubble.vue',
@@ -557,6 +563,7 @@ describe('the dialog carries the pet’s pages, and what comes with them', () =>
       'features/desktop-pet/components/PetTaskList.vue',
       'features/desktop-pet/components/PetTaskRow.vue',
       'features/desktop-pet/composables/use-pet-click-through.ts',
+      'features/desktop-pet/composables/use-pet-drag.ts',
       'features/desktop-pet/composables/use-pet-drawing-failure.ts',
       'features/desktop-pet/composables/use-pet-lifecycle.ts',
       'features/desktop-pet/composables/use-pet-window.ts',

@@ -348,11 +348,35 @@ describe('the wrapping the acceptance names', () => {
     expect(message.whiteSpace).not.toBe('nowrap')
   })
 
-  it('pins the short fields so the message is what gives way', () => {
-    for (const token of ['dot', 'agent', 'session', 'separator', 'stateLabel', 'elapsed'] as const) {
+  it('pins the fields whose content is a word from a fixed list', () => {
+    // Four tokens whose content this build chooses: a dot with no text, one or two separator
+    // characters, a state label out of `PET_STATE_LABELS`, and a duration out of `petElapsed`.
+    // None of them can be longer than a few characters, so none of them needs a break opportunity —
+    // and keeping them at their own size is what lets the message be the field that gives way.
+    for (const token of ['dot', 'separator', 'stateLabel', 'elapsed'] as const) {
       expect(petTokenStyle(token).flex, token).toBe('0 0 auto')
+      expect(petTokenStyle(token).whiteSpace, token).toBe('nowrap')
     }
-    expect(petTokenStyle('agent').whiteSpace).toBe('nowrap')
+  })
+
+  it('lets the two fields that carry an *identifier* break, because an identifier is as long as it is', () => {
+    // `agent` is an engine id (§5.2: an engine nobody has heard of is shown as itself) and `session`
+    // is an ACP session id — a 36-character uuid, which in the row's 11px monospace is wider than
+    // the 260px bubble on its own. `nowrap` plus `flex: 0 0 auto` is a field that cannot shrink and
+    // cannot break, so the row overflowed the surface and the id was simply unreadable: measured in
+    // Chromium at a 320px character (a 420px window), the scrolling box came out 258 against a
+    // 242px client width and the `session` field reached 16px past its own row.
+    for (const token of ['agent', 'session'] as const) {
+      const style = petTokenStyle(token)
+      expect(style.whiteSpace, token).not.toBe('nowrap')
+      expect(style.overflowWrap, token).toBe('anywhere')
+      // Shrinkable *and* shrinkable to nothing: the automatic minimum size of a flex item is its
+      // min-content width, which for an unbreakable id is the whole id. `0 1 auto` lets the row's
+      // wrap run first (the hypothetical size is the id's max-content) and then lets the field give
+      // the last few pixels back instead of overflowing them.
+      expect(style.flex, token).toBe('0 1 auto')
+      expect(style.minWidth, token).toBe(0)
+    }
   })
 
   it('is no wider than the window it is drawn in', () => {

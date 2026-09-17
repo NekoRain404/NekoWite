@@ -88,6 +88,45 @@ export function petMotionOf(read: { motion?: PetMotion }): PetMotion {
  * what one frame needs together. Every arm, because `unset` is a fresh install: the ball draws
  * upstream's plain orb there, and the orb is a surface that moves.
  */
+/**
+ * The `message` domain as the bubble draws with it, beyond its alpha (§5.2's 气泡与消息).
+ *
+ * A second payload riding the same read for the reason {@link PetAppearance.bubbleOpacity} does:
+ * `capabilities/desktop-pet.json` holds no settings read, so the window that draws the bubble
+ * cannot ask for the domain itself. The difference is that this one is the whole content model
+ * rather than one number — what a row shows, how many rows, how they are grouped and filtered, what
+ * stands between two fields, and the lines the user wrote — because that is what the page stores
+ * and what the bubble has to be told in one answer.
+ *
+ * Every field is optional and every name is the *renderer's* (`mode`, `maxTasks`) rather than the
+ * schema's (`layoutMode`, `layoutMaxRows`): the host sends what `PetBubble` takes as its `layout`
+ * prop, so `resolvePetBubbleLayout` stays the single place a value is judged (§5.3's 「界面和后端
+ * 使用同一规则」) and this side never re-reads a stored record.
+ *
+ * **Only the fields a surface acts on are here.** `message` holds `fontSize`, `theme`, `dot`,
+ * `sortByKind`, `hiddenAgents`, `phraseTheme`, `leftClick` and `bubbleSeconds` as well, and none of
+ * them crosses: no surface in the pet window draws with one yet, and a wire field with no reader is
+ * the defect this payload exists to close.
+ */
+export interface PetBubbleRead {
+  /** `message.layoutMode`, under the renderer's name. */
+  mode?: string
+  /** `message.layoutMaxRows`, under the renderer's name. */
+  maxTasks?: number
+  /** `message.grouping` — whether the rows are gathered under their engine. */
+  grouping?: string
+  /** `message.filter` — what the surface leaves out. */
+  filter?: string
+  /** `message.separator`, as the member name (`dot`, `arrow`, `bar`, `space`). */
+  separator?: string
+  /** `message.tokens` — the row's fields and their visibility. Empty means the preset. */
+  tokens?: readonly unknown[]
+  /** `message.quickBubbles` — the lines the user wrote, in their order. */
+  phrases?: readonly string[]
+  /** `message.idle` — whether the pet says anything when there is no task to speak of. */
+  idle?: boolean
+}
+
 export type PetAppearance = {
   /** The window's motion policy, from `general.motion`. See {@link petMotionOf} for an absent one. */
   motion?: PetMotion
@@ -106,6 +145,14 @@ export type PetAppearance = {
    * a double — is the schema's default rather than a guess.
    */
   bubbleOpacity?: number
+  /**
+   * The rest of that domain: what the bubble shows and how it lays its rows out. See
+   * {@link PetBubbleRead} — and note that it rides *every* arm, exactly as `bubbleOpacity` does:
+   * the bubble is drawn above the notice and above a sprite alike, so a payload that only arrived
+   * with `ready` would leave a fresh install drawing the built-in layout for a user who chose
+   * another.
+   */
+  bubble?: PetBubbleRead
   /**
    * The floating ball's diameter in CSS pixels, from `general.ballSize`.
    *

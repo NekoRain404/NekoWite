@@ -14,6 +14,7 @@
  */
 import { PET_MOTION_DEFAULT, PET_SETTINGS_DEFAULTS } from '../pet-contracts'
 import type {
+  PetBubbleRead,
   PetAppearance,
   PetCatalogueReading,
   PetCharacterEntry,
@@ -142,6 +143,33 @@ export function createPetCharacterDouble(
       : PET_SETTINGS_DEFAULTS.general.ballSize
   }
 
+  /**
+   * The `message` record's bubble content model, as the host reads it into every appearance arm.
+   *
+   * `stored_bubble_message`'s arrangement one field over, and the same rule: only the fields a
+   * surface draws with cross, under the renderer's names where the schema spells them differently
+   * (`layoutMode` → `mode`, `layoutMaxRows` → `maxTasks`). A `message` record this build may not
+   * read takes the schema's defaults — a layout the user never chose is a change to what they see,
+   * not a default. What is *inside* each rule is not this function's question: the drawing side
+   * resolves every field (`resolvePetBubbleLayout`), exactly as the host's store normalizes the
+   * record before the command reads it.
+   */
+  function storedBubble(): PetBubbleRead {
+    const load = settings.read('message')
+    if (load.status === 'read-only') return {}
+    const values = load.record.values as PetSettingsValues['message']
+    return {
+      mode: values.layoutMode,
+      maxTasks: values.layoutMaxRows,
+      grouping: values.grouping,
+      filter: values.filter,
+      separator: values.separator,
+      tokens: values.tokens,
+      phrases: values.quickBubbles,
+      idle: values.idle,
+    }
+  }
+
   return {
     library() {
       return [...installed]
@@ -156,8 +184,9 @@ export function createPetCharacterDouble(
       // orb at whatever size the page's own default was.
       const motion = storedMotion()
       const bubbleOpacity = storedBubbleOpacity()
+      const bubble = storedBubble()
       const ballSize = storedBallSize()
-      if (selected === null) return { status: 'unset', motion, bubbleOpacity, ballSize }
+      if (selected === null) return { status: 'unset', motion, bubbleOpacity, bubble, ballSize }
       const entry = installed.find((candidate) => candidate.characterId === selected)
       if (entry === undefined) {
         return {
@@ -166,6 +195,7 @@ export function createPetCharacterDouble(
           detail: 'it is not installed in the character library',
           motion,
           bubbleOpacity,
+          bubble,
           ballSize,
         }
       }
@@ -176,6 +206,7 @@ export function createPetCharacterDouble(
           detail: 'its files are not what the library recorded',
           motion,
           bubbleOpacity,
+          bubble,
           ballSize,
         }
       }
@@ -197,6 +228,7 @@ export function createPetCharacterDouble(
         idleIntervalMs: values.idleIntervalSeconds * 1000,
         motion,
         bubbleOpacity,
+        bubble,
         ballSize,
       }
     },

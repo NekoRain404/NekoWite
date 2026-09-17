@@ -37,6 +37,7 @@ import {
   PET_ALERT_BY_STATE,
   petTaskToken,
   readPetNumber,
+  type PetBubbleSeparator,
   type PetTaskProjection,
   type PetTaskState,
 } from '../../../platform/gateways/pet-contracts'
@@ -149,22 +150,54 @@ export const PET_BUBBLE_LAYOUT_DEFAULTS: PetBubbleLayout = {
   tokens: PET_BUBBLE_PRESETS.standard,
 }
 
-/** What a settings record may hold: the same shape, unchecked, from anywhere. */
+/**
+ * What a settings record may hold: the same shape, unchecked, from anywhere.
+ *
+ * `unknown` per field rather than the union each one resolves to, and that is what the sentence
+ * above already meant: this is the *input* to {@link resolvePetBubbleLayout}, which reads every
+ * field through its own rule, so a caller that had to hand this a `PetBubbleMode` would be a caller
+ * forced to assert — which is the check this type exists to avoid writing twice. The two callers
+ * are a stored record and the appearance read, and neither can promise a member.
+ */
 export type PetBubbleLayoutInput = Partial<{
-  mode: PetBubbleMode
-  grouping: PetBubbleGrouping
-  filter: PetBubbleFilter
-  maxTasks: number
-  separator: string
-  tokens: readonly PetBubbleTokenItem[]
+  mode: unknown
+  grouping: unknown
+  filter: unknown
+  maxTasks: unknown
+  separator: unknown
+  tokens: unknown
 }>
 
 function oneOf<T extends string>(allowed: readonly T[], raw: unknown, fallback: T): T {
   return typeof raw === 'string' && (allowed as readonly string[]).includes(raw) ? (raw as T) : fallback
 }
 
+/**
+ * The four separators the schema names, as the characters upstream's control offers.
+ *
+ * `message.separator` is stored as a *name* (`pet-contracts/config.ts`'s `PetBubbleSeparator`) while
+ * the renderer wants the one character that goes between two fields, and this table is where the
+ * two meet. It is here rather than on the host because it is a drawing decision: upstream's control
+ * is four buttons whose values are `·`, `→`, `|` and a space
+ * (`references/desktop-pet/windows/settings.html:184-189`), and which glyph stands for `bar` is
+ * something this surface knows and a settings store does not.
+ *
+ * `space` is a real member and not an omission: an empty separator is a valid layout, and the
+ * schema spells it as a word so that a stored value cannot be a blank an editor stripped.
+ */
+export const PET_BUBBLE_SEPARATORS: Readonly<Record<PetBubbleSeparator, string>> = {
+  dot: '·',
+  arrow: '→',
+  bar: '|',
+  space: ' ',
+}
+
 function readSeparator(raw: unknown, fallback: string): string {
   if (typeof raw !== 'string') return fallback
+  // A schema member first: the names are words, and one of them (`bar`) would otherwise read as a
+  // three-character literal and be refused.
+  const named = (PET_BUBBLE_SEPARATORS as Readonly<Record<string, string | undefined>>)[raw]
+  if (named !== undefined) return named
   const trimmed = raw.trim()
   // One or two characters: the field is a separator between row fields, and a paragraph of text
   // there is a layout the user did not ask for. Whitespace alone is not a separator at all.
@@ -390,14 +423,61 @@ export const PET_BUBBLE_MESSAGE_STYLE: CSSProperties = {
   flex: '1 1 auto',
 }
 
-/** The short fields: they keep their size, and the message is what gives way. */
+/**
+ * The fields whose content is a word from a list this build owns: `dot` (no text at all),
+ * `separator` (one or two characters, capped by {@link readSeparator}), `stateLabel` (out of
+ * `PET_STATE_LABELS`) and `elapsed` (out of `petElapsed`). They keep their size and never break,
+ * and that is what leaves the message as the field that gives way.
+ */
 export const PET_BUBBLE_FIXED_TOKEN_STYLE: CSSProperties = {
   flex: '0 0 auto',
   whiteSpace: 'nowrap',
 }
 
+/**
+ * The fields whose content is an **identifier**: `session` (an ACP session id) and `agent` (an
+ * engine id, which §5.2 requires to be shown as itself for an engine this build has never heard
+ * of). An identifier is as long as it is, and neither of the two is bounded by anything this build
+ * chooses.
+ *
+ * **This style is the fix for a measured overflow.** Both fields used to take
+ * {@link PET_BUBBLE_FIXED_TOKEN_STYLE}, which is `flex: 0 0 auto` + `nowrap` — a field that can
+ * neither shrink nor break. A 36-character uuid in the row's 11px monospace is wider than the
+ * 260px bubble on its own, so the row ran past the surface that holds it: measured in Chromium
+ * (Playwright, the product's own root in the page's own mount point, a 320px character in the 420px
+ * window the host builds) the scrolling box came out **258 against a 242px client width**, and the
+ * `session` field reached **16px past its own row**. The fixtures all used ids like
+ * `shared-session`, which is why no assertion had ever seen it.
+ *
+ * Wrapping rather than an ellipsis, and the reason is the row's own job: §6.1's identity is what
+ * tells two rows of one engine apart, and a truncated id is a weaker answer to that than a wrapped
+ * one. It is also the treatment `PET_BUBBLE_MESSAGE_STYLE` already gives the same kind of string —
+ * that constant names 「a session id」 as one of the two runs with no break opportunity in it.
+ *
+ * `flex: 0 1 auto` and `min-width: 0` are the half that makes it hold. The row is
+ * `flex-wrap: wrap`, and line breaking uses each item's *hypothetical* main size — the id's
+ * max-content width — so a long id moves to a line of its own before anything shrinks. On that line
+ * it is the only item, and what is left is the few pixels of overhang, which `flex-shrink` gives
+ * back. Without `min-width: 0` the automatic minimum size would be the id's min-content width (the
+ * whole id, since it has no break opportunity *until* this rule's `overflow-wrap`) and the field
+ * would refuse to shrink at all.
+ */
+export const PET_BUBBLE_ID_STYLE: CSSProperties = {
+  flex: '0 1 auto',
+  minWidth: 0,
+  whiteSpace: 'normal',
+  overflowWrap: 'anywhere',
+  wordBreak: 'break-word',
+}
+
+/**
+ * What one field draws with: the message gives way, the identifiers break when they must, and the
+ * fixed-vocabulary fields keep their size.
+ */
 export function petTokenStyle(token: PetBubbleToken): CSSProperties {
-  return token === 'message' ? PET_BUBBLE_MESSAGE_STYLE : PET_BUBBLE_FIXED_TOKEN_STYLE
+  if (token === 'message') return PET_BUBBLE_MESSAGE_STYLE
+  if (token === 'session' || token === 'agent') return PET_BUBBLE_ID_STYLE
+  return PET_BUBBLE_FIXED_TOKEN_STYLE
 }
 
 /**

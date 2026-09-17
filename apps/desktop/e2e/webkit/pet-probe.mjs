@@ -69,6 +69,20 @@ const FRAME_WAIT_MS = 1400
  * The sprite probes above run at 480x420 and this resizes for the bubble step.
  */
 const WINDOW = { width: 260, height: 320 }
+/**
+ * The box the bubble step's window stand-in is drawn in: **the widest window the host ever builds**.
+ *
+ * Wider than `WINDOW` on purpose, and that is the whole point of the number. `character_window_size`
+ * is `max(size + 100, 260)` by `round(size * 180 / 160) + 140`, so a 320px character — the slider's
+ * ceiling — gets 420x500. At 260 there is *no slack*: the bubble's cap and the window are the same
+ * number, so a surface pinned to the left edge and one centred in the middle have identical
+ * geometry and the claim below cannot fail. The deviation this step measures needs room to be
+ * visible in, which is why the Chromium case swept 320 with 160 as its control.
+ *
+ * The *height* stays `WINDOW`'s, because the rows' cap is `min(240px, 40vh)` and `vh` is the
+ * viewport — the height is what the resize below has to get right.
+ */
+const BUBBLE_WINDOW = { width: 420, height: 320 }
 /** MiniBrowser's own chrome, measured rather than assumed: a 420px content area needs 456 (above). */
 const WINDOW_CHROME_PX = 36
 
@@ -178,30 +192,59 @@ const sprite = arguments[0], sheetSpec = arguments[1], win = arguments[2], done 
     app,
   };
 
-  // The bubble, in a box the size of the character window. Mounted in this same script rather than
-  // in a second page load because the cap is a fraction of the viewport height, and the window has
-  // to be resized for that to mean the window — a resize needs the surface already in the document.
+  // The bubble, inside the **product's own root**, in a box the size of the character window.
   //
-  // The fixture is the one the Playwright case uses, imported from the dev server rather than
-  // copied: six long-Chinese rows behind two agents, which is what makes the row box taller than
-  // any cap. A second copy of it here would be a second answer to "how tall is the content".
-  const fixture = await import('/e2e/support/petFixture.ts');
-  const bubbleComponent = await import('/src/features/desktop-pet/components/PetBubble.vue');
+  // Mounted in this same script rather than in a second page load because the cap is a fraction of
+  // the viewport height, and the window has to be resized for that to mean the window — a resize
+  // needs the surface already in the document.
+  //
+  // **This step used to mount PetBubble directly into a div whose own style carried
+  // display:flex/flex-direction:column/justify-content:flex-end/gap:6px** — that is, it supplied
+  // the flex column .pet-root is, with a different gap and no align-items at all. So the bubble
+  // was measured in a layout the product never has, and the two things that column decides — the
+  // centring on the cross axis and the room given back on the main one — were measured as whatever
+  // the instrument happened to do. The root is the component desktop-pet-entry.ts mounts, and the
+  // host below carries a box and nothing else; every rule between them is the product's.
+  //
+  // The tasks come from the memory double rather than from 'petFixture.ts', so the run that carries
+  // a real 36-character session id can be asked for — startRun({ sessionId }) is the host's own
+  // way of filing a run, and a fixture with session-1 in it is exactly what hid the row overflow
+  // this step now measures. layoutMaxRows is written through the double for the same reason: the
+  // cap is a setting, and the row box has to be over it for the cap to be what is measured.
+  const memory = await import('/src/platform/gateways/memory-pet.ts');
+  const rootComponent = await import('/src/features/desktop-pet/components/DesktopPetRoot.vue');
   const bubbleHost = document.createElement('div');
   bubbleHost.id = 'probe-bubble';
-  bubbleHost.style.cssText =
-    'width:' + win.width + 'px;height:' + win.height + 'px;display:flex;flex-direction:column;' +
-    'justify-content:flex-end;gap:6px;overflow:hidden';
+  bubbleHost.style.cssText = 'width:' + win.width + 'px;height:' + win.height + 'px';
   document.body.append(bubbleHost);
-  vue.createApp({
-    render: () => vue.h(bubbleComponent.default, {
-      tasks: fixture.petTasks(),
-      layout: { maxTasks: 6 },
-      phrases: fixture.petPhrases(),
-      now: 1700000010000,
-      agentLabels: { memory: 'Memory', opencode: 'OpenCode' },
+
+  const bubbleGateway = memory.createMemoryPetGateway({ visible: true });
+  // One run per fixture row, and the last one under a uuid: 8-4-4-4-12 hex, the shape a real ACP
+  // session id has. The other six keep it short so the row that wraps is the one being named.
+  // Enough runs that the row box is over its cap whatever the phrases turn out to be, and the last
+  // one under a uuid: 8-4-4-4-12 hex, the shape a real ACP session id has. Started last so it ranks
+  // first: the ranking is urgency, then most recently changed, and every run here is working.
+  for (let i = 0; i < 13; i += 1) bubbleGateway.startRun({ sessionId: 'cycle-' + (i + 1) });
+  bubbleGateway.startRun({ sessionId: '0193c0de-4f2a-7c31-9b6e-2d2f0a7b41c8' });
+  const bubbleSettings = await bubbleGateway.readSettings('message');
+  if (bubbleSettings.status !== 'current') { done({ ok: false, why: 'the double would not read message' }); return; }
+  await bubbleGateway.updateSettings({
+    domain: 'message',
+    revision: bubbleSettings.record.revision,
+    values: Object.assign({}, bubbleSettings.record.values, { layoutMaxRows: 10 }),
+  });
+
+  const bubbleApp = vue.createApp({
+    render: () => vue.h(rootComponent.default, {
+      gateway: bubbleGateway,
+      connection: bubbleGateway,
+      imageUrl: url,
+      width: sprite.width,
+      height: sprite.height,
+      platform: null,
     }),
-  }).mount(bubbleHost);
+  });
+  bubbleApp.mount(bubbleHost);
 
   await vue.nextTick();
   // The sheet is a data URL: its decode is asynchronous even so, and a read taken before it commits
@@ -251,10 +294,15 @@ const sheetUrl = arguments[0], size = arguments[1], done = arguments[arguments.l
     return remove.apply(this, arguments);
   };
 
+  // A box and nothing else. It used to carry display:flex/flex-direction:column/
+  // justify-content:flex-end/overflow:hidden as well — the product's own .pet-root rules, written
+  // a second time by the instrument, with overflow:hidden standing in for the page's rule. A host
+  // that supplies the layout it is measuring cannot see the layout change; what a window stand-in
+  // owes the product is a size, and html, body { height: 100%; overflow: hidden } is already the
+  // page's when the page is desktop-pet.html (which it is).
   const host = document.createElement('div');
   host.id = 'probe-root';
-  host.style.cssText = 'width:' + size.width + 'px;height:' + size.height +
-    'px;display:flex;flex-direction:column;justify-content:flex-end;overflow:hidden';
+  host.style.cssText = 'width:' + size.width + 'px;height:' + size.height + 'px';
   document.body.append(host);
 
   const gateway = memory.createMemoryPetGateway({ visible: true });
@@ -523,13 +571,38 @@ function verify(results) {
   const cap = Math.min(240, 0.4 * (bubble?.viewport.height ?? 0))
   const round = (value) => Math.round(value * 10) / 10
 
-  // FAILS IF: the cap stopped being applied (`maxHeight` dropped, or the element it is applied to
-  // changed), or the content stopped being tall enough to fill it — 128 is what a box at its cap
-  // measures, and both failure modes leave a different number.
+  /*
+   * The height half of 气泡不越屏, and the shape of this check changed when the instrument did.
+   *
+   * It used to assert that the rows box measured *exactly* the cap (`|rows.height - cap| <= 1`),
+   * and that number was the instrument's own: this step mounted `PetBubble` into a div with no
+   * sprite in it, so the surface had the whole window to grow into and the box always reached
+   * `min(240px, 40vh)`. The product's column has a character in it, and the two are what the window
+   * has to hold together: the surface is a *shrinkable* flex item, so what the rows box gets is the
+   * smaller of the cap and the room the character leaves. Measured here at a 160x180 character in
+   * the 320px window: the cap is 128, the room is 100, and the box takes 100.
+   *
+   * So the claim is stated as what the product promises rather than as the number the old
+   * instrument happened to produce, and it is a stronger one — the old check had no sprite in the
+   * column and therefore could not have failed for a surface that pushed the character out.
+   */
   run(
-    'the rows box is capped here too',
-    `rows ${round(bubble.rows.height)} of a ${cap}px cap in a ${bubble.viewport.width}x${bubble.viewport.height} window`,
-    Math.abs(bubble.rows.height - cap) <= 1,
+    'the rows box never exceeds its cap, and what is over it scrolls',
+    `rows ${round(bubble.rows.height)} of a ${cap}px cap, content ${bubble.rowsScroll.scrollHeight}, viewport ${bubble.viewport.width}x${bubble.viewport.height}`,
+    bubble.rows.height <= cap + 1 && bubble.rowsScroll.scrollHeight > bubble.rowsScroll.clientHeight,
+  )
+  // FAILS IF: the bubble stops giving the room back — the surface is a shrinkable flex item of
+  // `.pet-root`'s column, and without that it pushes the character past the bottom edge of a window
+  // that does not scroll. Measured in Chromium: 348.5px of content in a 320px window, with the
+  // character's lower 28.5px past the edge. The sprite's own edge is asserted too, because
+  // "everything fits" and "the character stands on the bottom edge" are two claims and a bubble
+  // that shrank the *sprite* would satisfy the first while breaking the second.
+  run(
+    'the bubble gives the height back, so the character stays on the bottom edge',
+    `bubble ${round(bubble.bubble.height)} + sprite ${bubble.sprite ? round(bubble.sprite.height) : 'none'} in a ${round(bubble.frame.height)}px window; sprite bottom ${bubble.sprite ? round(bubble.sprite.y + bubble.sprite.height) : 'n/a'} of ${round(bubble.frame.y + bubble.frame.height)}`,
+    bubble.sprite !== null &&
+      bubble.bubble.y >= bubble.frame.y - 1 &&
+      Math.abs(bubble.sprite.y + bubble.sprite.height - (bubble.frame.y + bubble.frame.height)) <= 1,
   )
   // FAILS IF: the surface around the box grows what the box does not — a footer, a second list, a
   // padding change. 60px is the ceiling the Playwright case states: the measured chrome (padding,
@@ -539,6 +612,45 @@ function verify(results) {
     `bubble ${round(bubble.bubble.width)}x${round(bubble.bubble.height)} (${round(bubble.bubble.height - bubble.rows.height)}px of chrome)`,
     bubble.bubble.height <= cap + 60 + 1,
   )
+  // The two claims that need the *column*, and that the old instrument could not see because it
+  // wrote the column itself. Both are 气泡不越屏's horizontal half, one for the surface and one for
+  // what is inside it.
+  //
+  // FAILS IF: `align-self: stretch` comes back on `.pet-root__bubble` — a stretched flex item that
+  // cannot reach its stretched size sits at the *start* edge, which is the window's left edge
+  // whatever the window's width. Measured in Chromium at a 320px character (a 420px window) the
+  // surface came out at x=0..260 with a 160px right gap against the sprite's 50..370.
+  const gapLeft = bubble.bubble.x - bubble.frame.x;
+  const gapRight = bubble.frame.x + bubble.frame.width - (bubble.bubble.x + bubble.bubble.width);
+  run(
+    'the bubble is centred over the character',
+    `gaps ${round(gapLeft)} / ${round(gapRight)} in a ${round(bubble.frame.width)}px window, sprite ${
+      bubble.sprite ? `${round(bubble.sprite.x)}..${round(bubble.sprite.x + bubble.sprite.width)}` : 'none'
+    }`,
+    Math.abs(gapLeft - gapRight) <= 1,
+  )
+  // FAILS IF: `session` (or `agent`) stops being allowed to break — `PET_BUBBLE_FIXED_TOKEN_STYLE`
+  // is `flex: 0 0 auto` plus `nowrap`, so a field that took it back can neither shrink nor break.
+  // Measured in Chromium at a 36-character uuid: the box that scrolls came out 258 wide against a
+  // 242px client, and the `session` field reached 16px past its own row.
+  const past = bubble.fields.filter((f) => f.pastRow > 1);
+  run(
+    'and every field of every row stays inside the row that holds it',
+    `widest overhang ${round(Math.max(0, ...bubble.fields.map((f) => f.pastRow)))}px, rows scrolling ${
+      bubble.rowsScroll.scrollWidth
+    }/${bubble.rowsScroll.clientWidth}${past.length ? `, past: ${past.map((f) => f.token + ' +' + round(f.pastRow)).join(', ')}` : ''}`,
+    past.length === 0 && bubble.rowsScroll.scrollWidth - bubble.rowsScroll.clientWidth <= 1,
+  )
+  // FAILS IF: the message payload stops reaching this window. The run filed under a uuid is the
+  // seventh of seven, so a bubble drawing its compiled-in cap of five cannot be showing it; and the
+  // phrase list is written through the same `message` domain, so a page that stopped reading one
+  // would be the "control that lies" this whole change is about.
+  run(
+    'the rows the settings asked for are the rows drawn',
+    `${bubble.fields.filter((f) => f.token === 'session').length} session fields, ${bubble.pages} pager dots, text ${JSON.stringify(bubble.text.slice(0, 60))}`,
+    bubble.fields.some((f) => (f.text || '').indexOf('0193c0de-4f2a-7c31-9b6e-2d2f0a7b41c8') !== -1),
+  )
+
   // FAILS IF: the surface leaves the window it is drawn in. Measured against the window stand-in
   // and not the viewport: this page also carries the entry's own notice above it.
   run(
@@ -582,12 +694,43 @@ const bubble = frame && frame.querySelector('.pet-bubble');
 const rows = frame && frame.querySelector('.pet-task__scroll');
 if (!frame || !bubble || !rows) { done({ ok: false, why: 'the bubble is not in the page' }); return; }
 const box = (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; };
+// One entry per field of every row, with how far it reaches past the row that holds it. A field
+// whose right edge is past its row's right edge is past the surface, whatever the two scrollWidths
+// say — the row is a flex container with visible overflow, so it reports no scroll of its own.
+const fields = [];
+for (const row of frame.querySelectorAll('.pet-task__row')) {
+  const rowBox = box(row);
+  for (const field of row.querySelectorAll('.pet-task__field')) {
+    const b = box(field);
+    fields.push({
+      token: field.getAttribute('data-token'),
+      text: field.textContent || '',
+      pastRow: b.x + b.width - (rowBox.x + rowBox.width),
+    });
+  }
+}
 done({
   ok: true,
   viewport: { width: innerWidth, height: innerHeight },
   frame: box(frame),
   bubble: box(bubble),
   rows: box(rows),
+  rowsScroll: {
+    scrollWidth: rows.scrollWidth,
+    clientWidth: rows.clientWidth,
+    scrollHeight: rows.scrollHeight,
+    clientHeight: rows.clientHeight,
+  },
+  fields,
+  // The characters the surface is drawing, so a case can say the layout it asked for is the layout
+  // it got rather than only measuring boxes.
+  text: (bubble.textContent || '').trim(),
+  pages: frame.querySelectorAll('.pet-task__page').length,
+  // The character, for the placement claim: the bubble is centred *over it*, not merely centred.
+  sprite: (function () {
+    const canvas = frame.querySelector('canvas.pet-sprite');
+    return canvas ? box(canvas) : null;
+  })(),
 });
 `
 
@@ -630,7 +773,7 @@ async function main() {
     })
 
     stage('mount the sprite')
-    const mounted = await wd.executeAsync(MOUNT, [SPRITE, SHEET, WINDOW])
+    const mounted = await wd.executeAsync(MOUNT, [SPRITE, SHEET, BUBBLE_WINDOW])
     if (!mounted?.ok) throw new Error(`the mount failed: ${mounted?.why}`)
 
     stage('read the page')

@@ -26,14 +26,16 @@ use std::fs;
 
 use serde_json::{json, Value};
 
-use nekowite_lib::desktop_pet::character_view::{appearance, stored_bubble_opacity, stored_motion};
+use nekowite_lib::desktop_pet::character_view::{
+    appearance, stored_bubble_message, stored_bubble_opacity, stored_motion,
+};
 use nekowite_lib::desktop_pet::settings::values::defaults;
 use nekowite_lib::desktop_pet::settings::{
     PetSettingsDomain, PetSettingsLoad, PetSettingsStore, PetSettingsUpdate, PetSettingsWrite,
     PET_SETTINGS_INITIAL_REVISION, PET_SETTINGS_SCHEMA_VERSION,
 };
 use nekowite_lib::desktop_pet::window_host::stored_ball_size;
-use nekowite_lib::desktop_pet::{BubbleOpacity, PetAppearance};
+use nekowite_lib::desktop_pet::{BubbleMessage, BubbleOpacity, PetAppearance};
 
 use crate::support;
 
@@ -59,6 +61,7 @@ fn window_read(store: &PetSettingsStore) -> PetAppearance {
         &record,
         stored_motion(store),
         stored_bubble_opacity(store),
+        stored_bubble_message(store),
         stored_ball_size(store),
         None,
     )
@@ -192,4 +195,207 @@ fn a_message_record_from_a_newer_build_leaves_the_alpha_where_this_build_built_i
         fs::read_to_string(store.path_of(PetSettingsDomain::Message)).expect("still there"),
         before
     );
+}
+
+// ---------------------------------------------------------------------------
+// The rest of the domain: what the bubble says, and how it lays its rows out
+// ---------------------------------------------------------------------------
+
+/// The bubble's content model out of an appearance, whichever arm it is.
+///
+/// A second helper rather than a wider `alpha_of`: the two fields ride the same read for the same
+/// reason, and the reason a case reads one is never the reason it reads the other.
+fn bubble_of(read: &PetAppearance) -> &BubbleMessage {
+    match read {
+        PetAppearance::Unset { bubble, .. }
+        | PetAppearance::Missing { bubble, .. }
+        | PetAppearance::Ready { bubble, .. } => bubble,
+    }
+}
+
+/// A `message` record's whole submission, so a write in these cases is the one the page makes.
+fn message_write(
+    store: &PetSettingsStore,
+    revision: f64,
+    changes: &[(&str, Value)],
+) -> PetSettingsWrite {
+    PetSettingsWrite {
+        domain: PetSettingsDomain::Message,
+        revision,
+        values: submitted(PetSettingsDomain::Message, changes),
+    }
+}
+
+#[test]
+fn the_lines_and_the_layout_a_window_is_handed_are_the_ones_the_store_holds() {
+    let (store, _data) = support::store("bubble-domain-follows");
+
+    // Nothing has been written: the schema's own defaults, read off the schema's own table rather
+    // than restated as literals — a default that moved would fail here instead of leaving every
+    // window on the old one.
+    let declared = defaults(PetSettingsDomain::Message);
+    let fresh = window_read(&store);
+    let bubble = bubble_of(&fresh);
+    assert_eq!(bubble.mode, declared["layoutMode"].as_str().unwrap());
+    assert_eq!(
+        bubble.max_tasks,
+        declared["layoutMaxRows"].as_u64().unwrap()
+    );
+    assert_eq!(bubble.grouping, declared["grouping"].as_str().unwrap());
+    assert_eq!(bubble.filter, declared["filter"].as_str().unwrap());
+    assert_eq!(bubble.separator, declared["separator"].as_str().unwrap());
+    assert_eq!(bubble.idle, declared["idle"].as_bool().unwrap());
+    assert!(bubble.phrases.is_empty(), "a fresh install has no phrases");
+    assert!(bubble.tokens.is_empty(), "and no stored row field list");
+
+    // The write the 气泡与消息 page makes: a phrase the user typed, and a layout.
+    let outcome = store.apply(&message_write(
+        &store,
+        PET_SETTINGS_INITIAL_REVISION as f64,
+        &[
+            ("quickBubbles", json!(["先喝口水", "整理一下引用"])),
+            ("layoutMode", json!("compact")),
+            ("layoutMaxRows", json!(3)),
+            ("grouping", json!("flat")),
+            ("filter", json!("attention")),
+            ("separator", json!("arrow")),
+            ("idle", json!(false)),
+            (
+                "tokens",
+                json!([{ "token": "dot", "visible": true }, { "token": "message", "visible": true }]),
+            ),
+        ],
+    ));
+    assert!(
+        matches!(outcome, PetSettingsUpdate::Applied { .. }),
+        "the write is the one the settings page makes: {outcome:?}"
+    );
+
+    // **This is the defect, as an assertion.** Before this field existed the whole domain was
+    // stored, drawn as controls on the page and read by nothing that draws: the bubble was on
+    // screen, so a user who wrote a phrase saw a bubble and not their words.
+    let after = window_read(&store);
+    let bubble = bubble_of(&after);
+    assert_eq!(bubble.phrases, vec!["先喝口水", "整理一下引用"]);
+    assert_eq!(bubble.mode, "compact");
+    assert_eq!(
+        bubble.max_tasks, 3,
+        "the schema's `layoutMaxRows`, under the renderer's name"
+    );
+    assert_eq!(bubble.grouping, "flat");
+    assert_eq!(bubble.filter, "attention");
+    assert_eq!(bubble.separator, "arrow");
+    assert!(!bubble.idle);
+    assert_eq!(bubble.tokens.len(), 2);
+}
+
+#[test]
+fn one_field_this_build_cannot_act_on_does_not_take_the_whole_bubble_with_it() {
+    let (store, _data) = support::store("bubble-one-bad-field");
+    // A file somebody edited by hand, with one field of the wrong kind. §5.3 repairs what cannot be
+    // used and reports it; what a window must not do is lose the *other* choices to the one — the
+    // fields are independent, so the fallback is per field.
+    let mut planted = submitted(PetSettingsDomain::Message, &[]);
+    planted["layoutMaxRows"] = json!("many");
+    planted["quickBubbles"] = json!(["这一句还在"]);
+    planted["layoutMode"] = json!("compact");
+    fs::create_dir_all(store.root()).expect("the records directory");
+    fs::write(
+        store.path_of(PetSettingsDomain::Message),
+        json!({
+            "domain": "message",
+            "schemaVersion": PET_SETTINGS_SCHEMA_VERSION,
+            "revision": 4,
+            "values": planted,
+        })
+        .to_string(),
+    )
+    .expect("a hand-edited record");
+
+    let read = window_read(&store);
+    let bubble = bubble_of(&read);
+    assert_eq!(
+        bubble.max_tasks, 5,
+        "the unusable field takes its own fallback"
+    );
+    assert_eq!(
+        bubble.phrases,
+        vec!["这一句还在"],
+        "and the usable ones are kept"
+    );
+    assert_eq!(bubble.mode, "compact");
+}
+
+#[test]
+fn the_bubble_rides_every_appearance_arm_because_the_bubble_is_drawn_in_all_of_them() {
+    // The same argument the alpha and the ball's size make, one field wider: the bubble is drawn
+    // above the notice and above a sprite alike, so a payload that only arrived with `Ready` would
+    // leave a fresh install drawing the built-in layout for a user who chose another.
+    let (store, _data) = support::store("bubble-domain-arms");
+    store.apply(&message_write(
+        &store,
+        PET_SETTINGS_INITIAL_REVISION as f64,
+        &[
+            ("quickBubbles", json!(["在的"])),
+            ("layoutMode", json!("carousel")),
+        ],
+    ));
+
+    let unset = window_read(&store);
+    assert!(matches!(unset, PetAppearance::Unset { .. }));
+    assert_eq!(bubble_of(&unset).phrases, vec!["在的"]);
+    assert_eq!(bubble_of(&unset).mode, "carousel");
+
+    // And on the arm a chosen character takes, with a library that does not hold it. The choice is
+    // written the way the settings page writes one, so this is the `Missing` arm a real window
+    // reaches rather than an `Unset` one this case talked itself into.
+    store.apply(&PetSettingsWrite {
+        domain: PetSettingsDomain::Character,
+        revision: PET_SETTINGS_INITIAL_REVISION as f64,
+        values: {
+            let mut values = defaults(PetSettingsDomain::Character);
+            values.insert("characterId".to_string(), json!("ghost"));
+            Value::Object(values)
+        },
+    });
+    let record = store
+        .read(PetSettingsDomain::Character)
+        .record()
+        .expect("a character record")
+        .clone();
+    let missing = appearance(
+        &record,
+        stored_motion(&store),
+        stored_bubble_opacity(&store),
+        stored_bubble_message(&store),
+        stored_ball_size(&store),
+        None,
+    );
+    assert!(matches!(missing, PetAppearance::Missing { .. }));
+    assert_eq!(bubble_of(&missing).phrases, vec!["在的"]);
+}
+
+#[test]
+fn a_message_record_from_a_newer_build_leaves_the_bubble_where_this_build_built_it() {
+    let (store, _data) = support::store("bubble-domain-newer");
+    fs::create_dir_all(store.root()).expect("the records directory");
+    fs::write(
+        store.path_of(PetSettingsDomain::Message),
+        json!({
+            "domain": "message",
+            "schemaVersion": PET_SETTINGS_SCHEMA_VERSION + 1,
+            "revision": 9,
+            "values": { "quickBubbles": ["来自未来的一句"], "layoutMode": "carousel" },
+        })
+        .to_string(),
+    )
+    .expect("a record from the future");
+
+    // §10.2 keeps this build from reading it at all, and the answer is this build's own defaults —
+    // a layout the user never chose on *this* build is a change to what they see, not a fallback.
+    // The same arm `stored_bubble_opacity` takes, and for the same reason.
+    let read = window_read(&store);
+    let bubble = bubble_of(&read);
+    assert!(bubble.phrases.is_empty());
+    assert_eq!(bubble.mode, "list");
 }

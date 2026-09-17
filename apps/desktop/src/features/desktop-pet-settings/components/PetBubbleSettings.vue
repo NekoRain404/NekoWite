@@ -28,25 +28,35 @@
  * 控件」, and the reason this page has no placeholder row builder:
  *
  *  - `ap_bub_mode` (`settings.html:367`), `ap_bub_max` (`:380`), `ap_bub_grouping` (`:374`),
- *    `ap_bub_sortkind` (`:382`), `ap_bub_filter` (`:383`), `ap_bub_hidden` (`:394`), `ap_bub_dot`
- *    (`:191`), `ap_bub_sep` (`:184`), `ap_bub_tokens` (`:403`), `ap_icon_<agentKind>` (`:425`):
- *    the multi-agent row. The schema holds all ten since D7d — the two that are lists and the one
- *    that is a map included, which is the validator's structured kind — so what is missing here is
- *    a *reader*, not a field: `PetBubble`/`PetTaskList` take their layout as a `layout` prop
- *    (`resolvePetBubbleLayout` reads no settings) and nothing draws an agent icon at all. A
- *    control here would save values nothing acts on. §5.2's further requirement stands as well:
- *    the visible rows must be generated 「从当前 Agent 注册表」 rather than from a fixed upstream
- *    list, which is the agent registry's data and not a settings field.
- *  - `ap_theme_phrases` (`settings.html:441`, a five-word vocabulary), `ap_quick_bubbles`
- *    (`:215`, now one bubble per entry rather than free text) and `ap_idle` (`:176`, the
- *    idle-chatter switch): the schema holds all three since D7d, and the phrase *vocabulary* is
- *    still a set of words chosen elsewhere (`pet-message-template.ts`, D9) with no pool per theme
- *    to choose between — so once more a stored value and nothing that reads it.
- *  - `ap_font_size` is `message.fontSize`, stored but not drawn: nothing reads it yet, and the
- *    sentence above it says so rather than offering a control that would save a number no surface
- *    acts on. `ap_font_family` is read by the bubble window (`main.ts:105`) and upstream ships no
- *    control that writes it, so there is none to port. Neither is duplicated here: one setting gets
- *    one control, and no other page draws a `message` field.
+ *    `ap_bub_filter` (`:383`), `ap_bub_sep` (`:184`) and `ap_bub_tokens` (`:403`) → the layout
+ *    controls below. **These six used to be a paragraph saying they were not in this build**, and
+ *    the sentence was accurate: the schema held them and the bubble took no layout from settings,
+ *    so a control would have saved values nothing acted on. What made them reachable is the
+ *    `message` payload on `desktop_pet_appearance` (`desktop_pet/character_view.rs`,
+ *    `PetBubbleRead`) — the window may not read a settings domain, so the host reads one for it —
+ *    and the reader chain `pet-appearance.ts` → `usePetWindow` → `DesktopPetRoot.vue`.
+ *  - `ap_quick_bubbles` (`:215`) and `ap_idle` (`:176`, the idle-chatter switch) → the phrases
+ *    control below. The same sentence was here, and the same payload closed it: the lines reach the
+ *    bubble as its `line` prop, picked from the user's list by `usePetWindow`.
+ *
+ * The rest are still *stated* rather than drawn, in one paragraph at the foot of the page, and the
+ * reasons there are the reasons above:
+ *
+ *  - `ap_bub_sortkind` (`:382`, sorting by agent kind within a group) and `ap_bub_dot` (`:191`,
+ *    the state dot's two styles): stored, and no surface reads either.
+ *  - `ap_bub_hidden` (`:394`, the per-agent visibility list) and `ap_icon_<agentKind>` (`:425`):
+ *    both are keyed by the agent registry, and a control for a list of agents has to be generated
+ *    「从当前 Agent 注册表」 (§5.2) rather than from upstream's fixed names — which is the registry's
+ *    data and not this page's.
+ *  - `ap_theme_phrases` (`:441`, a five-word vocabulary): the schema holds it, and there is still no
+ *    pool per theme for it to choose between.
+ *  - `ap_font_size` is `message.fontSize`, stored and not drawn: no surface reads it.
+ *  - `ap_left_click_action` is `message.leftClick`: upstream's own caller for `ap_quick_bubbles`
+ *    (`windows/src/main.ts:568-579`, a left-click on the pet shows one of the lines), which this
+ *    build's character window does not have — its click is the other half of a drag gesture and
+ *    lands nowhere, which is upstream's default too.
+ *  - `ap_font_family` is read by the bubble window (`main.ts:105`) and upstream ships no control
+ *    that writes it, so there is none to port.
  *
  * The session is the container's (`DesktopPetSettings.vue` creates one per domain), so this page
  * never creates one and never calls `load()`: a page that is not on screen should not read. It
@@ -63,6 +73,7 @@ import { t } from '../../../i18n'
 import { PET_NUMBER_RULES } from '../../../platform/gateways/pet-contracts'
 import type { PetSettingsValues } from '../../../platform/gateways/pet-contracts'
 import type { PetSettingsSaveStatus } from '../composables/use-pet-settings'
+import PetBubbleLayoutSettings from './PetBubbleLayoutSettings.vue'
 import type { PetSettingsContext } from './DesktopPetSettings.vue'
 
 type BubbleTheme = PetSettingsValues['message']['theme']
@@ -146,6 +157,33 @@ function setDuration(raw: number): void {
   message.edit('bubbleSeconds', Math.min(DURATION_RULE.max, Math.max(DURATION_RULE.min, rounded)))
 }
 
+/**
+ * The phrase list as the textarea shows it: one line per entry, upstream's own shape
+ * (`references/desktop-pet/windows/src/settings.ts:1793-1797`: `ta.value = lines.join("\n")`).
+ */
+const phraseText = computed(() => values.value.quickBubbles.join('\n'))
+
+/**
+ * The textarea's text as the stored list.
+ *
+ * Blank lines are dropped here rather than stored, and that is not a second rule: the schema's
+ * `isLine` refuses a blank member and its list fields are all-or-nothing, so a submission carrying
+ * one would be refused *whole* and the user's other lines with it. Dropping them is how the write
+ * is made to succeed, not a policy about what a phrase may be. The trim is the same rule read the
+ * other way: a line a user indented is the phrase without the indent.
+ */
+function onPhrasesInput(text: string): void {
+  message.edit('quickBubbles', phrasesOf(text))
+}
+
+/** One phrase per line, blanks dropped — see {@link phraseText}'s own note for why. */
+function phrasesOf(text: string): readonly string[] {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+}
+
 function retry(): void {
   // Retried with the values it failed on: a failed write never replaced the draft.
   void message.save()
@@ -220,17 +258,44 @@ defineExpose({ settle })
       >
       <span class="settings-note">{{ t('settings.pet.bubble.durationNote') }}</span>
 
+      <PetBubbleLayoutSettings :context="props.context" />
+
+      <span class="settings-label">{{ t('settings.pet.bubble.phrases') }}</span>
+      <label
+        class="settings-field"
+        for="pet-bubble-phrases"
+      >
+        <span>{{ t('settings.pet.bubble.phrasesHint') }}</span>
+        <textarea
+          id="pet-bubble-phrases"
+          class="input pet-bubble__phrases"
+          rows="4"
+          :value="phraseText"
+          data-test="pet-bubble-phrases"
+          @change="onPhrasesInput(($event.target as HTMLTextAreaElement).value)"
+        />
+      </label>
+      <span class="settings-note">{{ t('settings.pet.bubble.phrasesNote') }}</span>
+
+      <label
+        class="settings-field pet-bubble__switch"
+        for="pet-bubble-idle"
+      >
+        <span>{{ t('settings.pet.bubble.idle') }}</span>
+        <input
+          id="pet-bubble-idle"
+          type="checkbox"
+          :checked="values.idle"
+          data-test="pet-bubble-idle"
+          @change="message.edit('idle', ($event.target as HTMLInputElement).checked)"
+        >
+      </label>
+
       <p
         class="settings-note pet-absent"
-        data-test="pet-bubble-layout"
+        data-test="pet-bubble-unwired"
       >
-        {{ t('settings.pet.bubble.layoutUnavailable') }}
-      </p>
-      <p
-        class="settings-note pet-absent"
-        data-test="pet-bubble-phrases"
-      >
-        {{ t('settings.pet.bubble.phrasesUnavailable') }}
+        {{ t('settings.pet.bubble.dotUnavailable') }}
       </p>
 
       <span
@@ -289,5 +354,26 @@ defineExpose({ settle })
 .pet-absent {
   border-left: 2px solid var(--app-warn);
   padding-left: 8px;
+}
+
+/* The phrase list: one line per phrase, so it is a text box and not a single-line input, and it
+   keeps the page's own width rather than the user's longest line deciding it. */
+.pet-bubble__phrases {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+}
+
+.pet-bubble__switch {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pet-bubble__switch > span {
+  color: var(--app-text);
+  font-size: 12px;
 }
 </style>

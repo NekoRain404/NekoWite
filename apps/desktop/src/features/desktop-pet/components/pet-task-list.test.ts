@@ -352,8 +352,20 @@ describe('long Chinese in a row as wide as the window', () => {
     // `0px` are the same rule.
     expect(Number.parseFloat(message?.style.minWidth || 'NaN')).toBe(0)
     expect(message?.style.whiteSpace).not.toBe('nowrap')
-    // The short fields keep their size, so the message is what gives way.
-    expect(document.querySelector<HTMLElement>('[data-token="agent"]')?.style.flex).toBe('0 0 auto')
+    // The fields whose content is a word from a fixed list keep their size, so the message is what
+    // gives way. `separator` is this build's own one or two characters, and it is one of the two
+    // such fields the default preset draws (`stateLabel` and `elapsed` are hidden in it).
+    expect(document.querySelector<HTMLElement>('[data-token="separator"]')?.style.flex).toBe(
+      '0 0 auto',
+    )
+    // **And the two that carry an identifier do not.** `agent` and `session` are data this build
+    // does not bound — an engine id nobody has heard of, and an ACP session id, which is a
+    // 36-character uuid. Measured in Chromium at a 320px character, a uuid took the row 16px past
+    // its own box, because `nowrap` plus `flex: 0 0 auto` is a field that can neither break nor
+    // shrink. They wrap instead — the same treatment the message already got, and for the same
+    // reason `PET_BUBBLE_MESSAGE_STYLE` names 「a session id」 as one of the two unbreakable runs.
+    expect(document.querySelector<HTMLElement>('[data-token="agent"]')?.style.flex).toBe('0 1 auto')
+    expect(document.querySelector<HTMLElement>('[data-token="session"]')?.style.overflowWrap).toBe('anywhere')
   })
 
   it('bounds the surface and lets the rows wrap inside it', () => {

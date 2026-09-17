@@ -115,6 +115,7 @@ export type {
 export { isPetAppearance, PET_MOTION_DEFAULT, petMotionOf } from './pet-contracts/appearance'
 export type {
   PetAppearance,
+  PetBubbleRead,
   PetCharacterEntry,
   PetMotion,
   PetSettingsChange,

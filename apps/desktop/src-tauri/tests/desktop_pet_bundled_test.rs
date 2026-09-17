@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 use nekowite_lib::desktop_pet::bundled::{seed, Seeded, BUNDLED_CHARACTER_ID};
 use nekowite_lib::desktop_pet::character_view::{
-    appearance, entries, stored_bubble_opacity, stored_motion,
+    appearance, entries, stored_bubble_message, stored_bubble_opacity, stored_motion,
 };
 use nekowite_lib::desktop_pet::resources::{
     CharacterKind, CharacterLibrary, EntryState, InstallRequest,
@@ -132,10 +132,21 @@ fn a_fresh_install_has_a_character_to_draw() {
     // written that domain either, so it is the schema's own default — the same arm the motion
     // policy takes, because both are facts a pet window may not read for itself.
     let bubble = stored_bubble_opacity(&store);
+    // And the rest of that domain — the bubble's content model and layout, which the same window
+    // draws with and may not read for itself either. Nothing has written `message` here, so this is
+    // the schema's own default.
+    let bubble_message = stored_bubble_message(&store);
     // And the ball's size, the third fact of that kind: `general.ballSize`, which the ball's page
     // draws its orb at. Nothing has written `general` here, so this is the schema's own default too.
     let ball_size = stored_ball_size(&store);
-    match appearance(&record, motion, bubble, ball_size, Some(&library)) {
+    match appearance(
+        &record,
+        motion,
+        bubble,
+        bubble_message,
+        ball_size,
+        Some(&library),
+    ) {
         nekowite_lib::desktop_pet::PetAppearance::Ready { sheet_path, .. } => {
             assert!(
                 Path::new(&sheet_path).is_file(),

@@ -67,8 +67,8 @@ pub use ball::{
 pub use bundled::{seed, Seeded, BUNDLED_CHARACTER_ID, BUNDLED_CHARACTER_NAME};
 pub use care_ledger::{CareLedger, CareOutcome, CareSummary, DAY_WINDOW, MEAL_XP};
 pub use character_view::{
-    appearance, entries, free_character_id, refusal_sentence, BubbleOpacity, Motion, PetAppearance,
-    PetCharacterEntry, PetCharacterFiles,
+    appearance, entries, free_character_id, refusal_sentence, BubbleMessage, BubbleOpacity, Motion,
+    PetAppearance, PetCharacterEntry, PetCharacterFiles,
 };
 pub use feature_switch::{chosen_character, UNSELECTED_CHARACTER};
 pub use history::{

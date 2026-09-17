@@ -18,7 +18,12 @@
  * `tests/desktop_pet_settings_test/motion.rs` asserts the same field out of a real store.
  */
 import { describe, expect, it } from 'vitest'
-import { petAppearanceView, petBallSizeOf, petBubbleOpacityOf } from './pet-appearance'
+import {
+  petAppearanceView,
+  petBallSizeOf,
+  petBubbleOpacityOf,
+  petBubbleViewOf,
+} from './pet-appearance'
 import {
   PET_MOTION_DEFAULT,
   PET_NUMBER_RULES,
@@ -35,12 +40,18 @@ import type { PetAppearance } from '../../../platform/gateways/pet-contracts'
  */
 function read(
   status: 'unset' | 'missing' | 'ready',
-  carried: { motion?: 'system' | 'reduced'; bubbleOpacity?: number; ballSize?: number } = {},
+  carried: {
+    motion?: 'system' | 'reduced'
+    bubbleOpacity?: number
+    ballSize?: number
+    bubble?: Record<string, unknown>
+  } = {},
 ): PetAppearance {
   const policy = {
     ...(carried.motion === undefined ? {} : { motion: carried.motion }),
     ...(carried.bubbleOpacity === undefined ? {} : { bubbleOpacity: carried.bubbleOpacity }),
     ...(carried.ballSize === undefined ? {} : { ballSize: carried.ballSize }),
+    ...(carried.bubble === undefined ? {} : { bubble: carried.bubble }),
   }
   if (status === 'unset') return { status, ...policy }
   if (status === 'missing') return { status, characterId: 'torn', detail: 'its files are gone', ...policy }
@@ -163,5 +174,67 @@ describe('the ball size a window is handed', () => {
     // The ends themselves are inside it.
     expect(petBallSizeOf({ ballSize: rule.min })).toBe(rule.min)
     expect(petBallSizeOf({ ballSize: rule.max })).toBe(rule.max)
+  })
+})
+
+describe('the bubble’s content model and layout, which the host reads for this window', () => {
+  /**
+   * **The defect this closes, as an assertion.** Every field below was stored by
+   * 气泡与消息 and read by nothing that draws: `PetBubble` had taken a `layout` prop since it was
+   * written, no product code passed one, and the page drew a paragraph saying so. The chain that
+   * carries them is `desktop_pet_appearance`'s `message` payload →
+   * {@link petBubbleViewOf} → `usePetWindow` → `DesktopPetRoot.vue` → `PetBubble.vue`, and this
+   * case is the first hop of it.
+   */
+  it('hands the wire’s fields to the layout, unread', () => {
+    // Unread on purpose: `PetBubble` runs the payload through `resolvePetBubbleLayout`, which is
+    // the one place a value is judged, so the names cross unchanged and an unusable one is that
+    // function's to replace. A second reading here would be a second answer to "which mode is
+    // this".
+    const view = petBubbleViewOf({
+      bubble: {
+        mode: 'compact',
+        maxTasks: 3,
+        grouping: 'flat',
+        filter: 'attention',
+        separator: 'arrow',
+        tokens: [{ token: 'dot', visible: true }],
+        phrases: ['先喝口水', '整理一下引用'],
+        idle: false,
+      },
+    })
+    expect(view.layout).toEqual({
+      mode: 'compact',
+      maxTasks: 3,
+      grouping: 'flat',
+      filter: 'attention',
+      separator: 'arrow',
+      tokens: [{ token: 'dot', visible: true }],
+    })
+    expect(view.lines).toEqual(['先喝口水', '整理一下引用'])
+    expect(view.idle).toBe(false)
+  })
+
+  it('is the renderer’s own default where the answer carries none', () => {
+    // Absent is a real answer and not a wiring error: a double, or a host from before this payload
+    // existed. The bubble draws this build's own layout then — the one it drew before the field
+    // existed — rather than nothing.
+    const view = petBubbleViewOf({})
+    expect(view.layout).toEqual({})
+    expect(view.lines).toEqual([])
+    // And the idle switch is *on*, which is the schema's own default (`message.idle` is `true`):
+    // only an explicit `false` turns it off, so a payload that dropped the field cannot silently
+    // stop the pet talking.
+    expect(view.idle).toBe(true)
+  })
+
+  it('keeps only the lines that are lines, and nothing else from the wire', () => {
+    // A member that is not a string is not a sentence the pet can say, and one bad member must not
+    // take the list with it — the same field-by-field rule §5.3 gives a migrated record.
+    const view = petBubbleViewOf({ bubble: { phrases: ['好', 7, null, '好的'] } })
+    expect(view.lines).toEqual(['好', '好的'])
+    // And a key the wire does not carry a layout field for is not one this reader invents: the
+    // layout object holds the fields it knows and nothing else.
+    expect(Object.keys(petBubbleViewOf({ bubble: { nonsense: 1 } }).layout)).toEqual([])
   })
 })

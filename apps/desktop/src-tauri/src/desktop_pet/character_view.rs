@@ -100,6 +100,9 @@ pub enum PetAppearance {
         motion: Motion,
         #[serde(rename = "bubbleOpacity")]
         bubble_opacity: f64,
+        /// The bubble's content model and layout — see [`BubbleMessage`]. On every arm for the
+        /// reason `bubble_opacity` is: the surface is drawn in all three of them.
+        bubble: BubbleMessage,
         /// The floating ball's diameter (`general.ballSize`), which is not the character's either:
         /// the ball is a window of its own and it is on the desktop with no character chosen at all.
         /// On every arm for the reason [`Motion`] is.
@@ -114,6 +117,8 @@ pub enum PetAppearance {
         motion: Motion,
         #[serde(rename = "bubbleOpacity")]
         bubble_opacity: f64,
+        /// See [`PetAppearance::Unset`]'s own.
+        bubble: BubbleMessage,
         /// See [`PetAppearance::Unset`]'s own pair.
         #[serde(rename = "ballSize")]
         ball_size: f64,
@@ -148,6 +153,8 @@ pub enum PetAppearance {
         /// this window in all three of them, a fresh install included.
         #[serde(rename = "bubbleOpacity")]
         bubble_opacity: f64,
+        /// The bubble's content model and layout — see [`BubbleMessage`].
+        bubble: BubbleMessage,
         /// See [`PetAppearance::Unset`]'s own pair.
         #[serde(rename = "ballSize")]
         ball_size: f64,
@@ -269,6 +276,136 @@ pub fn stored_bubble_opacity(store: &PetSettingsStore) -> BubbleOpacity {
         .map_or(BubbleOpacity::DEFAULT, BubbleOpacity::of)
 }
 
+/// The `message` domain as the bubble draws with it: what it shows, and how (§5.2's 气泡与消息).
+///
+/// The fifth fact riding this read and not the character's, and it rides it for the reason
+/// [`BubbleOpacity`] does: the bubble is drawn in the window that draws the character,
+/// `capabilities/desktop-pet.json` holds no settings read, so a window cannot ask for the domain
+/// itself — and without this the whole of 气泡与消息 was a page whose values were stored and never
+/// drawn with. The user's own lines (`message.quickBubbles`) and the layout that decides what a row
+/// shows (`layoutMode`, `layoutMaxRows`, `grouping`, `filter`, `separator`, `tokens`) had no
+/// production caller at all: the bubble was drawn, so a user who wrote a phrase saw a bubble and
+/// not their words.
+///
+/// **The renderer's names, not the schema's, where the two differ.** `layoutMode`/`layoutMaxRows`
+/// cross as `mode`/`maxTasks`, which is the vocabulary `PetBubble` already takes its layout in
+/// (`features/desktop-pet/services/pet-bubble-layout.ts`), so the page's own reader
+/// (`resolvePetBubbleLayout`) stays the single place a value is judged and the window is handed
+/// something it can draw with. The separator crosses as the *name* the schema stores (`dot`,
+/// `arrow`, `bar`, `space`) rather than as a character, because the name-to-character table is a
+/// drawing rule and that table is on the other side.
+///
+/// **Only the fields the bubble draws with cross**, which is §6.1's rule of least: `message` holds
+/// `fontSize`, `theme`, `dot`, `sortByKind`, `hiddenAgents`, `phraseTheme` and `leftClick` as well,
+/// and none of them is here because no surface in this window acts on one yet. Sending them would
+/// be a payload a window must ignore, and a wire field with no reader is the shape this whole change
+/// is about. Each one is named in the port report as still unwired.
+///
+/// A `message` record this build may not read — `store.read`'s `ReadOnly` arm, a record a newer
+/// build wrote, which §10.2 keeps this build from reading — is answered with the schema's defaults
+/// for the same reason [`Motion::DEFAULT`] is: the bubble is drawn either way, and a layout the user
+/// never chose is a change to what they see rather than a default.
+#[derive(Clone, PartialEq, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BubbleMessage {
+    /// How the tasks are presented (`message.layoutMode`), under the renderer's own name.
+    pub mode: String,
+    /// How many rows the surface shows (`message.layoutMaxRows`), under the renderer's own name.
+    #[serde(rename = "maxTasks")]
+    pub max_tasks: u64,
+    /// Whether the rows are gathered under their engine (`message.grouping`).
+    pub grouping: String,
+    /// What the surface leaves out (`message.filter`).
+    pub filter: String,
+    /// What stands between two fields (`message.separator`), as the schema's member name.
+    pub separator: String,
+    /// The row's fields and their visibility (`message.tokens`). Empty means the preset.
+    pub tokens: Vec<serde_json::Value>,
+    /// The lines the pet says when there is no task to speak of (`message.quickBubbles`).
+    pub phrases: Vec<String>,
+    /// Whether it says one at all (`message.idle`, upstream's 「Show idle message」).
+    pub idle: bool,
+}
+
+impl BubbleMessage {
+    /// The member `settings::fields`' `MESSAGE` declares for each field, and therefore the reading
+    /// of every value this build cannot act on. Spelled here in the same order as the struct, and
+    /// checked against the schema on the TypeScript side by `pet-appearance.test.ts`.
+    fn defaults() -> Self {
+        Self {
+            mode: "list".to_string(),
+            max_tasks: 5,
+            grouping: "by-agent".to_string(),
+            filter: "all".to_string(),
+            separator: "dot".to_string(),
+            tokens: Vec::new(),
+            phrases: Vec::new(),
+            idle: true,
+        }
+    }
+
+    /// The values a `message` record holds, field by field, with every unusable one defaulted.
+    ///
+    /// Field by field and not all-or-nothing, which is the rule §5.3 gives a migrated store: a
+    /// record whose font size is nonsense still has a layout, and taking the whole payload's
+    /// fallback for one bad field would throw away choices the user made.
+    pub fn of(record: &PetSettingsRecord) -> Self {
+        let defaults = Self::defaults();
+        let string = |field: &str, fallback: &str| {
+            record
+                .value(field)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(fallback)
+                .to_string()
+        };
+        Self {
+            mode: string("layoutMode", &defaults.mode),
+            max_tasks: record
+                .value("layoutMaxRows")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(defaults.max_tasks),
+            grouping: string("grouping", &defaults.grouping),
+            filter: string("filter", &defaults.filter),
+            separator: string("separator", &defaults.separator),
+            tokens: record
+                .value("tokens")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or(defaults.tokens),
+            // A copy, with no filter of its own: `settings::values`' `isLine` already refuses a
+            // blank or control-bearing line, and its structured fields are all-or-nothing — so a
+            // list that arrived holds lines the schema accepted, and a second rule here would be a
+            // rule that can never fire.
+            phrases: record
+                .value("quickBubbles")
+                .and_then(serde_json::Value::as_array)
+                .map(|lines| {
+                    lines
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or(defaults.phrases),
+            idle: record
+                .value("idle")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(defaults.idle),
+        }
+    }
+}
+
+/// What a store holds for the pet's bubble beyond its alpha.
+///
+/// The second read of the `message` domain, and a function for the reason [`stored_motion`] is: a
+/// test asserting what a window is handed goes through the same arm.
+pub fn stored_bubble_message(store: &PetSettingsStore) -> BubbleMessage {
+    store
+        .read(PetSettingsDomain::Message)
+        .record()
+        .map_or_else(BubbleMessage::defaults, BubbleMessage::of)
+}
+
 /// The floating ball's diameter in CSS pixels, from `general.ballSize` (§5.1's 悬浮球).
 ///
 /// The fourth fact that rides this read and is not the character's, and it rides it for the reason
@@ -349,19 +486,20 @@ fn entry_of(entry: &LibraryEntry) -> PetCharacterEntry {
 ///
 /// `motion` is the `general` record's policy rather than a field of this one — see [`Motion`] for
 /// why a window is handed it with its drawing facts instead of asking for it, and
-/// `commands::desktop_pet::desktop_pet_appearance` for the read that supplies it. `bubble` is the
-/// same arrangement one domain over: `message.opacity`, the bubble's background alpha, which the
-/// window draws with and may not read for itself. `ball_size` is a third of the same kind:
-/// `general.ballSize`, the ball's own diameter, which the ball's window draws its orb at and which
-/// its page may not read for itself either.
+/// `commands::desktop_pet::desktop_pet_appearance` for the read that supplies it. `bubble_opacity`
+/// and `bubble_message` are the same arrangement one domain over: the `message` domain's alpha and
+/// its content model, which the window draws with and may not read for itself. `ball_size` is a
+/// third of the same kind: `general.ballSize`, the ball's own diameter, which the ball's window
+/// draws its orb at and which its page may not read for itself either.
 pub fn appearance(
     record: &PetSettingsRecord,
     motion: Motion,
-    bubble: BubbleOpacity,
+    bubble_opacity: BubbleOpacity,
+    bubble_message: BubbleMessage,
     ball_size: f64,
     library: Option<&CharacterLibrary>,
 ) -> PetAppearance {
-    let bubble_opacity = bubble.value();
+    let bubble_opacity = bubble_opacity.value();
     let chosen = record
         .value("characterId")
         .and_then(serde_json::Value::as_str);
@@ -370,6 +508,7 @@ pub fn appearance(
         return PetAppearance::Unset {
             motion,
             bubble_opacity,
+            bubble: bubble_message,
             ball_size,
         };
     };
@@ -379,6 +518,9 @@ pub fn appearance(
             detail: "this build has no character library to read it from".to_string(),
             motion,
             bubble_opacity,
+            // Cloned rather than moved: the closure below returns on several arms, and a value
+            // taken here would have to be rebuilt for each of them.
+            bubble: bubble_message.clone(),
             ball_size,
         };
     };
@@ -395,6 +537,7 @@ pub fn appearance(
                 ),
                 motion,
                 bubble_opacity,
+                bubble: bubble_message.clone(),
                 ball_size,
             }
         }
@@ -405,14 +548,19 @@ pub fn appearance(
             detail: "it is not installed in the character library".to_string(),
             motion,
             bubble_opacity,
+            bubble: bubble_message.clone(),
             ball_size,
         };
     };
-    let unavailable = |detail: String| PetAppearance::Missing {
+    // The closure owns its own copy: it is called on four different arms and each of them returns
+    // its own `Missing`, so the value it draws with cannot be the one the `Ready` arm below takes.
+    let for_refusals = bubble_message.clone();
+    let unavailable = move |detail: String| PetAppearance::Missing {
         character_id: chosen.to_string(),
         detail,
         motion,
         bubble_opacity,
+        bubble: for_refusals.clone(),
         ball_size,
     };
     if let EntryState::Incomplete { missing } = &entry.state {
@@ -459,6 +607,7 @@ pub fn appearance(
         idle_interval_ms: drawing.idle_interval_ms,
         motion,
         bubble_opacity,
+        bubble: bubble_message,
         ball_size,
     }
 }
@@ -842,6 +991,7 @@ mod tests {
             &record(Some("喵喵"), 200),
             Motion::DEFAULT,
             BubbleOpacity::DEFAULT,
+            BubbleMessage::defaults(),
             BallSize::DEFAULT.value(),
             Some(&library),
         );
@@ -919,12 +1069,14 @@ mod tests {
                 &record(None, 200),
                 Motion::DEFAULT,
                 BubbleOpacity::DEFAULT,
+                BubbleMessage::defaults(),
                 BallSize::DEFAULT.value(),
                 Some(&library),
             ),
             PetAppearance::Unset {
                 motion: Motion::DEFAULT,
                 bubble_opacity: BubbleOpacity::DEFAULT.value(),
+                bubble: BubbleMessage::defaults(),
                 ball_size: BallSize::DEFAULT.value(),
             }
         );
@@ -939,6 +1091,7 @@ mod tests {
             &record(Some("kitty"), 200),
             Motion::DEFAULT,
             BubbleOpacity::DEFAULT,
+            BubbleMessage::defaults(),
             BallSize::DEFAULT.value(),
             Some(&library),
         );
@@ -975,6 +1128,7 @@ mod tests {
             &record(Some("ghost"), 200),
             Motion::DEFAULT,
             BubbleOpacity::DEFAULT,
+            BubbleMessage::defaults(),
             BallSize::DEFAULT.value(),
             Some(&library),
         );
@@ -1001,6 +1155,7 @@ mod tests {
             &record(Some("kitty"), 200),
             Motion::DEFAULT,
             BubbleOpacity::DEFAULT,
+            BubbleMessage::defaults(),
             BallSize::DEFAULT.value(),
             Some(&library),
         );
@@ -1029,6 +1184,7 @@ mod tests {
             &record(Some("kitty"), 200),
             Motion::DEFAULT,
             BubbleOpacity::DEFAULT,
+            BubbleMessage::defaults(),
             BallSize::DEFAULT.value(),
             Some(&library),
         );
@@ -1047,6 +1203,7 @@ mod tests {
                     &record(Some("kitty"), 200),
                     Motion::DEFAULT,
                     BubbleOpacity::DEFAULT,
+                    BubbleMessage::defaults(),
                     BallSize::DEFAULT.value(),
                     None
                 ),
@@ -1139,6 +1296,7 @@ mod tests {
                 &record(None, 200),
                 reduced,
                 BubbleOpacity::DEFAULT,
+                BubbleMessage::defaults(),
                 BallSize::DEFAULT.value(),
                 Some(&library),
             ),
@@ -1149,6 +1307,7 @@ mod tests {
                 &record(Some("ghost"), 200),
                 reduced,
                 BubbleOpacity::DEFAULT,
+                BubbleMessage::defaults(),
                 BallSize::DEFAULT.value(),
                 Some(&library)
             ),
@@ -1159,6 +1318,7 @@ mod tests {
                 &record(Some("kitty"), 200),
                 reduced,
                 BubbleOpacity::DEFAULT,
+                BubbleMessage::defaults(),
                 BallSize::DEFAULT.value(),
                 Some(&library)
             ),
@@ -1280,6 +1440,7 @@ mod tests {
                 &record(None, 200),
                 Motion::DEFAULT,
                 BubbleOpacity::DEFAULT,
+                BubbleMessage::defaults(),
                 size.value(),
                 Some(&library)
             ),
@@ -1290,6 +1451,7 @@ mod tests {
                 &record(Some("ghost"), 200),
                 Motion::DEFAULT,
                 BubbleOpacity::DEFAULT,
+                BubbleMessage::defaults(),
                 size.value(),
                 Some(&library)
             ),
@@ -1300,6 +1462,7 @@ mod tests {
                 &record(Some("kitty"), 200),
                 Motion::DEFAULT,
                 BubbleOpacity::DEFAULT,
+                BubbleMessage::defaults(),
                 size.value(),
                 Some(&library)
             ),
@@ -1321,6 +1484,7 @@ mod tests {
                 &record(None, 200),
                 Motion::DEFAULT,
                 alpha,
+                BubbleMessage::defaults(),
                 BallSize::DEFAULT.value(),
                 Some(&library)
             ),
@@ -1331,6 +1495,7 @@ mod tests {
                 &record(Some("ghost"), 200),
                 Motion::DEFAULT,
                 alpha,
+                BubbleMessage::defaults(),
                 BallSize::DEFAULT.value(),
                 Some(&library)
             ),
@@ -1341,6 +1506,7 @@ mod tests {
                 &record(Some("kitty"), 200),
                 Motion::DEFAULT,
                 alpha,
+                BubbleMessage::defaults(),
                 BallSize::DEFAULT.value(),
                 Some(&library)
             ),

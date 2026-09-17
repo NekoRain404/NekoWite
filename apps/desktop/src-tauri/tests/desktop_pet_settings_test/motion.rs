@@ -23,7 +23,9 @@ use std::fs;
 
 use serde_json::{json, Value};
 
-use nekowite_lib::desktop_pet::character_view::{appearance, stored_bubble_opacity, stored_motion};
+use nekowite_lib::desktop_pet::character_view::{
+    appearance, stored_bubble_message, stored_bubble_opacity, stored_motion,
+};
 use nekowite_lib::desktop_pet::settings::values::defaults;
 use nekowite_lib::desktop_pet::settings::{
     PetSettingsDomain, PetSettingsLoad, PetSettingsStore, PetSettingsUpdate, PetSettingsWrite,
@@ -58,6 +60,7 @@ fn window_read(store: &PetSettingsStore) -> PetAppearance {
         &record,
         stored_motion(store),
         stored_bubble_opacity(store),
+        stored_bubble_message(store),
         stored_ball_size(store),
         None,
     );

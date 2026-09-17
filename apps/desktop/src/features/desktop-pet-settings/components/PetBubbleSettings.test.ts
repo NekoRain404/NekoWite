@@ -269,15 +269,126 @@ describe('how long a bubble stays', () => {
   })
 })
 
-describe('what this page cannot offer, and says so', () => {
-  it('states the row layout and the word lists instead of drawing dead controls', async () => {
+describe('the row layout and the phrases, which used to be a paragraph', () => {
+  /**
+   * **This is the defect, as assertions.** Both blocks below were a sentence saying the settings
+   * could hold these values and that the bubble took no layout from them — which was accurate, and
+   * was this project's signature failure: `PetBubble` had taken a `layout` prop since it was
+   * written, and no product code passed one. The sentence is gone, and every control that replaced
+   * it is driven here and read back out of the store, because a control that can be clicked and
+   * does nothing is the thing §5.2 forbids.
+   */
+  it('writes every layout field the page draws a control for', async () => {
+    const gateway = createMemoryPetGateway()
+    mount(gateway)
+    await flush()
+
+    press('pet-bubble-mode-compact')
+    press('pet-bubble-grouping-flat')
+    press('pet-bubble-filter-attention')
+    press('pet-bubble-separator-arrow')
+    await flush(DEBOUNCE_PLUS)
+
+    const values = await storedValues(gateway, 'message')
+    expect(values.layoutMode).toBe('compact')
+    expect(values.grouping).toBe('flat')
+    expect(values.filter).toBe('attention')
+    expect(values.separator).toBe('arrow')
+  })
+
+  it('writes the row cap through the schema’s own rule', async () => {
+    const gateway = createMemoryPetGateway()
+    mount(gateway)
+    await flush()
+
+    const slider = document.querySelector<HTMLInputElement>('[data-test="pet-bubble-rows"]')
+    if (!slider) throw new Error('no row slider')
+    slider.value = '99'
+    slider.dispatchEvent(new Event('input', { bubbles: true }))
+    await flush(DEBOUNCE_PLUS)
+
+    expect((await storedValues(gateway, 'message')).layoutMaxRows).toBe(10)
+  })
+
+  it('writes a whole field list, in the renderer’s own order', async () => {
+    const gateway = createMemoryPetGateway()
+    mount(gateway)
+    await flush()
+
+    const elapsed = document.querySelector<HTMLInputElement>('[data-test="pet-bubble-token-elapsed"]')
+    if (!elapsed) throw new Error('no elapsed checkbox')
+    // The stored list is empty, which means the renderer's *preset* — so the box is unchecked and
+    // the write is the whole list rather than a patch of one entry.
+    expect(elapsed.checked).toBe(false)
+    elapsed.checked = true
+    elapsed.dispatchEvent(new Event('change', { bubbles: true }))
+    await flush(DEBOUNCE_PLUS)
+
+    const written = (await storedValues(gateway, 'message')).tokens as {
+      token: string
+      visible: boolean
+    }[]
+    expect(written.map((entry) => entry.token)).toEqual([
+      'dot',
+      'agent',
+      'session',
+      'separator',
+      'message',
+      'stateLabel',
+      'elapsed',
+    ])
+    expect(written.filter((entry) => entry.visible).map((entry) => entry.token)).toEqual([
+      'dot',
+      'agent',
+      'session',
+      'separator',
+      'message',
+      'elapsed',
+    ])
+  })
+
+  it('writes the lines the user typed, one phrase per line and blanks dropped', async () => {
+    const gateway = createMemoryPetGateway()
+    mount(gateway)
+    await flush()
+
+    const box = document.querySelector<HTMLTextAreaElement>('[data-test="pet-bubble-phrases"]')
+    if (!box) throw new Error('no phrase box')
+    // The blank line is dropped *here* rather than stored, because the schema refuses a blank
+    // member and a list field is all-or-nothing: a submission carrying one is refused whole.
+    box.value = '先喝口水\n\n  整理一下引用  '
+    box.dispatchEvent(new Event('change', { bubbles: true }))
+    await flush(DEBOUNCE_PLUS)
+
+    expect((await storedValues(gateway, 'message')).quickBubbles).toEqual([
+      '先喝口水',
+      '整理一下引用',
+    ])
+  })
+
+  it('writes the idle switch', async () => {
+    const gateway = createMemoryPetGateway()
+    mount(gateway)
+    await flush()
+
+    const idle = document.querySelector<HTMLInputElement>('[data-test="pet-bubble-idle"]')
+    if (!idle) throw new Error('no idle switch')
+    expect(idle.checked).toBe(true)
+    idle.checked = false
+    idle.dispatchEvent(new Event('change', { bubbles: true }))
+    await flush(DEBOUNCE_PLUS)
+
+    expect((await storedValues(gateway, 'message')).idle).toBe(false)
+  })
+
+  it('states what is still unwired, in words, rather than drawing a dead control', async () => {
     mount(createMemoryPetGateway())
     await flush()
 
-    // §5.2 「不可用选项要说明原因，不显示可点击但无效果的控件」. Both are asserted as catalogue text,
-    // so a page that lost its words fails here rather than rendering a raw key.
-    expect(text('pet-bubble-layout')).toBe(t('settings.pet.bubble.layoutUnavailable'))
-    expect(text('pet-bubble-phrases')).toBe(t('settings.pet.bubble.phrasesUnavailable'))
+    // §5.2 「不可用选项要说明原因，不显示可点击但无效果的控件」: the settings this build still has no
+    // surface for are one sentence, asserted as catalogue text so a page that lost its words fails
+    // here rather than rendering a raw key.
+    expect(text('pet-bubble-unwired')).toBe(t('settings.pet.bubble.dotUnavailable'))
   })
 
   it('renders no message key it did not get from the catalogue', async () => {
