@@ -71,7 +71,13 @@ export function summariseHeld(trace) {
       text: [trace.text0, trace.text1],
     },
     scrollEvents: trace.scrollEvents,
-    trace: frames.map((f) => `t${f.t} off${f.anchorOffset} top${f.scrollTop}/${f.max} rows${f.rows}`),
+    // `same`/`rail`/`hidden` are in the trace line because they answer the one question the
+    // offsets cannot: whether this container is still the one on screen. A replaced element
+    // reads as 0/0 from the replacement onwards, and a line that says so names the cause.
+    same: distinct(frames.map((f) => f.same)),
+    trace: frames.map((f) =>
+      `t${f.t} off${f.anchorOffset} top${f.scrollTop}/${f.max} rows${f.rows}` +
+      (f.same === false || f.rail === false ? ` SAME${f.same} rail${f.rail}` : '')),
   }
 }
 

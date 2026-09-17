@@ -71,7 +71,16 @@ export function agentPanelLabels(engineName: string): AgentPanelLabels {
       you: t('agent.panel.timeline.you'),
       thoughtOpen: t('agent.panel.timeline.thoughtOpen'),
       thoughtClosed: t('agent.panel.timeline.thoughtClosed'),
-      jump: t('agent.panel.timeline.jump'),
+      controls: {
+        jump: t('agent.panel.timeline.jump'),
+        follow: t('agent.panel.timeline.follow'),
+        followStop: t('agent.panel.timeline.followStop'),
+        copy: t('agent.panel.timeline.copy'),
+        copied: t('agent.panel.timeline.copied'),
+        copyFailed: t('agent.panel.timeline.copyFailed'),
+        toUser: t('agent.panel.timeline.toUser'),
+        toTop: t('agent.panel.timeline.toTop'),
+      },
       tool: {
         status: {
           pending: t('agent.panel.timeline.tool.status.pending'),

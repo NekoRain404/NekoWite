@@ -18,6 +18,12 @@
  *    recording is kept as state rather than taken at the moment of the change because the
  *    changes that need it most are the ones that arrive after the layout has already moved
  *    (a resize re-wraps every row in one pass, and an observer's callback runs after it).
+ *  - **following is one fact with one control over it** ({@link AgentScroll.following},
+ *    {@link AgentScroll.setFollowing}). The reader's own scroll sets it and a press sets it, and
+ *    nothing can leave the panel saying "following" while the container sits somewhere else — a
+ *    second boolean a control could set independently of the reader's scroll is how a toggle ends
+ *    up at war with the hand on the wheel. Turning it off never moves the container; turning it
+ *    on is the same act as {@link AgentScroll.resume}, a move the reader asked for.
  *
  * Deliberately *not* here: any animation. §5.2 forbids per-token animation and this module
  * writes `scrollTop` and nothing else — no easing, no smooth scroll, no reveal. The store's
@@ -40,7 +46,7 @@
  *    suspends itself on every token is the failure this whole file is arranged to avoid.
  */
 
-import { nextTick, onMounted, ref, watch, type Ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch, type Ref } from 'vue'
 
 /**
  * How close to the end still counts as the end.
@@ -86,9 +92,30 @@ export interface AgentScroll {
   /**
    * The reader left the end and content arriving must not move them. Set by their own scroll
    * in either direction — arriving back at the end is itself an explicit action (§5.2) — and
-   * cleared by {@link resume} or by a {@link restore} to the end.
+   * cleared by {@link resume}, by {@link setFollowing} or by a {@link restore} to the end.
    */
   suspended: Ref<boolean>
+  /**
+   * The same fact as {@link suspended}, from the reader's side: are arrivals followed?
+   *
+   * It is derived rather than stored, and that is the point of it being here at all. Zed's panel
+   * carries a *switch* (`render_follow_toggle`, `thread_view.rs:5698`) and ours carried the
+   * behaviour without the control; a second boolean that a control could set independently of
+   * the reader's own scroll is exactly how a panel ends up fighting the reader — the toggle
+   * saying "following" while the container is 3000px away from the end, or arriving content
+   * yanking a reader the switch claims to have parked. One fact, two readings of its polarity.
+   */
+  following: Ref<boolean>
+  /**
+   * The reader's own switch over that one fact — the control Zed draws and this panel did not.
+   *
+   * On is {@link resume}: go to the end and follow, which is what turning a follow switch on
+   * means. Off parks the log exactly where it is — the container is *not* moved — and records
+   * the row the reader is on, because a following container has never needed an anchor and
+   * without one the next height change above the fold would move a reader the switch just said
+   * it was holding.
+   */
+  setFollowing: (on: boolean) => void
   /**
    * How many content changes have arrived since the reader left the end. It counts
    * *changes*, not messages: text streaming into the last row is new content too, and saying
@@ -99,6 +126,20 @@ export interface AgentScroll {
   onScroll: () => void
   /** Return to the end and follow again — the reader's explicit action, not a hint. */
   resume: () => void
+  /**
+   * Take the reader to one of the container's own rows, as the transcript's navigation does
+   * ("go to my last message").
+   *
+   * It goes through the same path as a restore, so everything downstream is the same: the write
+   * is recognised as ours rather than the reader's hand when the engine delivers its event
+   * ({@link written}), the reading position is re-anchored where the reader lands, and a target
+   * that *is* the end leaves the container following, because arriving at the end is itself the
+   * explicit action §5.2 describes. A row that is not in the container, or one that has been
+   * replaced by a re-render, is refused rather than approximated.
+   */
+  toRow: (row: Element | null) => void
+  /** The same act, to the top of the log. The reader asked for it, so it is instant. */
+  toTop: () => void
   /**
    * The rows changed height without one arriving: a tool row's output expanded, a link
    * resolved, the panel re-wrapped. Announced **before** the DOM updates — a pre-flush
@@ -281,6 +322,20 @@ export function useAgentScroll(options: UseAgentScrollOptions): AgentScroll {
     pin(el)
   }
 
+  function setFollowing(on: boolean): void {
+    if (on) {
+      resume()
+      return
+    }
+    const el = element()
+    if (el === null) return
+    suspended.value = true
+    // The hold needs the row the reader is on. A container that has been following never
+    // recorded one — there was nothing to hold — and without this the next row that grows
+    // above the fold would move a reader this switch has just promised to hold still.
+    recordAnchor()
+  }
+
   /** Take a position as the reader's own: everything downstream of a scroll follows from it. */
   function apply(el: HTMLElement, top: number): void {
     write(el, top)
@@ -303,6 +358,21 @@ export function useAgentScroll(options: UseAgentScrollOptions): AgentScroll {
       return
     }
     apply(el, scrollTop)
+  }
+
+  function toRow(row: Element | null): void {
+    const el = element()
+    if (el === null || row === null || !row.isConnected) return
+    // The row's own position in the container, which is where the reader would see it if they
+    // scrolled there themselves. Measured rather than read from `offsetTop`: the row is a plain
+    // element and the container's positioning context is the caller's to decide.
+    apply(el, el.scrollTop + offsetOf(el, row))
+  }
+
+  function toTop(): void {
+    const el = element()
+    if (el === null) return
+    apply(el, 0)
   }
 
   onMounted(() => {
@@ -329,9 +399,13 @@ export function useAgentScroll(options: UseAgentScrollOptions): AgentScroll {
   return {
     atEnd,
     suspended,
+    following: computed(() => !suspended.value),
     pending,
     onScroll,
     resume,
+    toRow,
+    toTop,
+    setFollowing,
     contentChanged: () => {
       void changed(0)
     },

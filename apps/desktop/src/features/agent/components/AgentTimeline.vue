@@ -3,6 +3,7 @@
  * The copy the timeline renders, handed in rather than reached for — see
  * {@link AgentToolLabels} for why, and for what happens when the catalogue grows keys.
  */
+import type { AgentTimelineControlLabels } from './AgentTimelineControls.vue'
 import type { AgentToolLabels } from './AgentToolActivity.vue'
 
 export interface AgentTimelineLabels {
@@ -14,9 +15,8 @@ export interface AgentTimelineLabels {
   /** The disclosure on the engine's own reasoning channel. */
   thoughtOpen: string
   thoughtClosed: string
-  /** The button that takes the reader back to the end of the log; the count of arrivals they
-   *  have not followed is rendered beside it. */
-  jump: string
+  /** The row of controls that floats over the transcript's own bottom edge. */
+  controls: AgentTimelineControlLabels
   tool: AgentToolLabels
 }
 </script>
@@ -45,9 +45,11 @@ export interface AgentTimelineLabels {
  * the token, and the panel's status line is where they are announced.
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { ArrowDown, ChevronDown, ChevronRight } from 'lucide-vue-next'
+import { ChevronDown, ChevronRight } from 'lucide-vue-next'
 import AgentToolActivity from './AgentToolActivity.vue'
+import AgentTimelineControls from './AgentTimelineControls.vue'
 import { useAgentScroll } from '../composables/use-agent-scroll'
+import { newestReply, newestUserRow } from '../services/agent-timeline-actions'
 import type { AgentTimelineEntry } from '../services/agent-timeline'
 
 const props = defineProps<{
@@ -86,10 +88,35 @@ function toggleThought(id: number): void {
   scroll.contentChanged()
 }
 
-/** The hint is a button and not a live region: it appears once, when the reader leaves the
- *  end, and then counts. Announcing the count would announce every arrival, which is the
- *  per-token reading §5.2 rules out. */
-const hint = computed(() => scroll.suspended.value && scroll.pending.value > 0)
+/** The switch's own state, as the control row draws it. A computed rather than the composable's
+ *  ref handed straight down: the template reads it as a top-level binding, and the control wants
+ *  a boolean prop rather than a ref it would have to unwrap. */
+const following = computed(() => scroll.following.value)
+
+/** The newest answer, and whether the reader has said anything: the two things the control row
+ *  is drawn for. Both are the view's own rows, read through
+ *  `services/agent-timeline-actions.ts` — which row counts as "the answer" is decided there and
+ *  not in this template. */
+const reply = computed(() => newestReply(props.rows))
+const hasUserMessage = computed(() => newestUserRow(props.rows) !== null)
+
+/**
+ * The row element for a timeline entry, or null when it is not on screen.
+ *
+ * Address a row by its own id rather than by index: the rows are keyed by the store's ids and a
+ * tool call updating rewrites one row without renumbering the rest, which an index would not
+ * survive.
+ */
+function rowElement(id: number): Element | null {
+  return scroller.value?.querySelector(`[data-row="${id}"]`) ?? null
+}
+
+/** Take the reader to their own last message. The reader asked, so the move is instant — see
+ *  `AgentScroll.toRow`. */
+function toUserMessage(): void {
+  const row = newestUserRow(props.rows)
+  if (row !== null) scroll.toRow(rowElement(row.id))
+}
 
 /**
  * A container that changes size re-wraps every row, which moves the reader without a row
@@ -181,20 +208,18 @@ if (typeof ResizeObserver !== 'undefined') {
         />
       </template>
     </div>
-    <button
-      v-if="hint"
-      class="agent-jump"
-      type="button"
-      @click="scroll.resume()"
-    >
-      <ArrowDown
-        :size="13"
-        :stroke-width="1.8"
-        aria-hidden="true"
-      />
-      {{ labels.jump }}
-      <span class="agent-jump-count">{{ scroll.pending.value }}</span>
-    </button>
+    <AgentTimelineControls
+      v-if="rows.length > 0"
+      :following="following"
+      :pending="scroll.pending.value"
+      :reply="reply"
+      :has-user-message="hasUserMessage"
+      :labels="labels.controls"
+      @follow="scroll.setFollowing($event)"
+      @resume="scroll.resume()"
+      @to-user="toUserMessage()"
+      @to-top="scroll.toTop()"
+    />
   </div>
 </template>
 
@@ -291,44 +316,5 @@ if (typeof ResizeObserver !== 'undefined') {
   margin: 0;
   color: var(--app-muted);
   font-size: 13px;
-}
-.agent-jump {
-  position: absolute;
-  bottom: 12px;
-  left: 50%;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--app-border);
-  border-radius: 999px;
-  background: var(--app-elevated);
-  box-shadow: var(--app-shadow-card);
-  color: var(--app-text);
-  font-family: var(--app-font);
-  font-size: 12px;
-  transform: translateX(-50%);
-  cursor: pointer;
-  /* Arrival only, and opacity only: it fades in where it lands. Nothing here moves the log
-     under the reader, and the fade rides the app's 140–220ms band with reduced motion
-     handled by the global sweep (§5.2). */
-  animation: agent-jump-in var(--app-motion-fade) var(--app-ease);
-}
-.agent-jump:hover {
-  background: color-mix(in srgb, var(--app-elevated) 86%, var(--app-accent-soft));
-}
-.agent-jump:focus-visible {
-  outline: 2px solid var(--app-accent);
-  outline-offset: 1px;
-}
-.agent-jump-count {
-  color: var(--app-muted);
-  font-variant-numeric: tabular-nums;
-}
-@keyframes agent-jump-in {
-  from {
-    opacity: 0;
-  }
 }
 </style>

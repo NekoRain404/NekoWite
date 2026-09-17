@@ -414,6 +414,154 @@ export function verify(results) {
         )
       }
 
+      // ---- The transcript's own control row ----------------------------------
+      //
+      // Two audit rows, and both are about a *gesture* rather than a behaviour: row 38's follow
+      // switch, which the panel had the policy for and no control over, and row 36's copy and
+      // two navigations, which it did not have at all. Every check below is decided on what the
+      // container did after a real click, so a control that renders and is not wired — the
+      // failure mode this whole audit exists to find — reads as red rather than as present.
+      const follow = agent.switch ?? {}
+      const controls = agent.controls ?? {}
+      const followBefore = follow.before?.follow ?? null
+      const followOff = follow.pressed?.off?.follow ?? null
+      const followOn = follow.pressed?.on?.follow ?? null
+      const heldSwitch = follow.held ?? {}
+      const offTrace = heldSwitch.trace ?? {}
+
+      // FAILS IF: the switch is not drawn, or is drawn without the state it is supposed to
+      // carry. `aria-pressed` is the control's own statement about the container, and the
+      // container's own reading is printed beside it.
+      c.run(
+        'agent follow: the transcript carries a follow switch that is on while it follows',
+        follow.failure ??
+          `the switch reads aria-pressed ${JSON.stringify(followBefore?.pressed ?? null)} ` +
+            `(${JSON.stringify(followBefore?.title ?? null)}), the container is at ` +
+            `${follow.readBefore?.scrollTop ?? '?'} of ${follow.readBefore?.max ?? '?'}, ` +
+            `the way back to the end is ${followBefore?.present === true ? 'in the row' : 'absent'}` +
+            (follow.off ? `; pressing it was a real click at ${JSON.stringify(follow.off)}` : ''),
+        follow.failure === undefined &&
+          followBefore?.present === true &&
+          followBefore?.pressed === 'true' &&
+          followBefore?.inViewport === true,
+      )
+
+      // FAILS IF: turning the switch off moves the transcript. It is a statement about what
+      // happens next, not a navigation — and a control that moved the reader while claiming to
+      // park the log would be worse than no control.
+      c.run(
+        'agent follow: turning it off does not move the transcript',
+        follow.failure ??
+          `pressing it left the container at ${follow.readOff?.scrollTop ?? '?'} of ` +
+            `${follow.readOff?.max ?? '?'} (moved by ${JSON.stringify(follow.offMovedBy ?? null)}px)` +
+            `, the switch now reads ${JSON.stringify(followOff?.pressed ?? null)} ` +
+            `(${JSON.stringify(followOff?.title ?? null)})`,
+        follow.failure === undefined &&
+          followOff?.pressed === 'false' &&
+          follow.offMovedBy === 0,
+      )
+
+      // FAILS IF: content arriving under a switch that is OFF moves the reader — the switch
+      // being drawn while the container follows anyway. Same instrument, same verdict and same
+      // wording as the parked reader's half above, because it is the same requirement reached
+      // by a different gesture.
+      c.run(
+        'agent follow: with the switch off, arrivals do not move the reader',
+        follow.failure ??
+          `${offTrace.movedFrames ?? '?'} of ${offTrace.frames ?? '?'} frames moved the reader ` +
+            `(offset ${JSON.stringify(offTrace.offsetRange ?? null)}, baseline ${offTrace.baseline ?? null}, ` +
+            `scrollTop ${JSON.stringify((offTrace.scrollTop ?? []).map((s) => s.value))}); ` +
+            `arrivals: ${heldSwitch.live?.why ?? 'no trace'}; the way back is ` +
+            `${heldSwitch.controls?.jump?.present === true ? `on screen with ${JSON.stringify(heldSwitch.controls.jump.text)}` : 'absent'}`,
+        follow.failure === undefined &&
+          heldSwitch.live?.holds === true &&
+          offTrace.movedFrames === 0 &&
+          heldSwitch.controls?.jump?.present === true,
+      )
+
+      // FAILS IF: turning it back on needs a scroll too — a switch that flips its own state and
+      // leaves the container where it was is exactly what "re-enables itself loudly and does
+      // nothing" looks like. The stream afterwards is the other half: the container must follow
+      // the arrivals it is now claiming to follow.
+      c.run(
+        'agent follow: turning it back on goes to the newest row and follows again',
+        follow.failure ??
+          `the container reached ${follow.readOn?.scrollTop ?? '?'} of ${follow.readOn?.max ?? '?'} ` +
+            `(at end: ${follow.reachedEnd ?? '?'}), the switch reads ${JSON.stringify(followOn?.pressed ?? null)}, ` +
+            (follow.resumed?.follow
+              ? `then ${follow.resumed.follow.awayFrames} of ${follow.resumed.follow.frames} frames away from the end ` +
+                `(gap ${JSON.stringify(follow.resumed.follow.gap)}), scrollTop grew ${follow.resumed.follow.scrollTop?.grew}`
+              : 'no stream was run'),
+        follow.failure === undefined &&
+          follow.reachedEnd === true &&
+          followOn?.pressed === 'true' &&
+          follow.resumed?.follow?.live?.holds === true &&
+          follow.resumed.follow.awayFrames === 0 &&
+          follow.resumed.follow.scrollTop?.grew === true,
+      )
+
+      // FAILS IF: the copy control is not there, or the press landed nowhere — counted in what
+      // the clipboard taps were handed, which is the only reading that survives either route
+      // being the one this engine takes.
+      const copyCalls = controls.copy?.calls?.calls ?? []
+      const copiedBy = copyCalls[copyCalls.length - 1] ?? null
+      c.run(
+        'agent controls: copying the answer hands the newest reply over and says so',
+        controls.failure ??
+          `the control is ${controls.controls?.copy?.present === true ? 'on screen' : 'absent'}; ` +
+            `a real press was followed by ${copyCalls.length} clipboard call(s) ` +
+            `${JSON.stringify(copyCalls.map((c) => c.by))} and the control now reads ` +
+            `${JSON.stringify(controls.copy?.controls?.copy?.copied ?? null)} ` +
+            `(${JSON.stringify(controls.copy?.controls?.copy?.title ?? null)}); taps: ${JSON.stringify(controls.taps ?? null)}`,
+        controls.failure === undefined &&
+          controls.controls?.copy?.present === true &&
+          controls.controls.copy.inViewport === true &&
+          copyCalls.length >= 1 &&
+          // Trimmed on both sides: the view's row keeps the chunk's own trailing space and a
+          // DOM `textContent` read does not, and the question here is *which* text was handed
+          // over, not whether the two were trimmed by the same hand.
+          copiedBy?.text?.trim() === controls.transcript?.reply?.trim() &&
+          copiedBy?.text?.trim().length > 0 &&
+          controls.copy.controls?.copy?.copied === 'copied',
+      )
+
+      // FAILS IF: the press moved the reader — a copy is not a navigation.
+      c.run(
+        'agent controls: copying does not move the transcript',
+        controls.failure ??
+          `the container was at ${controls.copy?.before?.scrollTop ?? '?'} and is at ` +
+            `${controls.copy?.after?.scrollTop ?? '?'} (moved by ${JSON.stringify(controls.copy?.movedBy ?? null)}px)`,
+        controls.failure === undefined && controls.copy?.movedBy === 0,
+      )
+
+      // FAILS IF: the press did nothing, or did something else — the container must be at the
+      // top of the log afterwards.
+      c.run(
+        'agent controls: the way to the top takes the reader to the top',
+        controls.failure ??
+          `the container was at ${controls.copy?.after?.scrollTop ?? controls.transcript?.anchor?.offset ?? '?'} ` +
+            `before the press and is at ${controls.toTop?.read?.scrollTop ?? '?'} after it ` +
+            `(rows ${controls.toTop?.read?.rows ?? '?'})`,
+        controls.failure === undefined && controls.toTop?.read?.scrollTop === 0,
+      )
+
+      // FAILS IF: the way to the reader's own message lands anywhere but on it. The verdict is
+      // the row their eye is on, not the offset: an offset alone cannot tell "on my message"
+      // from "somewhere in the transcript", and the row id is what the transcript itself calls
+      // that message.
+      c.run(
+        'agent controls: the way to the reader’s message lands on that message',
+        controls.failure ??
+          `pressed from ${controls.toTop?.read?.scrollTop ?? '?'}; the reader's eye is on row ` +
+            `${JSON.stringify(controls.toUser?.read?.anchorId ?? null)} at offset ` +
+            `${JSON.stringify(controls.toUser?.read?.anchorOffset ?? null)}, and the newest user row ` +
+            `is ${JSON.stringify(controls.transcript?.userRowId ?? null)} ` +
+            `(the transcript holds ${controls.transcript?.users ?? '?'} of them, ${controls.transcript?.replies ?? '?'} replies)`,
+        controls.failure === undefined &&
+          controls.transcript?.userRowId !== null &&
+          controls.toUser?.read?.anchorId === controls.transcript?.userRowId,
+      )
+
       // ---- The transcript as a keyboard-reachable surface --------------------
       //
       // 「用户上翻查看历史后暂停自动跟随，回到底部才恢复」 presumes a reader who CAN scroll up,

@@ -19,8 +19,8 @@
  * cancellable, so that is what is asserted — with the same key the panel's own hint is reached
  * by, and with the two the transcript is scrolled by.
  */
-import { afterEach, describe, expect, it } from 'vitest'
-import { createApp, type App as VueApp } from 'vue'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createApp, defineComponent, h, nextTick, ref, type App as VueApp } from 'vue'
 import AgentTimeline, { type AgentTimelineLabels } from './AgentTimeline.vue'
 import type { AgentTimelineEntry } from '../services/agent-timeline'
 
@@ -29,7 +29,16 @@ const LABELS: AgentTimelineLabels = {
   you: 'You',
   thoughtOpen: 'Hide reasoning',
   thoughtClosed: 'Reasoning',
-  jump: 'New content',
+  controls: {
+    jump: 'New content',
+    follow: 'Follow the newest output',
+    followStop: 'Stop following the newest output',
+    copy: 'Copy the newest answer',
+    copied: 'Copied',
+    copyFailed: 'The clipboard refused it',
+    toUser: 'Go to your last message',
+    toTop: 'Go to the beginning',
+  },
   tool: {
     status: {
       pending: 'Queued',
@@ -79,15 +88,33 @@ afterEach(() => {
 
 function mountTimeline(
   rows: readonly AgentTimelineEntry[] = ROWS,
-): { host: HTMLElement; scroll: HTMLElement } {
+): {
+  host: HTMLElement
+  scroll: HTMLElement
+  /** One more row arrived. Reactive, so the panels' own watcher sees it: an arrival is what the
+   *  controls' two states are about, and a static list could only ever show the first one. */
+  append: (row: AgentTimelineEntry) => Promise<void>
+} {
   const host = document.createElement('div')
   document.body.appendChild(host)
-  const app = createApp(AgentTimeline, { rows, labels: LABELS })
-  mounted.push(app)
+  const live = ref<readonly AgentTimelineEntry[]>([...rows])
+  const app = createApp(
+    defineComponent({
+      setup: () => () => h(AgentTimeline, { rows: live.value, labels: LABELS }),
+    }),
+  )
   app.mount(host)
+  mounted.push(app)
   const scroll = host.querySelector<HTMLElement>('.agent-timeline')
   if (scroll === null) throw new Error('the transcript container did not render')
-  return { host, scroll }
+  return {
+    host,
+    scroll,
+    append: async (row) => {
+      live.value = [...live.value, row]
+      for (let i = 0; i < 3; i += 1) await nextTick()
+    },
+  }
 }
 
 describe('the transcript and the keyboard', () => {
@@ -142,5 +169,121 @@ describe('the transcript and the keyboard', () => {
       scroll.dispatchEvent(event)
       expect({ key, defaultPrevented: event.defaultPrevented }).toEqual({ key, defaultPrevented: false })
     }
+  })
+})
+
+/**
+ * The reader's switch over following, driven through the transcript's own control row.
+ *
+ * The composable's own tests hold the policy; what this holds is that the policy reaches a
+ * *control* — the failure this project keeps catching is a behaviour with no gesture, and a
+ * switch that renders the state but is not wired to it looks identical in a snapshot.
+ */
+describe('the transcript’s follow switch', () => {
+  const reply: AgentTimelineEntry = { kind: 'text', id: 9, runId: 'run-1', text: 'More.' }
+
+  function switches(host: HTMLElement): {
+    follow: HTMLButtonElement | null
+    jump: HTMLButtonElement | null
+  } {
+    return {
+      follow: host.querySelector<HTMLButtonElement>('[data-timeline-control="follow"]'),
+      jump: host.querySelector<HTMLButtonElement>('[data-timeline-control="jump"]'),
+    }
+  }
+
+  it('is on screen, and says it is following, on a transcript the reader has not touched', () => {
+    const { host } = mountTimeline()
+    const { follow, jump } = switches(host)
+
+    // FAILS IF: the switch is not drawn — which is the row this closes (Zed draws one,
+    // `render_follow_toggle`, and this panel drew the behaviour with nothing to press).
+    expect(follow).not.toBeNull()
+    expect(follow?.getAttribute('aria-pressed')).toBe('true')
+    // …and the way back to the end is not offered while the reader is already at the end.
+    expect(jump).toBeNull()
+  })
+
+  it('parks the log and counts what arrives, then goes back on one press', async () => {
+    const { host, append } = mountTimeline()
+    const { follow } = switches(host)
+
+    follow!.click()
+    await nextTick()
+    // The state is the composable's, and this is the DOM reading of it: off means off.
+    expect(switches(host).follow?.getAttribute('aria-pressed')).toBe('false')
+
+    await append(reply)
+    const afterArrival = switches(host)
+    expect(afterArrival.follow?.getAttribute('aria-pressed')).toBe('false')
+    // The arrival a reader who turned the switch off did not follow is offered, with its count.
+    expect(afterArrival.jump).not.toBeNull()
+    expect(afterArrival.jump?.querySelector('.agent-jump-count')?.textContent).toBe('1')
+
+    afterArrival.jump!.click()
+    await nextTick()
+    const afterJump = switches(host)
+    expect(afterJump.follow?.getAttribute('aria-pressed')).toBe('true')
+    expect(afterJump.jump).toBeNull()
+  })
+
+  it('names the action, not the state, on the switch itself', () => {
+    const { host } = mountTimeline()
+
+    // A tooltip reading "Following" would be the same fact as `aria-pressed`, twice, and would
+    // leave a reader who has never used the control with no answer to what it does.
+    expect(switches(host).follow?.getAttribute('title')).toBe(LABELS.controls.followStop)
+  })
+})
+
+/**
+ * The transcript's copy control, driven the way a reader drives it.
+ *
+ * The clipboard is the one thing here that cannot be measured in this environment — WebKitGTK
+ * under Tauri is not measured for `navigator.clipboard` at all — so what is held is the half a
+ * unit test can hold honestly: the press reaches the writer, it reaches it with the answer
+ * rather than with something else, and the reader is told the press landed.
+ */
+describe('the transcript’s copy control', () => {
+  function copyButton(host: HTMLElement): HTMLButtonElement | null {
+    return host.querySelector<HTMLButtonElement>('[data-timeline-control="copy"]')
+  }
+
+  afterEach(() => {
+    Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: undefined })
+  })
+
+  it('hands the newest answer over, and shows that it landed', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: { writeText } })
+    const { host } = mountTimeline()
+
+    const button = copyButton(host)
+    expect(button).not.toBeNull()
+    expect(button?.getAttribute('aria-label')).toBe(LABELS.controls.copy)
+    button!.click()
+    // The write is a promise and the notice lands after it resolves, so the reading is taken
+    // once the DOM says so rather than after a guessed number of ticks.
+    await vi.waitFor(() => expect(copyButton(host)?.dataset.copy).toBe('copied'))
+
+    // The answer, and not the user's own turn that sits above it — the mistake this control's
+    // label would hide.
+    expect(writeText).toHaveBeenCalledWith('Reading it now.')
+    expect(copyButton(host)?.getAttribute('title')).toBe(LABELS.controls.copied)
+  })
+
+  it('is not drawn when there is no answer to copy yet', () => {
+    const { host } = mountTimeline([{ kind: 'user', id: 1, runId: null, text: 'hello', origin: 'host' }])
+    expect(copyButton(host)).toBeNull()
+  })
+})
+
+describe('the transcript’s way to the reader’s own message', () => {
+  it('is drawn only once the reader has said something', () => {
+    const { host } = mountTimeline([{ kind: 'text', id: 1, runId: 'r', text: 'unprompted' }])
+    expect(host.querySelector('[data-timeline-control="to-user"]')).toBeNull()
+
+    const withUser = mountTimeline()
+    expect(withUser.host.querySelector('[data-timeline-control="to-user"]')).not.toBeNull()
   })
 })

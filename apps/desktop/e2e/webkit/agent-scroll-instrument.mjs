@@ -22,6 +22,12 @@ export const PANEL = '.agent-panel'
 export const TIMELINE = '.agent-timeline'
 /** The affordance the panel offers a reader who has left the end. */
 export const JUMP = '.agent-jump'
+/** The transcript's own control row, and the three controls rows 36 and 38 are about. */
+export const CONTROLS = '.agent-timeline-controls'
+export const FOLLOW = '[data-timeline-control="follow"]'
+export const COPY = '[data-timeline-control="copy"]'
+export const TO_USER = '[data-timeline-control="to-user"]'
+export const TO_TOP = '[data-timeline-control="to-top"]'
 /**
  * The chat panel's own three addresses, measured by `probe-chat-scroll.mjs`.
  *
@@ -401,6 +407,14 @@ window.__nkwStream = function (opts, done) {
       text: sh.textContent.length
     };
     last = now;
+    // Three readings that answer "did this container stop being the one on screen", which a
+    // trace of offsets alone cannot: a container that was replaced reads as 0/0 for the rest of
+    // the run while the transcript on screen carries on, and the row count alone cannot tell
+    // the two apart. The same field is the identity check against the element the selector
+    // resolves to right now.
+    frame.same = sh === document.querySelector(opts.sel);
+    frame.rail = Boolean(document.querySelector('.info-rail'));
+    frame.hidden = document.hidden;
     const anchor = window.__nkwAnchor(sh);
     frame.anchorId = anchor.id;
     frame.anchorOffset = anchor.offset === null ? null : Math.round(anchor.offset * 100) / 100;
@@ -465,9 +479,100 @@ window.__nkwPanel = function (opts, done) {
   requestAnimationFrame(read);
 };
 
+/**
+ * The transcript's own control row, as the DOM has it.
+ *
+ * Read as a whole rather than one selector at a time because the row is what a reader sees: a
+ * control that is drawn but has no box (a collapsed or clipped ancestor), or one whose box is
+ * off the viewport, is not reachable and has to read as such — which is what inViewport and
+ * the box's own numbers are for. The centre is what a driver clicks.
+ */
+window.__nkwControls = function () {
+  const row = document.querySelector('${CONTROLS}');
+  if (!row) return { present: false };
+  const read = function (name) {
+    const el = row.querySelector('[data-timeline-control="' + name + '"]');
+    if (!el) return { present: false };
+    const box = el.getBoundingClientRect();
+    return {
+      present: true,
+      pressed: el.getAttribute('aria-pressed'),
+      title: el.getAttribute('title'),
+      label: el.getAttribute('aria-label'),
+      copied: el.dataset.copy || null,
+      text: (el.textContent || '').trim(),
+      centre: { x: Math.round(box.left + box.width / 2), y: Math.round(box.top + box.height / 2) },
+      box: { left: Math.round(box.left), right: Math.round(box.right),
+             top: Math.round(box.top), bottom: Math.round(box.bottom) },
+      inViewport: box.width > 0 && box.left >= 0 && box.top >= 0 &&
+                  box.right <= innerWidth && box.bottom <= innerHeight,
+    };
+  };
+  return {
+    present: true,
+    jump: read('jump'), follow: read('follow'), copy: read('copy'),
+    toUser: read('to-user'), toTop: read('to-top'),
+  };
+};
+
+/**
+ * Tap both clipboard paths, so what the copy control handed over is a reading.
+ *
+ * WebKitGTK under Tauri is *unmeasured* for the async clipboard — the product carries two paths
+ * for exactly that reason (services/agent-clipboard.ts) — so the probe watches both rather
+ * than assuming which one runs: the modern call is wrapped in place, and the engine's own copy
+ * command records what was selected when it was invoked. Neither tap changes what the control
+ * does; they only record it, and the by field in every entry says which path carried the text.
+ */
+window.__nkwWatchClipboard = function () {
+  const calls = [];
+  window.__nkwClipboard = { calls: calls, hasAsync: false, tapped: [] };
+  const nav = navigator.clipboard;
+  if (nav && typeof nav.writeText === 'function') {
+    window.__nkwClipboard.hasAsync = true;
+    try {
+      const original = nav.writeText.bind(nav);
+      Object.defineProperty(nav, 'writeText', {
+        configurable: true,
+        value: function (text) {
+          calls.push({ by: 'navigator.clipboard', text: text });
+          return original(text);
+        },
+      });
+      window.__nkwClipboard.tapped.push('navigator.clipboard');
+    } catch (error) {
+      window.__nkwClipboard.asyncTapFailed = String(error && error.message ? error.message : error);
+    }
+  }
+  if (typeof document.execCommand === 'function' && !window.__nkwCopyTap) {
+    window.__nkwCopyTap = true;
+    const original = document.execCommand.bind(document);
+    document.execCommand = function (command) {
+      if (command === 'copy') {
+        const active = document.activeElement;
+        const field = active && typeof active.value === 'string' ? active.value : null;
+        const accepted = original.apply(document, arguments);
+        calls.push({ by: 'document.execCommand', text: field, returned: Boolean(accepted) });
+        return accepted;
+      }
+      return original.apply(document, arguments);
+    };
+    window.__nkwClipboard.tapped.push('document.execCommand');
+  }
+  return {
+    hasAsync: window.__nkwClipboard.hasAsync,
+    tapped: window.__nkwClipboard.tapped,
+    asyncTapFailed: window.__nkwClipboard.asyncTapFailed || null,
+  };
+};
+
+/** What the two clipboard taps recorded, and whether they agree. */
+window.__nkwCopied = function () {
+  return window.__nkwClipboard || { calls: [], why: 'the taps were never installed' };
+};
+
 /** The end of the container, written: the fallback for a driver with no wheel gesture. */
-window.__nkwToEnd = function (opts, done) {
-  const el = document.querySelector(opts.sel);
+window.__nkwToEnd = function (opts, done) {  const el = document.querySelector(opts.sel);
   if (!el) { done({ why: 'no ' + opts.sel }); return; }
   el.scrollTop = el.scrollHeight - el.clientHeight;
   let n = 0;
@@ -510,6 +615,13 @@ window.__nkwSeed = function (opts) {
  * what mounts is the product's prompt answering the product's own reducer — the same seam
  * __nkwSeed uses for tool rows. The shape is the contract's: input is a state of 'text' with a
  * json string, or a state of 'absent', and the option kinds are the engine's own four.
+ *
+ * content: [] is the contract's own statement that the request carried no block of its own, and
+ * it is not decoration: readPermissionRequest reads the field (readers/tools.ts:184) and refuses
+ * the whole request when it is not an array, so a frame without it mounts nothing and the check
+ * above reports a timeout. The frame was missing it from the day the reader started requiring
+ * it (fba9d38) — which is what this probe's permission phase was measuring until now: a request
+ * the window had every right to refuse.
  */
 window.__nkwAskPermission = function (opts) {
   const host = ${AGENT};
@@ -521,6 +633,7 @@ window.__nkwAskPermission = function (opts) {
     // here is an escape the PAGE receives, and a quoted newline typed as one is a page script
     // that dies at its own syntax before any of it runs.
     input: { state: 'text', json: JSON.stringify({ path: 'notes/2026-09/' + opts.prefix + '.md' }, null, 2) },
+    content: [],
     options: [
       { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
       { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' },

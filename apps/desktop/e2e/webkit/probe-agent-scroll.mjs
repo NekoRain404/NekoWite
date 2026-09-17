@@ -68,6 +68,7 @@ import {
   wheel,
 } from './agent-scroll-driver.mjs'
 import { distinct, frameStats, liveTrace, summariseFollow, summariseHeld } from './agent-scroll-readings.mjs'
+import { followSwitchPhase, transcriptControlsPhase } from './agent-controls-phase.mjs'
 
 /**
  * `--violate pin` / `--violate width`: a deliberate violation, so the instrument can be shown
@@ -417,6 +418,16 @@ export const agentScrollProbe = {
         reparked, hintPresent, activation, settled,
       }
     })
+
+    // ---- The transcript's own control row -------------------------------------
+    //
+    // Rows 36 and 38 of the gap audit, measured at the point in the run where a transcript that
+    // is following at its end already exists: the copy / navigation controls the panel did not
+    // have, and the switch over following that it had behaviour for and no control over. Both
+    // phases are their own file at the line budget, and both drive the controls through the
+    // driver's own pointer rather than through the page's `click()`.
+    out.switch = await followSwitchPhase(wd, RUN)
+    out.controls = await transcriptControlsPhase(wd)
 
     // ---- The transcript as a surface the keyboard can reach -------------------
     //

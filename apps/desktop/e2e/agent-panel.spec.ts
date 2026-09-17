@@ -75,7 +75,16 @@ const LABELS: AgentPanelLabels = {
     you: 'You',
     thoughtOpen: 'Hide reasoning',
     thoughtClosed: 'Reasoning',
-    jump: 'New content',
+    controls: {
+      jump: 'New content',
+      follow: 'Follow the newest output',
+      followStop: 'Stop following the newest output',
+      copy: 'Copy the newest answer',
+      copied: 'Copied',
+      copyFailed: 'The clipboard refused it',
+      toUser: 'Go to your last message',
+      toTop: 'Go to the beginning',
+    },
     tool: {
       status: {
         pending: 'Queued',

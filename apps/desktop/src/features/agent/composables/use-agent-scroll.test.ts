@@ -65,6 +65,12 @@ interface Harness {
   announce: () => void
   /** The "back to the latest" button. */
   resume: () => Promise<void>
+  /** The reader's follow switch, as the control drives it. */
+  setFollowing: (on: boolean) => Promise<void>
+  /** The transcript's navigation: go to one of the rows it is showing. */
+  toRow: (index: number) => Promise<void>
+  /** …and to the top of it. */
+  toTop: () => Promise<void>
   settle: () => Promise<void>
 }
 
@@ -225,6 +231,18 @@ function mount(
       scroll!.resume()
       await settle()
     },
+    setFollowing: async (on) => {
+      scroll!.setFollowing(on)
+      await settle()
+    },
+    toRow: async (index) => {
+      scroll!.toRow(scrollerEl.querySelectorAll('.agent-row')[index] ?? null)
+      await settle()
+    },
+    toTop: async () => {
+      scroll!.toTop()
+      await settle()
+    },
     settle,
   }
 }
@@ -326,6 +344,134 @@ describe('useAgentScroll — the end of the log', () => {
 
     await harness.appendRow()
     expect(harness.top()).toBe(endOf(harness))
+  })
+})
+
+describe('useAgentScroll — the reader’s own switch over following', () => {
+  it('parks the log where it is, and holds it there, when the reader turns following off', async () => {
+    const harness = mount({ heights: Array.from({ length: 20 }, () => ROW) })
+    expect(harness.scroll.following.value).toBe(true)
+    expect(harness.top()).toBe(600)
+
+    await harness.setFollowing(false)
+    // Turning a follow switch off is not a move: the container is exactly where it was.
+    expect(harness.top()).toBe(600)
+    expect(harness.scroll.following.value).toBe(false)
+
+    // The discriminating half. With the switch on this arrival pins to 650; with it off the
+    // container must not move at all, because the reader asked for the log to stay still while
+    // they read the message they are on. This is the case a toggle that merely *looks* like a
+    // toggle fails: it suspends the hint and follows anyway.
+    await harness.appendRow()
+    expect(harness.top()).toBe(600)
+    expect(harness.scroll.pending.value).toBe(1)
+
+    await harness.appendRow()
+    expect(harness.top()).toBe(600)
+    expect(harness.scroll.pending.value).toBe(2)
+  })
+
+  it('accounts for the switch, not only for a scroll, when a row above the fold grows', async () => {
+    const harness = mount({ heights: Array.from({ length: 20 }, () => ROW) })
+    await harness.setFollowing(false)
+    // Row 12 is the first the reader sees at the end; rows 0-11 are above the viewport.
+    expect(harness.offsetOf(12)).toBe(0)
+
+    harness.resizeRow(2, 250)
+    await harness.contentChanged()
+
+    // FAILS IF: the anchor was never recorded when the switch was turned off. A following
+    // container has none — there was nothing to hold — and the correction would then be skipped
+    // entirely, moving the reader down with everything else by 200px.
+    expect(harness.offsetOf(12)).toBe(0)
+    expect(harness.top()).toBe(800)
+  })
+
+  it('turns itself off for the reader’s own scroll and on again at the end', async () => {
+    const harness = mount({ heights: Array.from({ length: 20 }, () => ROW) })
+    await harness.userScroll(200)
+    // One fact, two polarities: the automatic suspension *is* the switch being off, which is
+    // why the control can never contradict the container.
+    expect(harness.scroll.following.value).toBe(false)
+
+    await harness.userScroll(endOf(harness))
+    expect(harness.scroll.following.value).toBe(true)
+    await harness.appendRow()
+    expect(harness.top()).toBe(endOf(harness))
+  })
+
+  it('goes to the end and follows again when the reader turns it back on', async () => {
+    const harness = mount({ heights: Array.from({ length: 20 }, () => ROW) })
+    await harness.userScroll(150)
+    await harness.appendRow()
+    expect(harness.scroll.pending.value).toBe(1)
+
+    await harness.setFollowing(true)
+    expect(harness.top()).toBe(endOf(harness))
+    expect(harness.scroll.following.value).toBe(true)
+    expect(harness.scroll.pending.value).toBe(0)
+
+    await harness.appendRow()
+    expect(harness.top()).toBe(endOf(harness))
+  })
+
+  it('answers the switch before the container exists', async () => {
+    const harness = mount({ heights: Array.from({ length: 3 }, () => ROW), noContainer: true })
+    expect(() => harness.scroll.setFollowing(false)).not.toThrow()
+    expect(harness.scroll.following.value).toBe(true)
+  })
+})
+
+describe('useAgentScroll — the transcript’s own navigation', () => {
+  it('goes to the row the reader asked for, and stops following from there', async () => {
+    const harness = mount({ heights: Array.from({ length: 20 }, () => ROW) })
+    expect(harness.top()).toBe(600)
+
+    // Row 6's top edge is at 300px of content, which is where the container has to sit for the
+    // reader to be looking at it.
+    await harness.toRow(6)
+    expect(harness.top()).toBe(300)
+    // A row that is not the end is somewhere the reader chose to be, so arrivals must not move
+    // them — the same rule their own scroll obeys.
+    expect(harness.scroll.following.value).toBe(false)
+
+    await harness.appendRow()
+    expect(harness.top()).toBe(300)
+    expect(harness.scroll.pending.value).toBe(1)
+  })
+
+  it('goes to the top of the log', async () => {
+    const harness = mount({ heights: Array.from({ length: 20 }, () => ROW) })
+    await harness.toTop()
+    expect(harness.top()).toBe(0)
+    expect(harness.scroll.following.value).toBe(false)
+
+    await harness.appendRow()
+    expect(harness.top()).toBe(0)
+  })
+
+  it('follows again when the row it is sent to is the end', async () => {
+    const harness = mount({ heights: Array.from({ length: 20 }, () => ROW) })
+    await harness.toTop()
+    expect(harness.scroll.following.value).toBe(false)
+
+    // The newest row: the reader asking for the end by name is the same explicit act as
+    // scrolling there or pressing the way back, and the container has to follow again.
+    await harness.toRow(19)
+    expect(harness.top()).toBe(endOf(harness))
+    expect(harness.scroll.following.value).toBe(true)
+
+    await harness.appendRow()
+    expect(harness.top()).toBe(endOf(harness))
+  })
+
+  it('refuses a row that is not in the container rather than guessing', async () => {
+    const harness = mount({ heights: Array.from({ length: 20 }, () => ROW) })
+    const before = harness.top()
+    harness.scroll.toRow(null)
+    harness.scroll.toRow(document.createElement('div'))
+    await harness.settle()
+    expect(harness.top()).toBe(before)
   })
 })
 
