@@ -439,19 +439,30 @@ export interface PetRowField {
 export const PET_BUBBLE_MAX_WIDTH = 260
 
 /**
- * How tall a surface may get before it scrolls: an absolute ceiling, and a fraction of the window.
+ * How tall the box that scrolls may get: an absolute ceiling, and a fraction of the window.
  *
  * D13 measured what this answers: six rows of long Chinese came to **561px** in the 280px width the
  * surface capped itself at then (it is 260 now, so the same rows are taller still), and the pet
  * window — §7.1 gives that window to the character, not to the bubble — simply clipped them. A
  * number in pixels cannot be right here, because the window the bubble lands in is the host's and
- * its height follows the character's size setting (D13 swept 80, 160 and 320): `40vh` is the term
- * that tracks the window the bubble is actually in, and the 240px ceiling is what keeps a tall
- * window from turning a bubble into a panel. At the window the host builds for the schema's
- * default character (260x320, `window_host::character_window_size(160)`) the box is 128px, and
- * 128 + the 180px character is 308 of its 320 — the surface's own 12px of padding is what takes that past the window, and the
- * arithmetic is written down because a host sizing a window to hold both surfaces is exactly the
- * caller this bound has to agree with.
+ * its height follows the character's size setting (D13 swept 80, 160 and 320), so `40vh` is a term
+ * that moves with the window, and the 240px ceiling is what keeps a very tall window from turning a
+ * bubble into a panel.
+ *
+ * **It is a ceiling, and it is not the room.** The two were confused, and the confusion is the
+ * defect `e2e/desktop-pet-window-fit.spec.ts` now measures. The host builds the character window as
+ * the sprite's box plus a constant slack (`window_host::CHARACTER_WINDOW_SLACK`: 100px of width,
+ * **140px of height**), so what is left for this surface and the column's own 4px gap is 136px at
+ * *every* size the slider offers — while this bound is 128px at the schema's default window and
+ * 200px at the ceiling. Measured in a real browser, at the default character size (Chromium,
+ * Playwright, the page's own mount point, six runs so the list is at its bound): the rows box was
+ * 128px at this cap and the surface around it 164.5px — 14px of padding and border, 128, and 22.5px
+ * of reports that sit outside the scrolling box — and 164.5 + 4 + 180 is **348.5px in a 320px
+ * window**, so the character's lower 28.5px were past the bottom edge of a window that does not
+ * scroll. At a 320px character it was **100.5px**. The bound is therefore kept, because a window taller than the
+ * host's rule must not become a panel, and the *room* is read by the layout engine instead: the
+ * surface is a shrinkable flex item of `.pet-root`'s column and this box is the item that gives the
+ * height back (see {@link PET_BUBBLE_SCROLL_STYLE}).
  *
  * **A bound, and not a lower row count.** The list already has a count cap, the user's own
  * (`maxTasks`), and it reports what that cap left out; a second cap derived from height would be a
@@ -473,6 +484,17 @@ export const PET_BUBBLE_MAX_HEIGHT = 'min(240px, 40vh)'
  * stay outside the fold: the count of rows the cap left out, the pager and the compact fold are all
  * under this box, and a report that had to be scrolled to would be a weaker report.
  *
+ * **`flex: 1 1 auto` and `min-height: 0` are the half that reads the room.** The cap above is
+ * written against the window, and the room this box actually has is the window minus the character
+ * minus the column's gap — smaller than the cap whenever the character is at or above the schema's
+ * default size. The surface around this box is a shrinkable flex item of that column
+ * (`PetBubble.vue`'s `min-height: 0`), so the box is where the height has to come *from*: as a flex
+ * item it takes exactly what is left after the surface's own padding and the reports under it, and
+ * `min-height: 0` is what lets it fall below its content — the automatic minimum size of a flex item
+ * is its content, and without this line the box would refuse to shrink and the whole surface would
+ * instead push the character out of the window. Applied inline to both of the boxes that can grow,
+ * so the two surfaces cannot drift apart.
+ *
  * In the layout service rather than in the SFC styles, for the reason {@link PET_BUBBLE_MESSAGE_STYLE}
  * gives: the test environment injects no SFC styles, and a bound that only a stylesheet can see is
  * a bound no test holds on to.
@@ -480,4 +502,6 @@ export const PET_BUBBLE_MAX_HEIGHT = 'min(240px, 40vh)'
 export const PET_BUBBLE_SCROLL_STYLE: CSSProperties = {
   maxHeight: PET_BUBBLE_MAX_HEIGHT,
   overflowY: 'auto',
+  flex: '1 1 auto',
+  minHeight: 0,
 }

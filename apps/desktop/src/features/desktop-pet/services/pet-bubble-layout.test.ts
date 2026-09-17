@@ -378,4 +378,23 @@ describe('the wrapping the acceptance names', () => {
     expect(PET_BUBBLE_SCROLL_STYLE.maxHeight).toBe(PET_BUBBLE_MAX_HEIGHT)
     expect(PET_BUBBLE_SCROLL_STYLE.overflowY).toBe('auto')
   })
+
+  it('is the box that gives the room back, so the character keeps its own', () => {
+    // The cap above is written against the *window*; the room this box has is the window minus the
+    // character minus the column's gap, which is 136px at every size the character slider offers
+    // (`window_host::CHARACTER_WINDOW_SLACK`'s 140px of height, less `.pet-root`'s 4px gap). The cap
+    // is the larger of the two from the schema's default size upward, so the page cannot satisfy it
+    // by capping: something has to *shrink*, and the only item in the column that may is this one.
+    //
+    // `flex: 1 1 auto` is the grow/shrink half and `minHeight: 0` is the load-bearing one — a flex
+    // item's automatic minimum size is its content, so without it the box refuses to shrink and the
+    // surface pushes the character out of the window instead (measured before this line existed:
+    // 28.5px past the bottom edge at a 160px character, 100.5px at 320 — Chromium,
+    // `e2e/desktop-pet-window-fit.spec.ts`).
+    //
+    // Inline, and here, for the reason `PET_BUBBLE_MESSAGE_STYLE` gives: the test environment
+    // injects no SFC styles, so a bound that only a stylesheet can see is a bound no test holds.
+    expect(PET_BUBBLE_SCROLL_STYLE.flex).toBe('1 1 auto')
+    expect(PET_BUBBLE_SCROLL_STYLE.minHeight).toBe(0)
+  })
 })

@@ -536,8 +536,24 @@ html,
 body {
   margin: 0;
   padding: 0;
+  /* The height the window's own layout is built on, and the chain is the rule: `.pet-root` is
+     `height: 100%`, a percentage resolves against its containing block, and a box whose parent has
+     no height is `auto` — so without these two lines the root is exactly as tall as its content and
+     `justify-content: flex-end` has no free space to put the character on the bottom edge with.
+     That is what the window did before this rule: at 160px the sprite stood at 0..180 of a 320px
+     window, with 140px of empty window under it, and a bubble at its own ceiling pushed the sprite
+     to 349 — 28.5px past the bottom of a window that does not scroll. */
+  height: 100%;
   background: transparent;
   overflow: hidden;
+}
+
+/* The element `desktop-pet.html` declares and `desktop-pet-entry.ts` mounts into
+   (`DESKTOP_PET_ROOT_ID`). It is named here because a percentage needs a parent with a height and
+   this is that parent — a third mention of the id, which is why `desktop-pet-entry.test.ts` reads
+   this selector and the entry's constant together and fails if either moves. */
+#desktop-pet {
+  height: 100%;
 }
 </style>
 
@@ -553,6 +569,10 @@ body {
   justify-content: flex-end;
   gap: 4px;
   width: 100%;
+  /* The window's whole height, which is a fact about the page rather than about this rule: the
+     chain is `html`/`body`/`#desktop-pet` in the unscoped block below. This is also what the two
+     children are measured against — `flex-end` puts the character on the bottom edge when there is
+     room to spare, and the bubble is what gives the room back when there is not. */
   height: 100%;
   /* Nothing here may catch a click the pet is not under: §7.2's pass-through starts with a window
      that does not claim input it is not using. */
@@ -565,6 +585,16 @@ body {
   flex: 0 1 auto;
   min-height: 0;
   align-self: stretch;
+}
+
+/* The character keeps the box the size setting gave it, whatever the window turns out to be.
+   Without this it is a flex item like any other — `flex: 0 1 auto` — and the automatic minimum
+   size that saves it here (a canvas cannot shrink below its own content) is a property of the
+   element rather than a decision this file made. Stated, the rule means what the measurement in
+   `e2e/desktop-pet-window-fit.spec.ts` asserts: the canvas is drawn at `character.size`, never
+   squeezed to make a bubble fit. */
+.pet-root__sprite {
+  flex: none;
 }
 
 /* The character is the drag handle, so the canvas is the element that says so. `grab` only where

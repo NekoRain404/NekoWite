@@ -141,6 +141,17 @@ async function mountOnPetPage(
       }
 
       const sheet = buildSheet(sheetSpec)
+      // The page's own root, taken out of the document before this harness is appended.
+      //
+      // It is the window, and since the height rule landed it fills the viewport (`DesktopPetRoot`'s
+      // unscoped `#desktop-pet { height: 100% }`) — so a harness div *under* it would start below the
+      // fold, and clicking anything in it would scroll the page first and report viewport
+      // coordinates a window's own height away from the box that was measured. Measured, before this
+      // line: the reported right-click point was 479px from the bubble's box in a 480px window. This
+      // file measures the surfaces in a box of its own, and that box belongs at the page's top;
+      // `desktop-pet-window-fit.spec.ts` is where the real root is measured in the page's own mount
+      // point.
+      document.getElementById('desktop-pet')?.remove()
       const host = document.createElement('div')
       host.id = 'e2e-pet-surface'
       document.body.append(host)
@@ -625,18 +636,25 @@ test('the bubble is bounded in the window the host actually builds', async ({ br
       layout: { maxTasks: 6 },
       phrases: petPhrases(),
       window: frame,
-      // The bubble alone. With the 160x180 character in it too, the two surfaces do not both fit:
-      // 128 + chrome + the 6px gap + 180 is past 320, which is the host's sizing question and is
-      // written up in task-191's report rather than asserted here as if it held.
+      // The bubble alone, so the box under measurement is the one the cap is about.
+      //
+      // The other case — this window with the 160x180 character in it too — used to be written off
+      // here as one that does not fit (128 + chrome + the gap + 180 is past 320), with the note that
+      // it belonged to a report rather than to an assertion. It holds now, and it is asserted where
+      // the *product's* column is what lays the window out: `desktop-pet-window-fit.spec.ts` mounts
+      // `DesktopPetRoot` into the page's own mount point at every size the slider offers, with a
+      // bubble at its bound, and measures the character's lower edge against the window's. This
+      // harness cannot hold that claim — it is a div that copies the column's rules, and a copy is
+      // what let the defect live here unmeasured in the first place.
       sprite: null,
     })
 
     const bubble = page.locator('#e2e-pet-surface .pet-bubble')
     const rows = page.locator('#e2e-pet-surface .pet-task__scroll')
     // The stand-in for the window: the same box the composition gives the surfaces, and the thing
-    // the containment assertions are measured against. Not the viewport — the page carries the
-    // entry's own notice above this div (measured: 32.8px at this height), which is furniture of
-    // the harness rather than of the window.
+    // the containment assertions are measured against. It is also the page's own box — the mount
+    // point the entry drew into is removed by `mountOnPetPage`, so this is the first thing in the
+    // document and it is exactly the viewport the context was opened at.
     const window_ = page.locator('#e2e-pet-surface > div')
     await expect(bubble).toBeVisible()
     await expect(rows).toBeVisible()

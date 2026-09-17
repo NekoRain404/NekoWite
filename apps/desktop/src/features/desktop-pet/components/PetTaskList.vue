@@ -334,6 +334,11 @@ const surfaceStyle = { maxWidth: `${PET_BUBBLE_MAX_WIDTH}px`, boxSizing: 'border
   flex-direction: column;
   gap: 2px;
   width: 100%;
+  /* The list is the bubble's only child, so it is the item the surface hands its own height to: it
+     shrinks (with `min-height: 0` to let it go below its content) and its own children below decide
+     what that height is spent on — the rows box, which scrolls, and the reports, which do not. */
+  flex: 1 1 auto;
+  min-height: 0;
   color: var(--app-text, #fff);
   font-family: var(--app-font, system-ui, sans-serif);
   font-size: var(--app-body-size, 12px);
@@ -351,6 +356,11 @@ const surfaceStyle = { maxWidth: `${PET_BUBBLE_MAX_WIDTH}px`, boxSizing: 'border
   padding: 2px 6px;
   color: var(--app-muted, rgb(255 255 255 / 65%));
   font-size: 11px;
+  /* What says what the list holds keeps its own height, so the room the column gives back comes out
+     of the rows rather than out of the sentence that reports them. A shrinkable flex item is the
+     default, and one of these squashed to a few pixels would be a report that is drawn and cannot
+     be read. */
+  flex: none;
 }
 
 .pet-task__rows {
@@ -364,6 +374,8 @@ const surfaceStyle = { maxWidth: `${PET_BUBBLE_MAX_WIDTH}px`, boxSizing: 'border
 
 .pet-task__fold {
   align-self: flex-start;
+  /* The same rule as the reports above: a control keeps its own height and the rows give the room. */
+  flex: none;
   margin: 0;
   padding: 2px 6px;
   border: 0;
@@ -379,6 +391,7 @@ const surfaceStyle = { maxWidth: `${PET_BUBBLE_MAX_WIDTH}px`, boxSizing: 'border
   justify-content: center;
   gap: 5px;
   padding: 3px 0;
+  flex: none;
 }
 
 .pet-task__page {

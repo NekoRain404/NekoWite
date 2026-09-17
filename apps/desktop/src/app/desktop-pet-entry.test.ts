@@ -327,6 +327,33 @@ describe('the pet entry is one lightweight window and not a second application',
     // and it would look like a one-line change to `desktop-pet.html`.
     expect(html).not.toContain('/src/main.ts')
   })
+
+  it('gives the page the height the window root is a percentage of', () => {
+    // `DesktopPetRoot.vue`'s `.pet-root` is `height: 100%`, and a percentage resolves against its
+    // containing block — so with `html`, `body` and the mount point all at `auto` that 100% is
+    // `auto`, the root is exactly as tall as its content, and `justify-content: flex-end` has no
+    // free space to stand the character on the window's bottom edge with. Measured in a browser
+    // (`e2e/desktop-pet-window-fit.spec.ts`, Chromium, the page's own mount point): the sprite stood
+    // at 0..180 of a 320px window with 140px of empty window under it, and a bubble at its bound
+    // pushed it **28.5px** past the bottom edge — 100.5px at a 320px character — in a window that
+    // does not scroll.
+    //
+    // Read as text, like the page assertions above, and read **together with the id**: the rule is
+    // keyed on the element `desktop-pet.html` declares and this entry looks up, so an id that moved
+    // would leave the selector matching nothing and every symptom above would come back with no test
+    // failing. Three files name it now — the page, the entry, and the root's stylesheet — and this is
+    // the pair that has to agree.
+    const root = readFileSync(
+      resolve(SRC, 'features/desktop-pet/components/DesktopPetRoot.vue'),
+      'utf8',
+    )
+    // The unscoped block: `<style scoped>` does not match `<style>`, and the page-level rules are
+    // the ones that have to be in the first.
+    const page = /<style>([\s\S]*?)<\/style>/.exec(root)?.[1] ?? ''
+    expect(page).not.toBe('')
+    expect(page).toMatch(/html,\s*body\s*\{[^}]*height:\s*100%/)
+    expect(page).toMatch(new RegExp(`#${DESKTOP_PET_ROOT_ID}\\s*\\{[^}]*height:\\s*100%`))
+  })
 })
 
 describe('the entry boots only where the pet page is, and states a missing host', () => {

@@ -126,6 +126,14 @@ function hostWindow(size: number): WindowBox {
   }
 }
 
+/** The bubble's own box, and the box inside it that scrolls. Null when the window shows none. */
+interface BubbleMeasurement {
+  surface: Box
+  rows: Box
+  /** The rows' content height: past the box's own height exactly when the list is scrolling. */
+  rowsScrollHeight: number
+}
+
 /** Everything one mount reports, plus the two facts this side of the boundary knows. */
 interface Measurement {
   size: number // the `character.size` the appearance read carried
@@ -134,6 +142,8 @@ interface Measurement {
   canvas: Box
   root: Box
   body: Box
+  /** The bubble the tasks produced, or null when the window drew none. */
+  bubble: BubbleMeasurement | null
   client: WindowBox // the canvas's CSS box as the layout engine resolved it
   backing: WindowBox // the backing store, from the props times `devicePixelRatio`
   asked: WindowBox // the inline style: what the page *asked* the box to be
@@ -155,11 +165,24 @@ declare global {
  * The viewport is set before the mount rather than after, so the layout is resolved once, at the box
  * it will be measured in: `setViewportSize` *is* the window resize, and a mount measured across one
  * would be measuring a reflow.
+ *
+ * **Into the page's own mount point, and not into a div written here.** The host used to be
+ * `#e2e-pet-window`, a bare `<div>` appended to the body — which has no height, and a percentage
+ * height against a parent without one resolves to `auto`. So the instrument supplied, silently, the
+ * one thing the product's page was missing, and every measurement below was taken of a layout the
+ * window never has: `.pet-root` sized itself to its content and `justify-content: flex-end` had no
+ * free space to distribute. The page's own element is the only host whose height the product's
+ * rules decide, and that is what makes the bottom-edge assertions at the end of this file able to
+ * fail. `createApp().mount()` empties the container it is given, so the entry's own no-host root —
+ * which draws a sentence and holds nothing else — is replaced by this one.
+ *
+ * `runs` is how many tasks the host is showing: zero mounts the window with no bubble at all, and
+ * anything above the bubble's own row cap pins the list at its ceiling.
  */
-async function mountAt(page: Page, size: number, window_: WindowBox): Promise<void> {
+async function mountAt(page: Page, size: number, window_: WindowBox, runs = 0): Promise<void> {
   await page.setViewportSize(window_)
   await page.evaluate(
-    async ({ size: characterSize, sheetSpec }) => {
+    async ({ size: characterSize, sheetSpec, runs: runCount }) => {
       // The entry pulls Vue through the dev server, and reading the served source is how the same
       // instance is reached by URL — a page has no import map (`pet-tasks.spec.ts` set this).
       const entry = await (await fetch('/src/app/desktop-pet-entry.ts')).text()
@@ -188,20 +211,18 @@ async function mountAt(page: Page, size: number, window_: WindowBox): Promise<vo
       }
       const image = sheet.toDataURL('image/png')
 
-      // The page's own mount point, taken out of the document first: `desktop-pet-entry.ts` mounts a
-      // `DesktopPetRoot` with no host into it, and that root draws a notice as the page's first block
-      // (32.8px, measured in `desktop-pet-tasks.spec.ts`) — a root mounted below it would be measured
-      // from 32.8px down a window nobody shifted.
-      document.getElementById('desktop-pet')?.remove()
-      let host = document.getElementById('e2e-pet-window')
-      if (!host) {
-        host = document.createElement('div')
-        host.id = 'e2e-pet-window'
-        document.body.append(host)
-      }
+      // The page's own mount point — see this function's header. Its own root is unmounted first
+      // rather than removed: `app.mount()` empties the container, and leaving a second app attached
+      // to an element this one now owns would be two windows in one page.
       window.__petFit?.unmount()
+      const host = document.getElementById('desktop-pet')
+      if (!host) throw new Error('desktop-pet.html declares no #desktop-pet to mount into')
 
       const double = gatewayModule.createMemoryPetGateway({ visible: true })
+      // The tasks this window is showing, from the host's own view of a session — the route
+      // `usePetLifecycle`'s subscription takes, so the bubble below is drawn from the same data a
+      // real window draws it from. More runs than the bubble's row cap leaves the list scrolling.
+      for (let index = 0; index < runCount; index += 1) double.startRun()
       // The same object twice, as the real entry hands it over. Only `appearance` differs, and only
       // in the sheet's address: the double's own `memory://` path is not something a browser loads.
       const connection: typeof double = {
@@ -236,11 +257,18 @@ async function mountAt(page: Page, size: number, window_: WindowBox): Promise<vo
           const boxOf = (e: Element): Box => { const r = e.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height } }
           const style = getComputedStyle(canvas)
           const page_ = document.documentElement
+          // The bubble is optional — a window with no tasks draws none — so both of its boxes are
+          // reported as one object or as null rather than as four nullable fields.
+          const surface = host.querySelector('.pet-bubble')
+          const rows = host.querySelector('.pet-task__scroll')
           return {
             viewport: { width: page_.clientWidth, height: page_.clientHeight },
             canvas: boxOf(canvas),
             root: boxOf(petRoot),
             body: boxOf(document.body),
+            bubble: surface && rows
+              ? { surface: boxOf(surface), rows: boxOf(rows), rowsScrollHeight: rows.scrollHeight }
+              : null,
             client: { width: canvas.clientWidth, height: canvas.clientHeight },
             backing: { width: canvas.width, height: canvas.height },
             asked: { width: Number.parseFloat(canvas.style.width), height: Number.parseFloat(canvas.style.height) },
@@ -254,12 +282,12 @@ async function mountAt(page: Page, size: number, window_: WindowBox): Promise<vo
         },
       }
     },
-    { size, sheetSpec: SHEET },
+    { size, sheetSpec: SHEET, runs },
   )
   // The appearance read is a promise, so the sprite arrives a tick after the mount rather than during
   // it. Waiting on the canvas rather than on a timeout: a box that never arrived is a failure to
   // report, not to wait out.
-  await expect(page.locator('#e2e-pet-window canvas.pet-sprite')).toBeAttached()
+  await expect(page.locator('#desktop-pet canvas.pet-sprite')).toBeAttached()
 }
 
 /** How far a box is past each edge of the window: positive is outside, zero or less is inside. */
@@ -270,10 +298,13 @@ function outside(box: Box, window_: WindowBox): Record<string, number> {
 /** One line of raw numbers, so a failure is read against the measurement rather than a guess. */
 function line(m: Measurement): string {
   const pair = (box: WindowBox) => `${box.width}x${box.height}`
+  const rect = (box: Box) => [Math.round(box.left), Math.round(box.top), Math.round(box.right), Math.round(box.bottom)]
   return JSON.stringify({
     size: m.size, window: pair(m.window), viewport: pair(m.viewport),
-    canvasRect: [m.canvas.left, m.canvas.top, m.canvas.right, m.canvas.bottom],
-    rootRect: [m.root.left, m.root.top, m.root.right, m.root.bottom],
+    canvasRect: rect(m.canvas), rootRect: rect(m.root),
+    bubbleRect: m.bubble ? rect(m.bubble.surface) : null,
+    rowsRect: m.bubble ? rect(m.bubble.rows) : null,
+    rowsContent: m.bubble?.rowsScrollHeight ?? null,
     canvasOutside: outside(m.canvas, m.window), rootOutside: outside(m.root, m.window),
     asked: pair(m.asked), client: pair(m.client), backing: pair(m.backing),
     computed: `${m.computed.width} x ${m.computed.height}`,
@@ -359,4 +390,109 @@ test('the rule still reproduces the window this build has always opened, at the 
   // product never asks for.
   expect(hostWindow(160)).toEqual({ width: 260, height: 320 })
   expect(hostWindow(320).width).toBeGreaterThan(hostWindow(160).width)
+})
+
+// ---------------------------------------------------------------------------
+// The window's own column
+// ---------------------------------------------------------------------------
+
+/**
+ * The bubble's own row cap, and therefore the number of runs that leaves it scrolling.
+ *
+ * `PET_BUBBLE_LAYOUT_DEFAULTS.maxTasks` is 5, so six is one more than the surface will ever draw —
+ * the same one-past-the-cap arithmetic `petFixture.petTasks()` uses. Not imported: this is the
+ * product's stored default being copied into a payload, and the two are reconciled by the assertion
+ * below that the list really is scrolling.
+ */
+const RUNS_PAST_THE_CAP = 6
+
+/**
+ * What the sprite sits above, and what the bubble may not cross: the gap `.pet-root` puts between
+ * its two children. Two places have to agree on this number — the stylesheet and this measurement —
+ * and the assertion below is what makes a change to the rule land here rather than cancel out.
+ */
+const ROOT_GAP = 4
+
+/**
+ * The acceptance this file's window was always about, in the two halves a user would state it.
+ *
+ * **The sprite is on the bottom edge.** `.pet-root` is a column with `justify-content: flex-end`, and
+ * that rule only has free space to work with if the root is as tall as the window. It is not a
+ * decoration: everything the bubble does is measured against the character's own box, so a sprite
+ * that floats to the top of a 320px window is a pet that does not stand where the user put it.
+ *
+ * **And a bubble does not push it past it.** The bubble is the surface with a bound of its own
+ * (`PET_BUBBLE_MAX_HEIGHT`), and that bound was written against a window whose height *tracks* the
+ * character's size while the room above the sprite does not: the host gives the window
+ * `round(size * 180 / 160) + 140` px of height (`window_host::CHARACTER_WINDOW_SLACK`), so what is
+ * left for the bubble and the gap is 136 px at every size the slider offers — while `40vh` of the
+ * window's own height is 128 px at the default size and 200 px at the ceiling. Both of those are
+ * past the room the smaller one of them has to live in, so the bound and the room have to be read
+ * together, and the second half of this case is what reads them.
+ *
+ * Measured rather than argued, and the numbers are logged before they are judged — a failure keeps
+ * all three sizes' worth.
+ */
+test('the sprite stands on the bottom edge of the window, and a full bubble does not push it off', async ({ page }) => {
+  await page.goto('/desktop-pet.html')
+  const measured: Measurement[] = []
+  // Both halves of the window's life: a pet with nothing to say, and a pet whose bubble is at its
+  // bound. The first is the alignment rule on its own — `justify-content: flex-end` with room to
+  // spare — and the second is the same rule with the room taken.
+  for (const runs of [0, RUNS_PAST_THE_CAP]) {
+    for (const size of SIZES) {
+      const window_ = hostWindow(size)
+      await mountAt(page, size, window_, runs)
+      const fit = await page.evaluate(() => window.__petFit?.fit())
+      if (!fit) throw new Error('the pet window is not mounted')
+      const one: Measurement = { ...fit, size, window: window_ }
+      measured.push(one)
+      console.log(`[pet-fit] ${runs} runs: ${line(one)}`)
+    }
+  }
+
+  for (const one of measured) {
+    const which = `${one.size}px character, ${one.bubble ? `a bubble showing ${RUNS_PAST_THE_CAP} runs` : 'no bubble'}`
+
+    // The bottom edge: the sprite's box ends where the window ends, and not below it. This is the
+    // whole of what `justify-content: flex-end` promises, and it is the assertion the mount point
+    // without a height could not satisfy — the sprite sat at the window's *top* instead, with 140px
+    // of empty window under it, because a percentage against an auto-height parent is `auto`.
+    expect.soft(
+      Math.abs(one.window.height - one.canvas.bottom),
+      `${which}: the sprite's lower edge is the window's lower edge — it is at ${one.canvas.bottom} in a ${one.window.height}px window`,
+    ).toBeLessThanOrEqual(1)
+
+    // Every surface, inside the window on every side — 气泡不越屏, asserted where the window is the
+    // box the host actually builds rather than a frame this file chose. Soft, and one side at a
+    // time, so a window that overflows in two directions reports both numbers.
+    const boxes: readonly (readonly [string, Box])[] = [
+      ['the sprite', one.canvas],
+      ...(one.bubble ? ([['the bubble', one.bubble.surface]] as const) : []),
+    ]
+    for (const [name, box] of boxes) {
+      const past = outside(box, one.window)
+      for (const side of ['left', 'top', 'right', 'bottom']) {
+        expect.soft(
+          past[side],
+          `${which}: ${name} is inside the window's ${side} edge — it is ${past[side]}px past it`,
+        ).toBeLessThanOrEqual(0)
+      }
+    }
+
+    if (!one.bubble) continue
+    // The list is at its bound, which is what makes the containment above the hard case: a bubble
+    // that fits is a bubble that never asks the column for the character's room. The rows box has to
+    // be scrolling, and the surface above it has to have given the height back rather than the
+    // character having given up its own.
+    expect(
+      one.bubble.rowsScrollHeight,
+      `${which}: the rows are past the box that holds them, so the list is at its bound`,
+    ).toBeGreaterThan(one.bubble.rows.height)
+    // The column is the order the window's own stylesheet declares: bubble, gap, character.
+    expect(
+      one.bubble.surface.bottom,
+      `${which}: the bubble ends above the sprite`,
+    ).toBeLessThanOrEqual(one.canvas.top - ROOT_GAP + 1)
+  }
 })

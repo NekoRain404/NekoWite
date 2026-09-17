@@ -185,6 +185,18 @@ const lineStyle = { ...PET_BUBBLE_MESSAGE_STYLE, ...PET_BUBBLE_SCROLL_STYLE } as
 <style scoped>
 .pet-bubble {
   width: 100%;
+  /* A column, and one whose content may be shorter than the box it is given. The surface is a flex
+     item of whatever column holds it (`.pet-root` in the product), so it is also the item that
+     *gives the room back*: the character's own box is not shrinkable, the window does not scroll,
+     and the bound below is written against the window rather than against the room above the
+     sprite. So when the two of them do not both fit, this is the surface that gets shorter — and
+     the box inside it (`PET_BUBBLE_SCROLL_STYLE`) is what scrolls, so nothing is lost and the
+     character stays inside the window. `min-height: 0` is the line that allows it: a flex item's
+     automatic minimum size is its content, and without it the surface would refuse to shrink and
+     push the sprite out of the window instead. */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   padding: 6px 8px;
   border: 1px solid var(--app-border, rgb(255 255 255 / 18%));
   /* One radius for both shapes: the line and the list are the same surface at two sizes, and a
