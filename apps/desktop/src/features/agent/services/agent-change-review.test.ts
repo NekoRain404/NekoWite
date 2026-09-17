@@ -27,14 +27,19 @@ import {
   type AgentEventKind,
   type AgentIdentity,
   type AgentPayloads,
+  type AgentToolContent,
   type AgentToolStatus,
 } from '../../../platform/gateways/agent-contracts'
 import type { AgentLiveNote, AgentLiveNoteBuffer } from './agent-context-snapshot'
+import { captureEditBaselines, type AgentEditBaseline } from './agent-edit-apply'
+import type { AgentToolEntry } from './agent-timeline'
 import {
   applyChangeEvent,
   changeRows,
   createChangeReview,
+  decideChange,
   observeDiskChange,
+  reviewOfSession,
   type AgentChangeReview,
   type AgentChangeRow,
 } from './agent-change-review'
@@ -69,11 +74,21 @@ function event<K extends AgentEventKind>(
   return read
 }
 
+/** One `diff` block, in the shape the pinned engine sends (`docs/audits/2026-09-16-opencode-acp-p0.md`
+ *  §6.1): the path, the text the engine started from, and the text it leaves. */
+function diff(path: string, oldText: string, newText: string): AgentToolContent {
+  return { type: 'diff', path, oldText, newText }
+}
+
 /** A write-kind tool call naming `paths`. */
 function write(
   toolCallId: string,
   paths: string[],
-  options: { tool?: AgentPayloads['tool-update']['kind']; status?: AgentToolStatus } = {},
+  options: {
+    tool?: AgentPayloads['tool-update']['kind']
+    status?: AgentToolStatus
+    content?: AgentToolContent[]
+  } = {},
 ): AgentEvent {
   return event('tool-update', {
     toolCallId,
@@ -81,10 +96,55 @@ function write(
     kind: options.tool ?? 'edit',
     status: options.status ?? 'completed',
     paths,
-    content: [],
+    content: options.content ?? [],
     input: { state: 'text', json: '{}' },
     output: { state: 'absent' },
   })
+}
+
+/** The baseline a `send` would have captured for one note, read through the same function the
+ *  store reads it through rather than spelled by hand. */
+function baselineFor(path: string, text: string): AgentEditBaseline {
+  const note: AgentLiveNote = {
+    vaultId: VAULT,
+    path,
+    revision: 'page-1:tab-1:0',
+    buffer: { state: 'clean', text },
+  }
+  const captured = captureEditBaselines([note], identity())
+  const [held] = captured.baselines
+  if (held === undefined) throw new Error(`no baseline captured for ${path}`)
+  return held
+}
+
+/** A review that holds the recovery material a request would have left: the text the note held
+ *  when the prompt went out. */
+function withBaselines(
+  review: AgentChangeReview,
+  ...baselines: readonly AgentEditBaseline[]
+): AgentChangeReview {
+  return { ...review, baselines: Object.freeze([...baselines]) }
+}
+
+/** One `tool` row of the timeline, built the way the reducer builds it. */
+function toolRow(
+  toolCallId: string,
+  paths: string[],
+  options: { tool?: AgentToolEntry['toolKind']; status?: AgentToolStatus; content?: AgentToolContent[] } = {},
+): AgentToolEntry {
+  return {
+    kind: 'tool',
+    id: 1,
+    runId: 'run-1',
+    toolCallId,
+    title: `Editing ${paths.join(', ')}`,
+    toolKind: options.tool ?? 'edit',
+    status: options.status ?? 'completed',
+    paths: [...paths],
+    content: [...(options.content ?? [])],
+    input: { state: 'absent' },
+    output: { state: 'absent' },
+  }
 }
 
 /**
@@ -273,7 +333,6 @@ describe('the buffer: what this window holds for the changed file', () => {
     // Both texts are named, so the user can see that nothing here decided between them.
     expect(row.verdict.bufferText).toBe('first line\nmy unsaved second line')
     expect(row.verdict.diskText).toBe('first line')
-    expect(row.offers).toContain('merge')
     // And the editor still holds exactly what the user typed.
     expect(files.text('notes/a.md')).toBe('first line\nmy unsaved second line')
   })
@@ -322,12 +381,136 @@ describe('the buffer: what this window holds for the changed file', () => {
   })
 })
 
+describe('the session’s own record: where a review comes from in the app', () => {
+  it('the rows come from the timeline and the engine’s list, not from a second stream', () => {
+    // The producer the app has: the session's own record, which is what the transcript draws. A
+    // review folded from a listener would be empty for a surface that mounted after the run, and
+    // would be free to disagree with the transcript the user just read.
+    const review = reviewOfSession(
+      identity(),
+      { timeline: [toolRow('call-1', ['notes/a.md'])], changedFiles: ['notes/b.md'] },
+      [],
+    )
+    const rows = changeRows(review, () => null)
+
+    expect(rows.map((row) => row.path)).toEqual(['notes/a.md', 'notes/b.md'])
+    expect(rowFor(rows, 'notes/a.md').attribution).toBe('agent')
+    expect(rowFor(rows, 'notes/b.md').attribution).toBe('reported')
+  })
+
+  it('a call’s own diff block is the text the row checks the note against', () => {
+    const review = reviewOfSession(
+      identity(),
+      {
+        timeline: [toolRow('call-1', ['notes/a.md'], { content: [diff('notes/a.md', 'before', 'after')] })],
+        changedFiles: [],
+      },
+      [baselineFor('notes/a.md', 'before')],
+    )
+    const row = rowFor(changeRows(review, () => null), 'notes/a.md')
+
+    expect(row.result).toBe('after')
+    expect(row.baseline).toBe('before')
+  })
+
+  it('a call that stated no text leaves the row with nothing to check against', () => {
+    // Not the same fact as "the file is empty": the engine named a path and said nothing about
+    // what it did to it. §7.2's 「没有基线时标记不可直接恢复」 is the same rule one step along.
+    const review = reviewOfSession(
+      identity(),
+      { timeline: [toolRow('call-1', ['notes/a.md'])], changedFiles: [] },
+      [baselineFor('notes/a.md', 'before')],
+    )
+    const row = rowFor(changeRows(review, () => null), 'notes/a.md')
+
+    expect(row.result).toBeNull()
+  })
+
+  it('a write the timeline shows twice keeps one row, as the transcript does', () => {
+    const review = reviewOfSession(
+      identity(),
+      {
+        timeline: [
+          toolRow('call-1', ['notes/a.md'], { status: 'in_progress' }),
+          toolRow('call-1', ['notes/a.md'], { status: 'completed' }),
+        ],
+        changedFiles: [],
+      },
+      [],
+    )
+
+    const rows = changeRows(review, () => null)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].status).toBe('completed')
+  })
+
+  it('a read row never becomes a change, and a call naming no path is not one either', () => {
+    const review = reviewOfSession(
+      identity(),
+      {
+        timeline: [toolRow('call-1', ['notes/a.md'], { tool: 'read' }), toolRow('call-2', [])],
+        changedFiles: [],
+      },
+      [],
+    )
+
+    expect(changeRows(review, () => null)).toEqual([])
+  })
+
+  it('an event from another session never enters a review built from the record', () => {
+    // The record is the session's own, so this is the belt to that braces — and it is the same
+    // comparison the event fold makes, which is why the two producers cannot disagree.
+    const review = reviewOfSession(
+      identity(),
+      { timeline: [toolRow('call-1', ['notes/a.md'])], changedFiles: ['notes/b.md'] },
+      [baselineFor('notes/a.md', 'before'), baselineFor('notes/b.md', 'before')],
+    )
+    const rows = changeRows(review, () => null)
+
+    for (const row of rows) {
+      expect(row.attribution).not.toBe('external')
+    }
+  })
+})
+
 describe('recovery: what is offered, and what is refused', () => {
-  it('a settled agent change with nothing open offers recovery', () => {
-    const row = rowFor(changeRows(reviewWith(write('call-1', ['notes/a.md'])), () => null), 'notes/a.md')
+  it('a settled change to an open, clean note that still holds what the call left offers recovery', () => {
+    // The control for every refusal below: the module must be *able* to offer the write, or the
+    // refusals would hold on a module that never offers anything.
+    const files = editor()
+    files.openClean('notes/a.md', 'after')
+    const review = withBaselines(
+      reviewWith(write('call-1', ['notes/a.md'], { content: [diff('notes/a.md', 'before', 'after')] })),
+      baselineFor('notes/a.md', 'before'),
+    )
+    const row = rowFor(changeRows(review, files.read), 'notes/a.md')
 
     expect(row.offers).toEqual(['view', 'recover'])
     expect(row.refused).toBeNull()
+  })
+
+  it('a path no request named has no baseline to put back', () => {
+    // §7.2: 「没有基线时标记不可直接恢复，不伪造「撤销成功」」. The row is still the agent's — the
+    // call named it — and what is missing is the version to restore, which nothing else holds.
+    const files = editor()
+    files.openClean('notes/a.md', 'after')
+    const review = reviewWith(write('call-1', ['notes/a.md'], { content: [diff('notes/a.md', 'before', 'after')] }))
+    const row = rowFor(changeRows(review, files.read), 'notes/a.md')
+
+    expect(row.offers).toEqual(['view'])
+    expect(row.refused).toEqual({ reason: 'no-baseline', path: 'notes/a.md' })
+  })
+
+  it('a call that stated no text is refused rather than written over', () => {
+    // The app cannot tell an agent's text from the user's own later edit without the text the
+    // call left, and overwriting on a guess is the silent loss §7.2 rules out.
+    const files = editor()
+    files.openClean('notes/a.md', 'after')
+    const review = withBaselines(reviewWith(write('call-1', ['notes/a.md'])), baselineFor('notes/a.md', 'before'))
+    const row = rowFor(changeRows(review, files.read), 'notes/a.md')
+
+    expect(row.offers).toEqual(['view'])
+    expect(row.refused).toEqual({ reason: 'result-unstated', path: 'notes/a.md' })
   })
 
   it('a write still in flight is not recoverable', () => {
@@ -341,13 +524,76 @@ describe('recovery: what is offered, and what is refused', () => {
     expect(row.refused).toEqual({ reason: 'write-in-flight', toolCallId: 'call-1' })
   })
 
-  it('an unsaved buffer withholds recovery and offers the merge instead', () => {
+  it('an unsaved buffer withholds recovery: the user’s own text is not written over', () => {
+    // §7.2: 脏缓冲遇到磁盘变化进入冲突状态，禁止自动覆盖任一侧. The note's own conflict flow is
+    // where the two texts are settled — this row shows both of them and writes neither.
     const files = editor()
     files.openDirty('notes/a.md', 'mine', 'theirs')
-    const row = rowFor(changeRows(reviewWith(write('call-1', ['notes/a.md'])), files.read), 'notes/a.md')
+    const review = withBaselines(
+      reviewWith(write('call-1', ['notes/a.md'], { content: [diff('notes/a.md', 'before', 'after')] })),
+      baselineFor('notes/a.md', 'before'),
+    )
+    const row = rowFor(changeRows(review, files.read), 'notes/a.md')
 
-    expect(row.offers).toEqual(['view', 'merge'])
+    expect(row.offers).toEqual(['view'])
     expect(row.refused).toEqual({ reason: 'unsaved-edits', path: 'notes/a.md' })
+    // Both texts are still on the row: the buffer's, and the one the call said it left.
+    expect(row.result).toBe('after')
+  })
+
+  it('a note no tab holds is refused, because the window’s only write is a note’s save', () => {
+    // `agent-note-write.ts` puts text into a note through the tab's own save transaction — the
+    // precondition, the vault and the content watcher. A path with no tab has no such transaction,
+    // and writing the file anyway would be the second write path this feature forbids.
+    const review = withBaselines(
+      reviewWith(write('call-1', ['notes/a.md'], { content: [diff('notes/a.md', 'before', 'after')] })),
+      baselineFor('notes/a.md', 'before'),
+    )
+    const row = rowFor(changeRows(review, () => null), 'notes/a.md')
+
+    expect(row.verdict.kind).toBe('record')
+    expect(row.offers).toEqual(['view'])
+    expect(row.refused).toEqual({ reason: 'note-not-open', path: 'notes/a.md' })
+  })
+
+  it('a note that is no longer what the call left is refused rather than overwritten', () => {
+    // §7.2's 「恢复前检查当前内容是否仍等于已记录结果」: the user (or another program) moved the
+    // note after the agent wrote it, and putting the baseline back would take that edit away.
+    const files = editor()
+    files.openClean('notes/a.md', 'the agent’s text, and then my own edit')
+    const review = withBaselines(
+      reviewWith(write('call-1', ['notes/a.md'], { content: [diff('notes/a.md', 'before', 'after')] })),
+      baselineFor('notes/a.md', 'before'),
+    )
+    const row = rowFor(changeRows(review, files.read), 'notes/a.md')
+
+    expect(row.offers).toEqual(['view'])
+    expect(row.refused).toEqual({ reason: 'changed-since', path: 'notes/a.md' })
+  })
+
+  it('a note in another vault than the session’s is refused, however the path reads', () => {
+    // §6.2's vault is one of the five identity fields, and a path is only a path inside one vault:
+    // writing this session's baseline into a same-named note of another vault is the cross-root
+    // mistake the identity exists to catch.
+    const other = (): AgentLiveNote | null => ({
+      vaultId: '/home/user/other-vault',
+      path: 'notes/a.md',
+      revision: 'r1',
+      buffer: { state: 'clean', text: 'after' },
+    })
+    const review = withBaselines(
+      reviewWith(write('call-1', ['notes/a.md'], { content: [diff('notes/a.md', 'before', 'after')] })),
+      baselineFor('notes/a.md', 'before'),
+    )
+    const row = rowFor(changeRows(review, other), 'notes/a.md')
+
+    expect(row.offers).toEqual(['view'])
+    expect(row.refused).toEqual({
+      reason: 'vault-mismatch',
+      path: 'notes/a.md',
+      noteVaultId: '/home/user/other-vault',
+      sessionVaultId: VAULT,
+    })
   })
 
   it('a change nothing claims has no recovery to offer', () => {
@@ -372,10 +618,18 @@ describe('recovery: what is offered, and what is refused', () => {
   it('the refusal is per row: one file’s conflict does not withhold another’s recovery', () => {
     const files = editor()
     files.openDirty('notes/a.md', 'mine', 'theirs')
-    const review = reviewWith(write('call-1', ['notes/a.md']), write('call-2', ['notes/b.md']))
+    files.openClean('notes/b.md', 'after')
+    const review = withBaselines(
+      reviewWith(
+        write('call-1', ['notes/a.md'], { content: [diff('notes/a.md', 'before', 'after')] }),
+        write('call-2', ['notes/b.md'], { content: [diff('notes/b.md', 'before', 'after')] }),
+      ),
+      baselineFor('notes/a.md', 'before'),
+      baselineFor('notes/b.md', 'before'),
+    )
 
     const rows = changeRows(review, files.read)
-    expect(rowFor(rows, 'notes/a.md').offers).toEqual(['view', 'merge'])
+    expect(rowFor(rows, 'notes/a.md').offers).toEqual(['view'])
     expect(rowFor(rows, 'notes/b.md').offers).toEqual(['view', 'recover'])
   })
 
@@ -396,6 +650,111 @@ describe('recovery: what is offered, and what is refused', () => {
     for (const row of changeRows(review, files.read)) {
       expect(row.offers).toContain('view')
     }
+  })
+})
+
+describe('the answers a change can be given', () => {
+  /** The reachable row: a settled change of this session, an open clean note holding exactly what
+   *  the call said it left, and the baseline the request captured. */
+  function recoverable(): { files: ReturnType<typeof editor>; review: AgentChangeReview } {
+    const files = editor()
+    files.openClean('notes/a.md', 'after')
+    const review = withBaselines(
+      reviewWith(write('call-1', ['notes/a.md'], { content: [diff('notes/a.md', 'before', 'after')] })),
+      baselineFor('notes/a.md', 'before'),
+    )
+    return { files, review }
+  }
+
+  it('a kept change stays on the list and stops offering the write', () => {
+    // Keeping is the decision that the agent's version is the note's own text. Nothing is written —
+    // there is nothing to write — and what changes is what the window will still do about the row.
+    const { files, review } = recoverable()
+    const before = rowFor(changeRows(review, files.read), 'notes/a.md')
+    expect(before.offers).toEqual(['view', 'recover'])
+
+    const kept = decideChange(review, {
+      path: 'notes/a.md',
+      toolCallId: 'call-1',
+      decision: 'kept',
+      written: null,
+    })
+    const row = rowFor(changeRows(kept, files.read), 'notes/a.md')
+
+    expect(row.decision?.decision).toBe('kept')
+    expect(row.offers).toEqual(['view'])
+    // A kept note is not a refused one: nothing is wrong with it, so there is nothing to explain.
+    expect(row.refused).toBeNull()
+    expect(files.text('notes/a.md')).toBe('after')
+  })
+
+  it('a rejected change carries what the write did', () => {
+    const { files, review } = recoverable()
+    const rejected = decideChange(review, {
+      path: 'notes/a.md',
+      toolCallId: 'call-1',
+      decision: 'rejected',
+      written: { status: 'saved' },
+    })
+    const row = rowFor(changeRows(rejected, files.read), 'notes/a.md')
+
+    expect(row.decision).toEqual({
+      path: 'notes/a.md',
+      toolCallId: 'call-1',
+      decision: 'rejected',
+      written: { status: 'saved' },
+    })
+    expect(row.offers).toEqual(['view'])
+  })
+
+  it('a second answer replaces the first', () => {
+    const { files, review } = recoverable()
+    const once = decideChange(review, {
+      path: 'notes/a.md',
+      toolCallId: 'call-1',
+      decision: 'rejected',
+      written: { status: 'save-failed' },
+    })
+    const twice = decideChange(once, {
+      path: 'notes/a.md',
+      toolCallId: 'call-1',
+      decision: 'kept',
+      written: null,
+    })
+
+    expect(twice.decisions).toHaveLength(1)
+    expect(rowFor(changeRows(twice, files.read), 'notes/a.md').decision?.decision).toBe('kept')
+  })
+
+  it('a later write of the same path is a new change, and the answer does not carry', () => {
+    // The answer is about *a change*, not about a path. The agent writing the note again is a
+    // change nobody has answered, and a row that read "kept" there would be hiding work the user
+    // has not seen.
+    const { files, review } = recoverable()
+    const answered = decideChange(review, {
+      path: 'notes/a.md',
+      toolCallId: 'call-1',
+      decision: 'kept',
+      written: null,
+    })
+    const again = {
+      ...answered,
+      writes: Object.freeze([
+        ...answered.writes,
+        Object.freeze({
+          toolCallId: 'call-2',
+          tool: 'edit' as const,
+          paths: Object.freeze(['notes/a.md']),
+          status: 'completed' as const,
+          results: Object.freeze([{ path: 'notes/a.md', text: 'after' }]),
+        }),
+      ]),
+    }
+
+    const row = rowFor(changeRows(again, files.read), 'notes/a.md')
+    expect(row.toolCallId).toBe('call-2')
+    expect(row.decision).toBeNull()
+    expect(row.offers).toEqual(['view', 'recover'])
   })
 })
 

@@ -11,10 +11,12 @@
  * and `probe-agent-scroll.mjs` established the only honest reading of that (a real Tab, then
  * `getComputedStyle` on the frame focus lands).
  *
- * `AgentChangesView`, `AgentEditConflictView` and `AgentNativeTerminal` are **not mounted
- * anywhere in the running application**. Nothing hosts them yet — the wiring is a separate task —
- * so no page the product can open will ever show their tab stops, and a probe that only visited
- * the product's own screens could never measure them. This one mounts them, from the running
+ * `AgentEditConflictView` and `AgentNativeTerminal` are **not mounted anywhere in the running
+ * application**. Nothing hosts them yet — the wiring is a separate task — so no page the product
+ * can open will ever show their tab stops, and a probe that only visited the product's own screens
+ * could never measure them. (`AgentChangesView` has since been hosted by `ui/EditorPane.vue`, but
+ * it is measured here for the same reason as the other two: this fixture is where its rows can be
+ * built with the texts and the refusal the reading needs, without a run behind them.) This one mounts them, from the running
  * dev server, the way `e2e/agent-changes.spec.ts` and `e2e/desktop-pet-tasks.spec.ts` mount theirs
  * in Chromium: the component is the application's own, compiled by the application's own Vite,
  * against the application's own Vue instance, resolved out of `main.ts`'s transform. What is

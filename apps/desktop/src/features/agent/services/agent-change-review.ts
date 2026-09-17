@@ -19,10 +19,28 @@
  *  - **The buffer is the user's, and this module is a guest in it.** The editor is reached through
  *    a lookup that returns a note's own account and has no setter, so no operation here can write,
  *    clear or reload a buffer — the failure this file cannot have is a review that tidied an
- *    unsaved edit away. A dirty buffer and a changed file are both kept: the row names both texts
- *    and offers a merge, while *recovery* of the file is withheld until the buffer is settled,
- *    because recovering under an unsaved edit produces an outcome nothing on screen would show and
- *    §7.2 refuses a fabricated undo.
+ *    unsaved edit away. A dirty buffer and a changed file are both kept: the row names both texts,
+ *    and *recovery* of the file is withheld until the buffer is settled, because recovering under
+ *    an unsaved edit produces an outcome nothing on screen would show and §7.2 refuses a fabricated
+ *    undo. §7.2's third verb for a written change, 合并, is the note's own keep-or-reload prompt —
+ *    and it is not a button here, because nothing a component can reach raises it
+ *    (`app/app-dialogs.ts` is per-window state owned by `App.vue`).
+ *
+ * ## What a recovery needs, and where a review comes from
+ *
+ * A recovery is a write, so it is offered only when the window can make one honestly, out of two
+ * things this value holds. The **baseline** is the text the note held when the request that named
+ * it was submitted (`stores/agent-session.ts` captures it at the send, `captureEditBaselines`), and
+ * §7.2's 「没有基线时标记不可直接恢复」 is why a change nothing captured a version for is marked
+ * rather than offered. The **text the call said it left** is its own `diff` block, the field
+ * `agent-edit-apply.ts` writes from, and §7.2's 「恢复前检查当前内容是否仍等于已记录结果」 is asked
+ * against it — so a note edited since the agent wrote it is refused, not overwritten.
+ *
+ * {@link reviewOfSession} builds a review from the session's own record — the timeline the
+ * transcript draws and the engine's `files-changed` list — rather than from a listener over the
+ * event stream: a surface that subscribed on mount would be empty for every frame that arrived
+ * before it, and a review folded beside the timeline is free to disagree with what the user has
+ * just read.
  *
  * The shape is the one the rest of this feature uses: a review is a plain frozen value, every
  * function returns a new one or the one it was given, and nothing throws, reads a clock or touches
@@ -33,10 +51,13 @@
 import type {
   AgentEvent,
   AgentIdentity,
+  AgentToolContent,
   AgentToolKind,
   AgentToolStatus,
 } from '../../../platform/gateways/agent-contracts'
 import type { AgentLiveNote } from './agent-context-snapshot'
+import type { AgentEditBaseline, AgentEditWriteOutcome } from './agent-edit-apply'
+import type { AgentTimelineEntry } from './agent-timeline'
 import { identityMismatch } from './agent-session-view'
 
 /**
@@ -66,6 +87,12 @@ export const AGENT_WRITE_TOOLS: readonly AgentToolKind[] = ['edit', 'delete', 'm
  */
 export type AgentChangeAttribution = 'agent' | 'external' | 'reported'
 
+/** The text one `diff` block of a call says the file holds afterwards, by the path it names. */
+export interface AgentWriteResult {
+  readonly path: string
+  readonly text: string
+}
+
 /** One write-kind tool call, as the review keeps it: the evidence an `agent` row rests on. */
 export interface AgentWriteCall {
   readonly toolCallId: string
@@ -78,6 +105,24 @@ export interface AgentWriteCall {
    * the only one of the two that is true.
    */
   readonly status: AgentToolStatus
+  /**
+   * What the call's own `diff` blocks said they left, keyed by the path in the block — the second
+   * witness a recovery is judged against (§7.2's 「恢复前检查当前内容是否仍等于已记录结果」).
+   *
+   * Empty for a call that carried no block, which is a fact and not a placeholder: the engine named
+   * a path and said nothing about the text, and the row refuses recovery rather than guessing which
+   * text is the agent's.
+   */
+  readonly results: readonly AgentWriteResult[]
+}
+
+/** The facts of one tool call, as the wire's payload and the timeline's row both carry them. They
+ *  differ in one name only (`kind` against `toolKind`), which is why the kind is an argument. */
+interface AgentToolCallFacts {
+  readonly toolCallId: string
+  readonly paths: readonly string[]
+  readonly status: AgentToolStatus
+  readonly content: readonly AgentToolContent[]
 }
 
 /**
@@ -96,6 +141,31 @@ export interface AgentChangeReview {
   readonly reported: readonly string[]
   /** Paths the watcher saw change on disk. */
   readonly observed: readonly string[]
+  /** The text each path held when the request that named it was submitted — §7.2's baseline, and
+   *  the whole of what a recovery restores. Captured at the send (`stores/agent-session.ts`). */
+  readonly baselines: readonly AgentEditBaseline[]
+  /** What the user has answered about the changes on this list, one entry per change. */
+  readonly decisions: readonly AgentChangeAnswer[]
+}
+
+/** What the user answered about one change. */
+export type AgentChangeDecision = 'kept' | 'rejected'
+
+/**
+ * One answer, and it is about *a change* rather than about a path.
+ *
+ * `toolCallId` is part of the key on purpose: the engine writing the same note again is a change
+ * nobody has looked at, and a row that read "kept" there would be hiding work the user has not
+ * seen. `written` is what a rejection did — `agent-edit-apply.ts`'s write outcome, reused rather
+ * than respelled, because "the note and the file have it", "the note has it and the file does not"
+ * and "nothing took it" are the same three facts here as there — and it is `null` for a keep,
+ * which writes nothing.
+ */
+export interface AgentChangeAnswer {
+  readonly path: string
+  readonly toolCallId: string
+  readonly decision: AgentChangeDecision
+  readonly written: AgentEditWriteOutcome | null
 }
 
 /**
@@ -123,20 +193,44 @@ export type AgentChangeVerdict =
     }
 
 /** One thing the review offers for a row. */
-export type AgentChangeOffer = 'view' | 'merge' | 'recover'
+export type AgentChangeOffer = 'view' | 'recover'
 
 /**
  * Why an offer this row could otherwise have is not made — a code, not a sentence, because the UI
  * owns the wording and a service that returned text would have to invent it in two languages.
  *
- * The two clauses of §7.2 that a *recovery* has to answer before it is offered, and the one thing
- * the review itself must never do: put a file back while the engine is still writing it. Each arm
- * names a different thing for the user to do, which is why they are not one refusal.
+ * Every clause of §7.2's recovery rule, plus the one thing the review itself must never do — put a
+ * file back while the engine is still writing it. Each arm names a different thing for the user to
+ * do, which is why they are not one refusal: a file the engine only reported, a write still in
+ * flight, a version nothing kept, a note in the wrong vault, a note with no tab to write into, a
+ * note the user is editing, and a note that is no longer what the agent left are seven different
+ * situations, and folding them into one "recovery failed" would tell the user nothing about which.
  */
 export type AgentChangeRefusal =
   | { readonly reason: 'not-agent-change'; readonly attribution: AgentChangeAttribution }
   | { readonly reason: 'write-in-flight'; readonly toolCallId: string }
+  /** §7.2's 「没有基线时标记不可直接恢复」: no request named this path, so no version of it was
+   *  kept, and there is nothing a recovery could put back. */
+  | { readonly reason: 'no-baseline'; readonly path: string }
+  /** The note the lookup answered with belongs to another vault than the session's. A path is only
+   *  a path inside one vault, and the baseline is the other vault's text. */
+  | {
+      readonly reason: 'vault-mismatch'
+      readonly path: string
+      readonly noteVaultId: string
+      readonly sessionVaultId: string
+    }
+  /** No tab holds it, and the window's one way into a note's file is the tab's own save
+   *  transaction (`agent-note-write.ts`). Opening it is the user's to do — the row's `view` does
+   *  exactly that — and writing the file without one would be the second write path. */
+  | { readonly reason: 'note-not-open'; readonly path: string }
   | { readonly reason: 'unsaved-edits'; readonly path: string }
+  /** The call stated no text for this path, so the app cannot tell the agent's text from the
+   *  user's own later edit — and overwriting on a guess is the silent loss §7.2 rules out. */
+  | { readonly reason: 'result-unstated'; readonly path: string }
+  /** The note is no longer what the call left: somebody edited it after the agent wrote it, and a
+   *  recovery would take that edit away. §7.2's 「不一致则三方比较/人工合并，不能覆盖用户后续编辑」. */
+  | { readonly reason: 'changed-since'; readonly path: string }
 
 /** One file, as the review sees it. Plain frozen data: the view renders this and decides nothing. */
 export interface AgentChangeRow {
@@ -147,10 +241,17 @@ export interface AgentChangeRow {
   readonly tool: AgentToolKind | null
   readonly status: AgentToolStatus | null
   readonly verdict: AgentChangeVerdict
+  /** The text the call said it left in this path, or null when it stated none. The second witness
+   *  a recovery is judged against, and what a merge-shaped row shows beside the user's own. */
+  readonly result: string | null
+  /** The text this path held when the request that named it was submitted, or null when none did. */
+  readonly baseline: string | null
   /** The offers that survive the judgement, in the order the view shows them. */
   readonly offers: readonly AgentChangeOffer[]
   /** The one offer that was withheld, if one was. */
   readonly refused: AgentChangeRefusal | null
+  /** What the user answered about this change, or null while it is unanswered. */
+  readonly decision: AgentChangeAnswer | null
 }
 
 /** A review with nothing in it yet. A session that has touched nothing has an empty record, not a
@@ -161,11 +262,105 @@ export function createChangeReview(identity: AgentIdentity): AgentChangeReview {
     writes: Object.freeze([]),
     reported: Object.freeze([]),
     observed: Object.freeze([]),
+    baselines: Object.freeze([]),
+    decisions: Object.freeze([]),
   })
 }
 
 function withWrites(review: AgentChangeReview, writes: readonly AgentWriteCall[]): AgentChangeReview {
   return { ...review, writes: Object.freeze(writes) }
+}
+
+/** The texts a call's own `diff` blocks say they left, in the engine's order. A block with no path
+ *  is dropped: a row is addressed by a path, and a text with nothing to attach it to is not
+ *  evidence about any file. */
+function resultsOf(content: readonly AgentToolContent[]): readonly AgentWriteResult[] {
+  const results: AgentWriteResult[] = []
+  for (const block of content) {
+    if (block.type !== 'diff' || block.path === '') continue
+    results.push(Object.freeze({ path: block.path, text: block.newText }))
+  }
+  return Object.freeze(results)
+}
+
+/**
+ * One tool call as the review keeps it, or null when it is not evidence about a file.
+ *
+ * The single place the rule lives, and both producers go through it: the event fold and
+ * {@link reviewOfSession} see the same four facts under two spellings, and a review that classified
+ * them twice could attribute a file by one path and not by the other.
+ *
+ * Kinds that are not writes are *not stored at all*, not stored-and-ignored: a `read` call names
+ * the file it read, and keeping that as evidence would leave a later bug one comparison away from
+ * showing the user "the agent changed this note" about a note the agent only opened.
+ */
+function writeCallOf(call: AgentToolCallFacts, kind: AgentToolKind): AgentWriteCall | null {
+  if (!AGENT_WRITE_TOOLS.includes(kind) || call.paths.length === 0) return null
+  return Object.freeze({
+    toolCallId: call.toolCallId,
+    tool: kind,
+    paths: Object.freeze([...call.paths]),
+    status: call.status,
+    results: resultsOf(call.content),
+  })
+}
+
+/** What one session's record holds, as a review needs it: the transcript's rows, and the engine's
+ *  own list of the paths it touched (`AgentSessionView` satisfies this structurally). */
+export interface AgentChangeSource {
+  readonly timeline: readonly AgentTimelineEntry[]
+  readonly changedFiles: readonly string[]
+}
+
+/**
+ * The review the session's own record supports — the producer the app uses.
+ *
+ * `baselines` is the record's `edits`, and it is an argument rather than a lookup because a value
+ * that could ask a store a question later would be a second answer to "which version was this
+ * request made against" — the mismatch the whole feature exists to prevent. Nothing is decided
+ * here: the rows are built by {@link changeRows} from this value and the live buffer, so a surface
+ * cannot show one account and act on another.
+ */
+export function reviewOfSession(
+  identity: AgentIdentity,
+  source: AgentChangeSource,
+  baselines: readonly AgentEditBaseline[],
+): AgentChangeReview {
+  const held = createChangeReview(identity)
+  const writes: AgentWriteCall[] = []
+  for (const entry of source.timeline) {
+    if (entry.kind !== 'tool') continue
+    const call = writeCallOf(entry, entry.toolKind)
+    if (call === null) continue
+    // The transcript folds the wire's `tool_call` and its updates into one row per id; this is the
+    // same fold one level up, so a record that somehow holds two rows for one call still produces
+    // one row here.
+    const at = writes.findIndex((candidate) => candidate.toolCallId === call.toolCallId)
+    if (at === -1) writes.push(call)
+    else writes[at] = call
+  }
+  return Object.freeze({
+    identity: held.identity,
+    writes: Object.freeze(writes),
+    reported: appendPaths(Object.freeze([]), source.changedFiles),
+    observed: held.observed,
+    baselines: Object.freeze([...baselines]),
+    decisions: held.decisions,
+  })
+}
+
+/**
+ * Record the user's answer about one change.
+ *
+ * A second answer for the same change replaces the first — the row is a decision, and keeping both
+ * would leave the view choosing which of two decisions to draw. The answer is copied, so nothing
+ * the caller keeps a handle on can change what a row already shows.
+ */
+export function decideChange(review: AgentChangeReview, answer: AgentChangeAnswer): AgentChangeReview {
+  const held = review.decisions.filter(
+    (entry) => !(entry.path === answer.path && entry.toolCallId === answer.toolCallId),
+  )
+  return { ...review, decisions: Object.freeze([...held, Object.freeze({ ...answer })]) }
 }
 
 function appendPaths(paths: readonly string[], more: readonly string[]): readonly string[] {
@@ -179,11 +374,7 @@ function appendPaths(paths: readonly string[], more: readonly string[]): readonl
  *
  * The call's row is replaced rather than appended: the wire sends `tool_call` and then any number
  * of `tool_call_update` frames for one id, and a review holding both would count one call twice —
- * the same fold the timeline does for its tool rows.
- *
- * Kinds that are not writes are *not stored at all*, not stored-and-ignored: a `read` call names
- * the file it read, and keeping that as evidence would leave a later bug one comparison away from
- * showing the user "the agent changed this note" about a note the agent only opened.
+ * the same fold the timeline does for its tool rows, and the same one {@link writeCallOf} states.
  */
 export function applyChangeEvent(review: AgentChangeReview, event: AgentEvent): AgentChangeReview {
   // A foreign frame does not become ours by arriving: the composite identity is what keeps an
@@ -195,13 +386,8 @@ export function applyChangeEvent(review: AgentChangeReview, event: AgentEvent): 
   switch (event.kind) {
     case 'tool-update': {
       const call = event.payload
-      if (!AGENT_WRITE_TOOLS.includes(call.kind) || call.paths.length === 0) return review
-      const entry: AgentWriteCall = Object.freeze({
-        toolCallId: call.toolCallId,
-        tool: call.kind,
-        paths: Object.freeze([...call.paths]),
-        status: call.status,
-      })
+      const entry = writeCallOf(call, call.kind)
+      if (entry === null) return review
       const index = review.writes.findIndex((held) => held.toolCallId === call.toolCallId)
       if (index === -1) return withWrites(review, [...review.writes, entry])
       return withWrites(
@@ -258,42 +444,112 @@ function verdictFor(live: AgentLiveNote | null): AgentChangeVerdict {
   })
 }
 
+/** The baseline this window holds for `path`, if it holds one. The last one wins: a path named by
+ *  two requests at different moments is judged against the newest version that was captured. */
+function baselineFor(review: AgentChangeReview, path: string): AgentEditBaseline | null {
+  let found: AgentEditBaseline | null = null
+  for (const held of review.baselines) {
+    if (held.path === path) found = held
+  }
+  return found
+}
+
+/** What the call said it left in `path`. The last block naming the path wins, as the last update
+ *  to a call wins: a call that stated two texts for one file is judged against the newest. */
+function resultFor(call: AgentWriteCall | null, path: string): string | null {
+  let found: string | null = null
+  for (const result of call?.results ?? []) {
+    if (result.path === path) found = result.text
+  }
+  return found
+}
+
+/** The answer already given about one change, if one was. */
+function decisionFor(
+  review: AgentChangeReview,
+  path: string,
+  toolCallId: string | null,
+): AgentChangeAnswer | null {
+  if (toolCallId === null) return null
+  return (
+    review.decisions.find((entry) => entry.path === path && entry.toolCallId === toolCallId) ?? null
+  )
+}
+
+/** Everything a row's judgement is made of, read once from the review and the live buffer. */
+interface AgentChangeFacts {
+  readonly path: string
+  readonly attribution: AgentChangeAttribution
+  readonly call: AgentWriteCall | null
+  readonly note: AgentLiveNote | null
+  readonly verdict: AgentChangeVerdict
+  readonly result: string | null
+}
+
 /**
  * The offers for one row, and the one that was withheld.
  *
- * Three questions in order, because each is about a different subject and the answer to a later one
- * is meaningless when an earlier one failed:
+ * Eight questions in the order that makes a later answer meaningful, each about a different subject
+ * — which is why each refusal is its own code rather than one "recovery failed":
  *
- *  1. *Is this change the agent's?* Only an `agent` row can be put back: recovery restores a
- *     baseline this host recorded for a write this host performed, and a path the engine merely
- *     reported or the watcher merely saw has no such baseline (§7.2 「没有基线时标记不可直接恢复，
- *     不伪造「撤销成功」」).
- *  2. *Has the engine finished writing it?* A call still `pending` or `in_progress` is a write in
- *     flight, and a recovery started now would be a race between the two writers that only one of
- *     them knows about. The refusal is the review's own, not the host's, because it is the review
- *     that can see the call.
- *  3. *Would anything on screen show the outcome?* With an unsaved buffer the answer is no: the
- *     file would go back to its baseline while the user's own text still sits ahead of it, so the
- *     next save would put the buffer's version back over the recovery and the "undo" the user was
- *     shown would not be what happened. Resolving that note is the tab's own conflict flow — the
- *     one that already exists for an external write — and this row offers the merge until it is.
+ *  *Answered?* An answered row offers nothing but looking: the answer was given about this change,
+ *  and a row that kept offering the write would be asking again. *The agent's?* A path the engine
+ *  merely reported or the watcher merely saw has no tool association with this session
+ *  (§7.2「只有有可靠工具关联的变化标记为智能体修改」). *Finished writing?* A call still `pending` or
+ *  `in_progress` would make the recovery a race between two writers that only one of them knows
+ *  about. *A version to put back?* Without a baseline there is nothing to restore
+ *  (§7.2「没有基线时标记不可直接恢复，不伪造「撤销成功」」). *The session's note?* A path is only a
+ *  path inside one vault, and the baseline is the other vault's text (§6.2, which `judgeAgentEdit`
+ *  asks the same way). *Anything to write into?* The window's one way into a note's file is the
+ *  tab's own save transaction, and `view` is how the user opens the note it needs. *Would anything
+ *  on screen show the outcome?* Not with an unsaved buffer: the file would go back to its baseline
+ *  while the user's own text still sits ahead of it, so the next save would undo the "undo".
+ *  *Still what the change left?* §7.2「恢复前检查当前内容是否仍等于已记录结果；不一致则三方比较/
+ *  人工合并，不能覆盖用户后续编辑」 — the text the call stated is the witness, and a call that
+ *  stated none leaves the question unanswerable, which is a refusal and not a guess.
  */
 function judge(
-  path: string,
-  attribution: AgentChangeAttribution,
-  call: AgentWriteCall | null,
-  verdict: AgentChangeVerdict,
+  review: AgentChangeReview,
+  facts: AgentChangeFacts,
 ): { offers: readonly AgentChangeOffer[]; refused: AgentChangeRefusal | null } {
+  const { path, attribution, call, note, verdict, result } = facts
   const offers: AgentChangeOffer[] = ['view']
+  if (call !== null && decisionFor(review, path, call.toolCallId) !== null) {
+    return { offers: Object.freeze(offers), refused: null }
+  }
   if (attribution !== 'agent' || call === null) {
     return { offers: Object.freeze(offers), refused: { reason: 'not-agent-change', attribution } }
   }
   if (call.status === 'pending' || call.status === 'in_progress') {
     return { offers: Object.freeze(offers), refused: { reason: 'write-in-flight', toolCallId: call.toolCallId } }
   }
+  const baseline = baselineFor(review, path)
+  if (baseline === null) {
+    return { offers: Object.freeze(offers), refused: { reason: 'no-baseline', path } }
+  }
+  if (note !== null && note.vaultId !== review.identity.vaultId) {
+    return {
+      offers: Object.freeze(offers),
+      refused: {
+        reason: 'vault-mismatch',
+        path,
+        noteVaultId: note.vaultId,
+        sessionVaultId: review.identity.vaultId,
+      },
+    }
+  }
+  if (verdict.kind === 'record') {
+    return { offers: Object.freeze(offers), refused: { reason: 'note-not-open', path } }
+  }
   if (verdict.kind === 'unsaved-edits') {
-    offers.push('merge')
     return { offers: Object.freeze(offers), refused: { reason: 'unsaved-edits', path } }
+  }
+  if (result === null) {
+    return { offers: Object.freeze(offers), refused: { reason: 'result-unstated', path } }
+  }
+  // The buffer is clean here, so its text is the file's — which is the comparison §7.2 asks for.
+  if (note === null || note.buffer.text !== result) {
+    return { offers: Object.freeze(offers), refused: { reason: 'changed-since', path } }
   }
   offers.push('recover')
   return { offers: Object.freeze(offers), refused: null }
@@ -320,8 +576,10 @@ export function changeRows(
     const call = writeFor(review, path)
     const attribution: AgentChangeAttribution =
       call !== null ? 'agent' : review.reported.includes(path) ? 'reported' : 'external'
-    const verdict = verdictFor(live(path))
-    const { offers, refused } = judge(path, attribution, call, verdict)
+    const note = live(path)
+    const verdict = verdictFor(note)
+    const result = resultFor(call, path)
+    const { offers, refused } = judge(review, { path, attribution, call, note, verdict, result })
     return Object.freeze({
       path,
       attribution,
@@ -329,8 +587,11 @@ export function changeRows(
       tool: call?.tool ?? null,
       status: call?.status ?? null,
       verdict,
+      result,
+      baseline: baselineFor(review, path)?.text ?? null,
       offers,
       refused,
+      decision: decisionFor(review, path, call?.toolCallId ?? null),
     })
   })
   return Object.freeze(rows)

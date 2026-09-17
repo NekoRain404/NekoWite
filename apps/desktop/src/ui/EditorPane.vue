@@ -22,6 +22,7 @@ import {
 } from '../features/editor'
 import { runEditorCommand } from '../services/run-editor-command'
 import AgentNoteProposals from '../features/agent/components/AgentNoteProposals.vue'
+import AgentChangedFiles from '../features/agent/components/AgentChangedFiles.vue'
 import type { AgentInsertionSource } from '../features/agent/services/agent-insertion-source'
 import type { AgentIdentity } from '../platform/gateways/agent-contracts'
 import { useFloatStore } from '../stores/float'
@@ -36,6 +37,12 @@ import { t } from '../i18n'
 // rail is where the request is made and this pane is where its subject is — and because the host's
 // `ask` is a question about the reader's own paragraph, which is only answerable with the
 // paragraph in front of them.
+//
+// `AgentChangedFiles` is the third surface of the same family and sits above them: what a run
+// changed, with Review / Keep / Reject per file, which is `agent-change-review.ts`'s judgement
+// drawn. It is here for the reason its answers are: Review opens the note, Keep answers about it,
+// and Reject writes it back through its own save transaction — so the list belongs where the notes
+// are, not where the request was made.
 //
 // Both props are the shell's, not this pane's: which session a runtime is serving and which
 // composition can mint an insertion binding are the assembly's decisions (`app/agent-rail.ts`),
@@ -186,6 +193,12 @@ onBeforeUnmount(() => {
 <template>
   <div class="editor-pane">
     <template v-if="hasTab">
+      <!-- What the run changed, and the three answers about it (row 20). Mounted here for the
+           same reason the proposals are: the answers are about notes, and this pane is where the
+           note is. It is above the proposals because it is about the whole run rather than about
+           the one document, and with no rows it draws one line saying so — which is also how a
+           reader learns where the answers will appear. -->
+      <AgentChangedFiles :identity="props.agentIdentity" />
       <AgentNoteProposals
         :identity="props.agentIdentity"
         :insertions="props.agentInsertions"

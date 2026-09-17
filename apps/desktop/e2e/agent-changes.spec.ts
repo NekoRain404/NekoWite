@@ -41,7 +41,9 @@ const HOST_ID = 'agent-changes-e2e'
 const LABELS: AgentChangesLabels = {
   title: 'Changes',
   empty: 'Nothing has changed yet',
-  close: 'Close',
+  summary: '3 files changed · 1 kept · 0 put back · 2 to review',
+  collapse: 'Hide the list',
+  expand: 'Show the list',
   attribution: {
     agent: 'The agent changed this file',
     external: 'This file changed outside the agent',
@@ -51,13 +53,25 @@ const LABELS: AgentChangesLabels = {
     followsDisk: 'No unsaved edits in this note',
     unsavedEdits: 'This note has unsaved edits',
   },
-  offer: { view: 'View', merge: 'Merge', recover: 'Recover' },
+  offer: { view: 'Review', keep: 'Keep', recover: 'Reject' },
   refused: {
     notAgentChange: 'Nothing here recorded a change to put back',
     writeInFlight: 'The agent is still writing this file',
-    unsavedEdits: 'Deal with the note’s unsaved edits first',
+    noBaseline: 'No request named this file',
+    vaultMismatch: 'This note is in another vault',
+    noteNotOpen: 'No tab holds this note',
+    unsavedEdits: 'Deal with the note\u2019s unsaved edits first',
+    resultUnstated: 'The call did not say what it left',
+    changedSince: 'The note is no longer what the agent left',
+  },
+  decision: { kept: 'Kept', rejected: 'Put back' },
+  written: {
+    saved: 'The note is back and the file has it',
+    saveFailed: 'The note is back, but the file does not have it',
+    unavailable: 'Nothing took the text',
   },
   unsavedBuffer: 'Your unsaved text',
+  agentVersion: 'What the call left in the file',
   diskUnread: 'The file was not read',
 }
 
@@ -70,11 +84,21 @@ interface ChangesHarness {
   /** The paths the rows currently name, in order. */
   paths(): string[]
   /** One write-kind tool call, as the engine sends it. */
-  write(toolCallId: string, paths: string[], status: AgentToolStatus, kind?: AgentToolKind): void
+  write(
+    toolCallId: string,
+    paths: string[],
+    status: AgentToolStatus,
+    kind?: AgentToolKind,
+    diff?: { oldText: string; newText: string },
+  ): void
   /** The engine's own list of paths it touched — a hint, never an attribution. */
   hint(paths: string[]): void
   /** The watcher: this file is not what the window last saw. */
   observed(path: string): void
+  /** The version the request that named this path captured: what a rejection would put back. */
+  baseline(path: string, text: string): void
+  /** The caller recording an answer, the way the host does after its write. */
+  answer(path: string, toolCallId: string, decision: 'kept' | 'rejected', written?: string): void
   setDirty(path: string, text: string, diskText: string | null): void
   setClean(path: string, text: string): void
   /** Take the section off screen, so a re-open does not leave two hosts answering one selector. */
@@ -142,7 +166,7 @@ async function open(page: Page): Promise<void> {
       }
 
       const emitted: Array<[string, string]> = []
-      const view = vue.reactive({ rows: [] as unknown[] })
+      const view = vue.reactive({ rows: [] as unknown[], open: true })
       const refresh = (): void => {
         view.rows = [...review.changeRows(state, live)]
       }
@@ -160,10 +184,14 @@ async function open(page: Page): Promise<void> {
           vue.h(AgentChangesView, {
             rows: view.rows,
             labels,
+            open: view.open,
             onView: (path: string) => emitted.push(['view', path]),
-            onMerge: (path: string) => emitted.push(['merge', path]),
+            onKeep: (path: string) => emitted.push(['keep', path]),
             onRecover: (path: string) => emitted.push(['recover', path]),
-            onClose: () => emitted.push(['close', '']),
+            onToggle: () => {
+              emitted.push([view.open ? 'collapse' : 'expand', ''])
+              view.open = !view.open
+            },
           }),
       })
       app.mount(host)
@@ -176,7 +204,7 @@ async function open(page: Page): Promise<void> {
         emitted,
         buffers: bufferTexts,
         paths: () => view.rows.map((row) => (row as { path: string }).path),
-        write: (toolCallId, paths, status, kind = 'edit') => {
+        write: (toolCallId, paths, status, kind = 'edit', diff) => {
           gateway.emit(session, {
             kind: 'tool-update',
             payload: {
@@ -185,10 +213,40 @@ async function open(page: Page): Promise<void> {
               kind,
               status,
               paths,
-              content: [],
+              // The measured frame's own shape: a `diff` block per path, with the text the engine
+              // started from and the text it left. That second text is what a rejection is judged
+              // against, so a harness with none could not reach the offer at all.
+              content: diff === undefined ? [] : paths.map((path) => ({
+                type: 'diff' as const,
+                path,
+                oldText: diff.oldText,
+                newText: diff.newText,
+              })),
               input: { state: 'absent' },
               output: { state: 'absent' },
             },
+          })
+          refresh()
+        },
+        baseline: (path, text) => {
+          // The version a request that named this path captured, hand-built because a session
+          // opened on the memory double has no send behind it: it is plain data, and the module
+          // reads it as such.
+          state = {
+            ...state,
+            baselines: [
+              ...state.baselines.filter((held: { path: string }) => held.path !== path),
+              { identity: { ...session }, path, revision: 'r1', text },
+            ],
+          }
+          refresh()
+        },
+        answer: (path, toolCallId, decision, written) => {
+          state = review.decideChange(state, {
+            path,
+            toolCallId,
+            decision,
+            written: written === undefined ? null : { status: written },
           })
           refresh()
         },
@@ -240,8 +298,11 @@ test.describe('what the change view claims', () => {
     await page.evaluate(() => {
       const harness = window.__agentChanges
       if (harness === undefined) throw new Error('the view is not mounted')
-      // A write-kind call of this session: the agent's change.
-      harness.write('call-1', ['notes/written.md'], 'completed')
+      // A write-kind call of this session: the agent's change. Its own `diff` block is what a
+      // rejection is judged against, and the request's captured version is what it would put back.
+      harness.write('call-1', ['notes/written.md'], 'completed', 'edit', { oldText: 'before', newText: 'after' })
+      harness.baseline('notes/written.md', 'before')
+      harness.setClean('notes/written.md', 'after')
       // The engine's own list of what it touched: a row, and no attribution.
       harness.hint(['notes/hinted.md'])
       // The watcher, with nothing in the session claiming the path.
@@ -275,26 +336,31 @@ test.describe('what the change view claims', () => {
     await page.evaluate(() => {
       const harness = window.__agentChanges
       if (harness === undefined) throw new Error('the view is not mounted')
-      harness.write('call-1', ['notes/a.md'], 'completed')
+      harness.write('call-1', ['notes/a.md'], 'completed', 'edit', { oldText: 'first line', newText: 'the agent\u2019s line' })
+      harness.baseline('notes/a.md', 'first line')
       harness.setDirty('notes/a.md', 'first line\nmy unsaved second line', 'first line')
     })
 
     await expect(row(page, 'notes/a.md')).toHaveAttribute('data-verdict', 'unsaved-edits')
-    // The user's own text is on screen, which is what says it was kept rather than replaced.
-    await expect(row(page, 'notes/a.md').locator('.agent-changes-text')).toContainText(
+    // Both texts are on screen — the user's, and the one the call said it left — which is what says
+    // neither was decided for them.
+    await expect(row(page, 'notes/a.md').locator('[data-unsaved-buffer] .agent-changes-text')).toContainText(
       'my unsaved second line',
     )
-    await expect(action(page, 'notes/a.md', 'merge')).toBeVisible()
+    await expect(row(page, 'notes/a.md').locator('[data-agent-version] .agent-changes-text')).toContainText(
+      'the agent\u2019s line',
+    )
+    await expect(action(page, 'notes/a.md', 'keep')).toBeVisible()
     await expect(action(page, 'notes/a.md', 'recover')).toHaveCount(0)
     await expect(row(page, 'notes/a.md').locator('[data-refused]')).toHaveAttribute(
       'data-refusal',
       'unsaved-edits',
     )
 
-    // The merge reaches the caller as an intention, and the editor's text is exactly what it was:
+    // The answer reaches the caller as an intention, and the editor's text is exactly what it was:
     // nothing this feature can do writes a buffer.
-    await action(page, 'notes/a.md', 'merge').click()
-    expect(await emitted(page)).toEqual([['merge', 'notes/a.md']])
+    await action(page, 'notes/a.md', 'keep').click()
+    expect(await emitted(page)).toEqual([['keep', 'notes/a.md']])
     expect(await bufferText(page, 'notes/a.md')).toBe('first line\nmy unsaved second line')
   })
 
@@ -305,7 +371,9 @@ test.describe('what the change view claims', () => {
     await page.evaluate(() => {
       const harness = window.__agentChanges
       if (harness === undefined) throw new Error('the view is not mounted')
-      harness.write('call-1', ['notes/a.md'], 'in_progress')
+      harness.write('call-1', ['notes/a.md'], 'in_progress', 'edit', { oldText: 'before', newText: 'after' })
+      harness.baseline('notes/a.md', 'before')
+      harness.setClean('notes/a.md', 'after')
     })
 
     await expect(row(page, 'notes/a.md')).toHaveAttribute('data-attribution', 'agent')
@@ -316,25 +384,51 @@ test.describe('what the change view claims', () => {
     )
 
     // The engine finishes, and the same row gains the action with no second event.
-    await page.evaluate(() => window.__agentChanges?.write('call-1', ['notes/a.md'], 'completed'))
+    await page.evaluate(() =>
+      window.__agentChanges?.write('call-1', ['notes/a.md'], 'completed', 'edit', {
+        oldText: 'before',
+        newText: 'after',
+      }),
+    )
     await expect(action(page, 'notes/a.md', 'recover')).toBeVisible()
     await expect(row(page, 'notes/a.md').locator('[data-refused]')).toHaveCount(0)
   })
 
-  test('a recovery is an intention, and the view claims nothing until the host answers', async ({ page }) => {
+  test('a rejection is an intention, and the row says nothing until the caller answers', async ({ page }) => {
     // 不伪造「撤销成功」 on the surface's side: pressing the button asks the host and changes
     // nothing here. The row keeps its attribution and its actions, so a host that refuses (the
     // file moved since the change, in §7.2's first case) leaves a screen that never said it worked.
     await page.goto('/')
     await open(page)
 
-    await page.evaluate(() => window.__agentChanges?.write('call-1', ['notes/a.md'], 'completed'))
+    await page.evaluate(() => {
+      const harness = window.__agentChanges
+      if (harness === undefined) throw new Error('the view is not mounted')
+      harness.write('call-1', ['notes/a.md'], 'completed', 'edit', { oldText: 'before', newText: 'after' })
+      harness.baseline('notes/a.md', 'before')
+      harness.setClean('notes/a.md', 'after')
+    })
     await action(page, 'notes/a.md', 'recover').click()
 
     expect(await emitted(page)).toEqual([['recover', 'notes/a.md']])
     await expect(action(page, 'notes/a.md', 'recover')).toBeVisible()
     await expect(row(page, 'notes/a.md')).toHaveAttribute('data-attribution', 'agent')
-    await expect(row(page, 'notes/a.md')).toHaveAttribute('data-verdict', 'record')
+    await expect(row(page, 'notes/a.md')).toHaveAttribute('data-verdict', 'follows-disk')
+
+    // The caller answers: the row is decided, draws no writes any more, and says what the write
+    // did — the three arms of §7.2's outcome, kept apart.
+    await page.evaluate(() => window.__agentChanges?.answer('notes/a.md', 'call-1', 'rejected', 'save-failed'))
+    await expect(row(page, 'notes/a.md')).toHaveAttribute('data-decision', 'rejected')
+    await expect(action(page, 'notes/a.md', 'recover')).toHaveCount(0)
+    await expect(action(page, 'notes/a.md', 'keep')).toHaveCount(0)
+    await expect(row(page, 'notes/a.md').locator('[data-decision-outcome]')).toHaveText(
+      LABELS.written.saveFailed,
+    )
+
+    // And a keep is the other answer: nothing written, and the row says so with no outcome line.
+    await page.evaluate(() => window.__agentChanges?.answer('notes/a.md', 'call-1', 'kept'))
+    await expect(row(page, 'notes/a.md')).toHaveAttribute('data-decision', 'kept')
+    await expect(row(page, 'notes/a.md').locator('[data-decision-outcome]')).toHaveCount(0)
   })
 
   test('no click here reaches a document', async ({ page }) => {
@@ -347,7 +441,13 @@ test.describe('what the change view claims', () => {
     await page.evaluate(() => {
       const harness = window.__agentChanges
       if (harness === undefined) throw new Error('the view is not mounted')
-      harness.write('call-1', ['notes/a.md', 'notes/b.md'], 'completed')
+      // b.md carries the call's own text and a baseline, so it is the row with a rejection on it.
+      harness.write('call-1', ['notes/b.md'], 'completed', 'edit', { oldText: 'before', newText: 'after' })
+      harness.baseline('notes/b.md', 'before')
+      harness.setClean('notes/b.md', 'after')
+      // a.md is the user's own text that nothing has a version of: unsaved, and a call that
+      // stated no text at all — the shape the "no file text here" sentence exists for.
+      harness.write('call-2', ['notes/a.md'], 'completed')
       harness.setDirty('notes/a.md', 'unsaved', null)
     })
 
@@ -355,17 +455,24 @@ test.describe('what the change view claims', () => {
     // A note whose file was never read says so instead of showing an empty file.
     await expect(row(page, 'notes/a.md').locator('[data-disk-unread]')).toBeVisible()
 
-    for (const name of ['view', 'merge']) {
+    for (const name of ['view', 'keep']) {
       const control = action(page, 'notes/a.md', name)
       if ((await control.count()) > 0) await control.click()
     }
     await action(page, 'notes/b.md', 'recover').click()
-    await page.locator('[data-action="close"]').click()
+    await page.locator('[data-action="collapse"]').click()
 
     expect(await bufferText(page, 'notes/a.md')).toBe('unsaved')
+    // The strip is collapsed, not gone: the header still says what the run touched, and the way
+    // back is the same control.
+    await expect(page.locator('[data-changes-summary]')).toBeVisible()
+    await expect(page.locator('[data-agent-changes] li[data-path]')).toHaveCount(0)
+    await page.locator('[data-action="expand"]').click()
+    await expect(page.locator('[data-agent-changes] li[data-path]')).toHaveCount(2)
     expect((await emitted(page)).map(([name]) => name).sort()).toEqual([
-      'close',
-      'merge',
+      'collapse',
+      'expand',
+      'keep',
       'recover',
       'view',
     ])
@@ -394,13 +501,17 @@ test.describe('the view in a narrow window', () => {
     })
     expect(overflow).toBeLessThanOrEqual(0)
 
-    // Tab reaches the row's own control and Enter activates it — the same action the mouse would
-    // take, so a keyboard user is not left with a list they can read but not act on.
-    await page.locator('[data-action="close"]').focus()
+    // Tab reaches the row's own controls and Enter activates them — the same actions the mouse
+    // would take, so a keyboard user is not left with a list they can read but not act on. The
+    // path is the first of them (it carries the view action), and inside the actions the answer
+    // that cannot take anything away comes before the write.
+    await page.locator('[data-action="collapse"]').focus()
     await page.keyboard.press('Tab')
     await expect(action(page, long, 'view')).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(action(page, long, 'keep')).toBeFocused()
     await page.keyboard.press('Enter')
-    expect(await emitted(page)).toEqual([['view', long]])
+    expect(await emitted(page)).toEqual([['keep', long]])
   })
 
   test('the rows follow the theme rather than a colour of their own', async ({ page }) => {
@@ -409,7 +520,13 @@ test.describe('the view in a narrow window', () => {
     // the one block in the app that does not.
     await page.goto('/')
     await open(page)
-    await page.evaluate(() => window.__agentChanges?.write('call-1', ['notes/a.md'], 'completed'))
+    await page.evaluate(() => {
+      const harness = window.__agentChanges
+      if (harness === undefined) throw new Error('the view is not mounted')
+      harness.write('call-1', ['notes/a.md'], 'completed', 'edit', { oldText: 'before', newText: 'after' })
+      harness.baseline('notes/a.md', 'before')
+      harness.setClean('notes/a.md', 'after')
+    })
 
     const background = async (theme: string): Promise<string> =>
       page.evaluate((value) => {
