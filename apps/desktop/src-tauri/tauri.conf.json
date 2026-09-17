@@ -33,6 +33,8 @@
     "targets": "all",
     "category": "Productivity",
     "externalBin": ["binaries/opencode"],
+    "license": "MIT",
+    "resources": { "THIRD-PARTY-NOTICES.txt": "" },
     "shortDescription": "A local-first knowledge base for Markdown and MDX",
     "longDescription": "NekoWite brings the control of Markdown and MDX to a writing experience as natural as a word processor: the files stay plain Markdown, and what you edit is what you see. Source and preview sit side by side, mathematics and citations render in place, and documents export with page size, orientation and margin control. Everything is plain text on your own disk.",
     "icon": [
@@ -59,8 +61,23 @@
       }
     ],
     "linux": {
-      "deb": { "desktopTemplate": "linux/nekowite.desktop.hbs" },
-      "rpm": { "desktopTemplate": "linux/nekowite.desktop.hbs" }
+      "deb": {
+        "desktopTemplate": "linux/nekowite.desktop.hbs",
+        "files": {
+          "/usr/share/doc/nekowite/copyright": "THIRD-PARTY-NOTICES.txt"
+        }
+      },
+      "rpm": {
+        "desktopTemplate": "linux/nekowite.desktop.hbs",
+        "files": {
+          "/usr/share/licenses/nekowite/THIRD-PARTY-NOTICES.txt": "THIRD-PARTY-NOTICES.txt"
+        }
+      },
+      "appimage": {
+        "files": {
+          "usr/share/doc/nekowite/copyright": "THIRD-PARTY-NOTICES.txt"
+        }
+      }
     }
   }
 }

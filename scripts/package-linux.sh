@@ -24,21 +24,21 @@ SHORT_VERSION="$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').ve
 BIN_NAME="nekowite_${SHORT_VERSION}_x64"
 TARGET="apps/desktop/src-tauri/target/release"
 
-echo "[1/6] Bundled engine"
+echo "[1/7] Bundled engine"
 # The sidecar is a build INPUT: `bundle.externalBin` names `binaries/opencode`, Tauri appends the
 # target triple itself, and a missing or wrong file there fails the build minutes in — or worse,
 # ships an app that has no engine. This runs the same verification P1 does, so a package is only
 # built from an artifact that is the one the release manifest pins.
 bash scripts/verify-opencode-linux.sh
 
-echo "[2/6] Tests"
+echo "[2/7] Tests"
 npx --yes pnpm --filter @nekowite/desktop test
 
-echo "[3/6] Typecheck + lint"
+echo "[3/7] Typecheck + lint"
 npx --yes pnpm --filter @nekowite/desktop typecheck
 npx --yes pnpm --filter @nekowite/desktop lint
 
-echo "[4/6] Build optimized executable and every bundle"
+echo "[4/7] Build optimized executable and every bundle"
 # `tauri build` already runs `beforeBuildCommand` (`pnpm build`); do not
 # pre-build Vite here or the frontend is compiled twice.
 #
@@ -98,7 +98,7 @@ if [ "$BUILD_STATUS" -ne 0 ]; then
 fi
 rm -f "$BUILD_STARTED"
 
-echo "[5/6] Copy release artifacts"
+echo "[5/7] Copy release artifacts"
 mkdir -p release
 
 # `-p`, or the mtimes below are the copy's and the closing note is a lie: plain
@@ -118,7 +118,7 @@ for f in "$TARGET/bundle/deb/"*.deb "$TARGET/bundle/rpm/"*.rpm "$TARGET/bundle/a
   sha256sum "release/$(basename "$f")"
 done
 
-echo "[6/6] Verify the engine inside each package"
+echo "[6/7] Verify the engine inside each package"
 # The step the whole packaging run exists to make checkable: §3.2 says the installed layout carries
 # the engine beside the app's own executable, §3.3 says a program that does not answer the protocol
 # is not an engine, and §11.2 says neither is proven by a build succeeding. This checks each package
@@ -126,6 +126,59 @@ echo "[6/6] Verify the engine inside each package"
 for f in release/*.deb release/*.rpm release/*.AppImage; do
   bash scripts/verify-opencode-linux.sh --bundle "$f"
 done
+
+echo
+echo "[7/7] Verify the notice file inside each package"
+# §3.3: 第三方许可证和分发义务进入发布清单；不要仅复制程序而漏掉通知文件. The notice itself is
+# `apps/desktop/src-tauri/THIRD-PARTY-NOTICES.txt`, and it reaches a package three ways — declared in
+# `tauri.conf.json` as `bundle.resources` (all three formats, landing in /usr/lib/nekowite/), as
+# `bundle.linux.deb.files` (/usr/share/doc/nekowite/copyright, where Debian policy expects it), as
+# `bundle.linux.rpm.files` (/usr/share/licenses/nekowite/) and as `bundle.linux.appimage.files`.
+#
+# This checks the canonical one for each format, not all four copies. The point is not completeness of
+# the copies: it is that a source tree holding a notice no bundle includes is the "built but
+# unreachable" defect this repository has found repeatedly, and here it would mean shipping someone
+# else's program, and a copyleft library, with no notice at all. A missing file fails the run rather
+# than being mentioned in the closing notes.
+NOTICE_SRC="apps/desktop/src-tauri/THIRD-PARTY-NOTICES.txt"
+[ -f "$NOTICE_SRC" ] || { echo "FAILED: $NOTICE_SRC is missing; nothing below can pass." >&2; exit 1; }
+
+notice_work="$(mktemp -d "$ROOT/apps/desktop/src-tauri/target/notice-check.XXXXXX")"
+trap 'rm -rf "$notice_work"' EXIT
+for f in release/*.deb release/*.rpm release/*.AppImage; do
+  label="$(basename "$f")"
+  dest="$notice_work/${label//[^A-Za-z0-9]/_}"
+  mkdir -p "$dest"
+  case "$f" in
+    *.deb)   dpkg-deb -x "$f" "$dest" ;;
+    *.rpm)   ( cd "$dest" && rpm2cpio "$f" | cpio -idm --quiet ) ;;
+    *.AppImage)
+      ( cd "$dest" && "$f" --appimage-extract >/dev/null )
+      if [ -d "$dest/squashfs-root" ]; then
+        shopt -s dotglob; mv "$dest/squashfs-root"/* "$dest/"; shopt -u dotglob
+        rmdir "$dest/squashfs-root"
+      fi ;;
+    *) echo "FAILED: $f is not a package this step knows how to open." >&2; exit 1 ;;
+  esac
+
+  # The one path per format that a person looking for the licence would open.
+  case "$f" in
+    *.deb)      want="$dest/usr/share/doc/nekowite/copyright" ;;
+    *.rpm)      want="$dest/usr/share/licenses/nekowite/THIRD-PARTY-NOTICES.txt" ;;
+    *.AppImage) want="$dest/usr/share/doc/nekowite/copyright" ;;
+  esac
+  [ -s "$want" ] || { echo "FAILED: $label carries no notice file at $want" >&2; exit 1; }
+  if ! cmp -s "$NOTICE_SRC" "$want"; then
+    echo "FAILED: $label ships a notice file that is not the one in the tree ($want)." >&2
+    exit 1
+  fi
+  # A notice that lost its licence texts in a truncating copy would still be a non-empty file.
+  grep -q 'END OF THIRD-PARTY NOTICES' "$want" \
+    || { echo "FAILED: $label's notice file is truncated — no end marker." >&2; exit 1; }
+  echo "  $label  notice present and identical to $NOTICE_SRC"
+done
+rm -rf "$notice_work"
+trap - EXIT
 
 echo
 echo "All four artifacts are from the single build above. Their mtimes in"
@@ -139,9 +192,13 @@ echo "launching it while an older copy is still open only raises that older"
 echo "window. Quit the running copy first, or you will be looking at the"
 echo "previous build and conclude the fixes did nothing."
 echo
-echo "Distribution obligation still open: these packages carry OpenCode"
-echo "(MIT, pinned in src/agent_runtime/update.rs), and no notice file for it"
-echo "travels with them yet — scripts/fetch-opencode-linux.sh installs the"
-echo "program and not the licence text. §3.3 forbids shipping someone else's"
-echo "program without its notices; see docs/architecture/agent-dependencies.md"
-echo "for why the licence work is deferred to the closing pass."
+echo "Distribution notices: each package now carries"
+echo "apps/desktop/src-tauri/THIRD-PARTY-NOTICES.txt — the bundled OpenCode"
+echo "engine (MIT, pinned in src/agent_runtime/update.rs), the Rust crates the"
+echo "release links, and the npm packages in the frontend bundle, with each"
+echo "licence's full text. Step [7/7] above is what proves it travelled."
+echo
+echo "One obligation the notice file records but does not discharge: the"
+echo "frontend bundles citeproc (CPAL-1.0 OR AGPL-1.0, neither permissive) and"
+echo "no branch has been elected. See the notice file's own note and"
+echo "docs/architecture/agent-dependencies.md."
