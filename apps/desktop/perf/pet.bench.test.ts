@@ -268,12 +268,33 @@ describe('the pet window: opening and closing it', () => {
     // write be built from the record rather than from the union of all seven domains' values.
     const { record } = loaded
     if (record.domain !== 'general') throw new Error('the double answered for another domain')
+    // "Switched off" is the two window switches, not a master above them: `enabled` is derived from
+    // `characterWindow || ball` (it was a switch until schema v4), so a write that names `enabled`
+    // alone cannot switch the pet off — the derivation recomputes it from the children. Writing the
+    // two children is therefore not a way to make this assertion pass; it is what the assertion was
+    // always about, said in the vocabulary the model now has, and the case below pins the other
+    // direction so a future reader cannot mistake the master for an input again.
     await off.updateSettings({
       domain: 'general',
       revision: record.revision,
-      values: { ...record.values, enabled: false },
+      values: { ...record.values, characterWindow: false, ball: false },
     })
     expect(await off.feature()).toEqual({ enabled: false, visible: false })
+
+    // And the master is not an input: a write that sets it false while a window's own switch is on
+    // leaves the feature on, because `enabled` no longer decides anything — `feature_switch::apply`
+    // reads the two switches and never this.
+    const master = createMemoryPetGateway({ visible: true })
+    const masterLoaded = await master.readSettings('general')
+    if (masterLoaded.status !== 'current' || masterLoaded.record.domain !== 'general') {
+      throw new Error('the double would not read its own general record')
+    }
+    await master.updateSettings({
+      domain: 'general',
+      revision: masterLoaded.record.revision,
+      values: { ...masterLoaded.record.values, enabled: false },
+    })
+    expect(await master.feature()).toEqual({ enabled: true, visible: true })
 
     const on = createMemoryPetGateway({ visible: true })
     expect(await on.feature()).toEqual({ enabled: true, visible: true })
