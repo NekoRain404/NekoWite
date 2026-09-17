@@ -1,54 +1,14 @@
 <script lang="ts">
 /**
- * The panel's copy tree, handed in rather than reached for.
+ * The panel's copy tree, which lives beside this file and is re-exported from here.
  *
- * One prop for the whole panel, holding one entry per component that needs words. They arrive
- * from above rather than being read here, so a missing sentence is a visible integration point
- * instead of an English string shipped in its place.
- *
- * The catalogue did not have the panel's keys when this prop was written, and it does now
- * (`src/i18n/namespaces/agent.ts`'s `agent.panel`, added with the composer's control row); the
- * tree is kept because the *shape* is what makes an unmounted or test-mounted panel say exactly
- * what its caller gave it. The newer components beside this one read their own defaults from the
- * catalogue and take these as overrides (`AgentCommandMenu.vue`, `AgentConfigRow.vue`), which is
- * the direction the rest of the tree moves in as its keys land.
+ * The move is the one `agent_runtime/permissions.rs` made for `PermissionPrompt`: the type is the
+ * panel's *interface with its caller*, so it declares its own module next to the component that
+ * takes it, and this file keeps the name importable so that `app/AgentRailBody.vue`,
+ * `features/agent/index.ts` and the panel's own tests go on importing it from where it has always
+ * been.
  */
-import type { AgentComposerLabels } from './AgentComposer.vue'
-import type { AgentSessionBarLabels } from './AgentSessionBar.vue'
-import type { AgentTimelineLabels } from './AgentTimeline.vue'
-
-export interface AgentPanelLabels {
-  bar: AgentSessionBarLabels
-  timeline: AgentTimelineLabels
-  composer: AgentComposerLabels
-  /** The one notice the panel itself raises. */
-  notice: {
-    /** The record has a hole: a frame the subscription never saw. */
-    gap: string
-    /** Take a fresh snapshot and carry on from it. */
-    resync: string
-  }
-  /** The transcript's first line, drawn only while the transcript is empty. It is one sentence
-   *  with the engine's name in it, so it arrives assembled rather than in parts. */
-  empty: {
-    line: string
-  }
-  /**
-   * The options menu — the panel's one place from which the actions that live outside it are
-   * reached.
-   *
-   * `label` names both the control in the bar and the box it opens, because they are one
-   * sentence; the panel hands it down rather than the bar keeping its own copy for the reason
-   * {@link AgentSessionBar}'s `menuLabel` gives.
-   */
-  menu: {
-    label: string
-    /** The door to the agents tree in the settings dialog (row 43). */
-    settings: string
-    /** Put the rail back on the chat panel — the way out the live panel had nowhere to offer. */
-    chat: string
-  }
-}
+export type { AgentPanelLabels } from './agent-panel-labels'
 </script>
 
 <script setup lang="ts">
@@ -106,49 +66,37 @@ export interface AgentPanelLabels {
  * The session arrives as a prop and is read once: a panel is mounted *per session*, so the
  * composition site keys it (or remounts it) rather than re-pointing it at another session —
  * a store binding cannot be moved to a session the panel was not mounted for.
+ *
+ * **Four of this panel's concerns are not in this file**, and each is one subject with its own
+ * rules rather than a slice of this one: the conversation's read-only facts
+ * (`use-agent-conversation`), the engine's other sessions (`use-agent-session-history`), the
+ * options menu (`use-agent-panel-menu`) and the `/` menu's wiring (`use-agent-command-menu`).
+ * They were moved out when this file went past the size this project allows one component, and
+ * they moved as *moves* — the template below still places every block, which is what this file's
+ * job is, and the comments travelled with the code they explain.
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import type {
   AgentCapabilityReport,
-  AgentCommand,
   AgentGateway,
   AgentPromptAttachment,
   AgentSession,
-  AgentToolStatus,
 } from '../../../platform/gateways/agent-contracts'
-import { t } from '../../../i18n'
-import { useAgentCommands } from '../composables/use-agent-commands'
-import { useDetachedPopup } from '../composables/use-detached-popup'
 import { useAgentSession } from '../composables/use-agent-session'
-import {
-  configControls,
-  setConfigOption,
-  type AgentConfigControl,
-} from '../services/agent-config-options'
-import {
-  agentSessionHistoryRows,
-  capabilityAvailable,
-  freeAgentSession,
-  type AgentSessionHistoryRow,
-} from '../services/agent-session-history'
-import { describeFailure } from '../services/agent-session-subscription'
-import { isRunLive } from '../services/agent-session-view'
-import {
-  INITIAL_AGENT_TURN_CLOCK,
-  noteRunState,
-  type AgentTurnClock,
-} from '../services/agent-turn-stats'
-import type { AgentToolEntry } from '../services/agent-timeline'
+import { useAgentCommandMenu } from '../composables/use-agent-command-menu'
+import { useAgentConfigRow } from '../composables/use-agent-config-row'
+import { useAgentConversation } from '../composables/use-agent-conversation'
+import { useAgentPanelMenu } from '../composables/use-agent-panel-menu'
+import { useAgentSessionHistory } from '../composables/use-agent-session-history'
+import type { AgentPanelLabels } from './agent-panel-labels'
 import { useAgentSessionStore } from '../stores/agent-session'
-import AgentCommandMenu from './AgentCommandMenu.vue'
 import AgentComposer from './AgentComposer.vue'
-import AgentPanelMenu, { type AgentPanelMenuRow } from './AgentPanelMenu.vue'
+import AgentCommandMenu from './AgentCommandMenu.vue'
+import AgentPanelMenu from './AgentPanelMenu.vue'
+import AgentPanelNotices from './AgentPanelNotices.vue'
 import AgentPermissionPrompt from './AgentPermissionPrompt.vue'
 import AgentSessionBar from './AgentSessionBar.vue'
-import AgentSessionHistoryMenu, {
-  type AgentSessionHistoryFooter,
-  type AgentSessionHistoryView,
-} from './AgentSessionHistoryMenu.vue'
+import AgentSessionHistoryMenu from './AgentSessionHistoryMenu.vue'
 import AgentTimeline from './AgentTimeline.vue'
 
 const props = defineProps<{
@@ -252,31 +200,6 @@ const {
 } = useAgentSession({ gateway: props.gateway, session: props.session })
 
 /**
- * What this session is called, taken from whichever of the engine's two statements arrived.
- *
- * The stream's is the newer one and wins: `view.title` is written by `session-changed`, which is
- * the engine saying "this session is called X" *now*. The session's own is the statement that
- * comes with a reopen — `session/list` is the only answer this app has ever been given a session's
- * name in, the load response carries none, and `AgentSession.title` is where the adapter puts the
- * row's own string so the bar a remount draws can show it. Before that fix the bar fell straight
- * through to `labels.untitled` after a resume, so a reader who picked a named row out of the list
- * arrived at a bar saying "New {engine} session" — about the very session whose name they had just
- * read. `null` here is the honest third answer, and the bar has a sentence for it.
- *
- * Read as a prop rather than written into the record's view: the view is rebuilt from the host's
- * snapshot on every mount (`agent-session-snapshot.ts`), and the snapshot has no title field — a
- * seed written there would be wiped by the handshake that follows it.
- *
- * The one thing this cannot express is a frame that *clears* a title: the view's `null` means both
- * "nothing has been said" and "the name was taken away" (`AgentSessionView.title` records that
- * ambiguity itself), so a cleared title would fall back to the name the reopen carried. Nothing
- * can send one today — the frame that would is `SessionInfoUpdate`, which the host does not map —
- * and the alternative, reading only the view, is the defect this replaces: a resumed session
- * drawn as "New {engine} session" while the reader had just read its name in the list.
- */
-const title = computed<string | null>(() => view.value?.title ?? props.session.title)
-
-/**
  * `unread` is deliberately not taken from the binding above, and the reason is worth writing down
  * because the state and this component's shape make it look like an oversight.
  *
@@ -299,566 +222,160 @@ const title = computed<string | null>(() => view.value?.title ?? props.session.t
  */
 
 /**
- * Where this session's transcript was left, for the timeline to take at mount (§5.1
- * 「每会话独立…滚动位置」).
+ * The conversation on screen: what this session is called, how long the turn has taken, and the
+ * request it is waiting on. Read-only derivations of the view the binding above returns — the
+ * rules behind them, and why each is written the way it is, are in `use-agent-conversation`.
  *
- * Read from the store here rather than taken as a prop, because the binding below writes the
- * position (`setScroll`) and has no reader for it: a session the panel has shown before keeps
- * its record across a collapse, and this is the only moment that record is of any use. A
- * record that does not exist yet means nobody has read this session — `undefined` opens it at
- * the end rather than at offset 0, which is what a first look wants. The one case the store
+ * The one thing supplied from here is the timeline's opening position, for §5.1
+ * 「每会话独立…滚动位置」: read from the store rather than taken as a prop, because the binding
+ * above writes the position (`setScroll`) and has no reader for it. A session the panel has shown
+ * before keeps its record across a collapse, and this is the only moment that record is of any
+ * use. A record that does not exist yet means nobody has read this session — `undefined` opens it
+ * at the end rather than at offset 0, which is what a first look wants. The one case the store
  * cannot tell apart is a record that exists but was never scrolled; that is a session whose
  * transcript the reader has not seen, and opening it at the end is the cheaper mistake.
  */
-const initialPosition = store.recordFor(key)?.scrollTop
-
-/**
- * The refused-frame sentence, or `null` while there is nothing to say.
- *
- * Read from the catalogue here rather than through `labels.notice`, because it has two slots
- * (`{n}` and the reducer's own word) and a slot is filled where the sentence is read — the
- * history menu's ages are read the same way. `dropped` and `lastDrop` are written together by the
- * store, so a count above zero always has a reason to name.
- *
- * The reason travels as the machine's own word, not as a sentence of ours: seven refusals are
- * spelled in `AgentDropReason`, a page that translated them would be inventing seven explanations
- * for states only the reducer can tell apart, and the word is what a bug report needs.
- */
-const droppedSentence = computed<string | null>(() => {
-  if (dropped.value === 0) return null
-  return t('agent.panel.notice.dropped', { n: dropped.value, reason: lastDrop.value ?? '' })
+const {
+  title,
+  initialPosition,
+  droppedSentence,
+  running,
+  elapsedMs,
+  pending,
+  pendingToolStatus,
+  expired,
+} = useAgentConversation({
+  session: props.session,
+  view,
+  dropped,
+  lastDrop,
+  initialScrollTop: store.recordFor(key)?.scrollTop,
 })
 
-/**
- * The composer's own question: is a run in flight, so that its button is a stop. Read
- * from the view through the store's own definition of "live" rather than a second list of states
- * that could drift from it. */
-const running = computed(() => view.value !== null && isRunLive(view.value))
-
-/**
- * How long the last turn took (row 37's elapsed half), measured here because nothing else can:
- * the wire carries no duration — no timestamp on the envelope, no elapsed on `run-finished` — so
- * the only two moments that exist are the view becoming live and the view stopping being live,
- * and this is the component that watches both.
- *
- * **Not `immediate`.** A panel that mounts while a run is already in flight did not see it
- * begin, and a stopwatch started at mount would report the part of the turn this window happened
- * to watch as if it were the whole of it. Starting from {@link INITIAL_AGENT_TURN_CLOCK} and
- * only ever feeding it *transitions* means a turn is timed whole or not at all, and a resumed
- * session shows the tokens the host replayed beside no clock rather than beside a lie.
- *
- * `Date.now()` and not `performance.now()`: the value is compared with nothing and shown as
- * seconds, so a monotonic origin buys nothing, and this is the clock the rest of the panel's
- * faces already read. `services/agent-turn-stats.ts` holds the policy and takes the time as a
- * parameter, which is what keeps it testable without waiting.
- */
-const turnClock = ref<AgentTurnClock>(INITIAL_AGENT_TURN_CLOCK)
-watch(running, (live) => {
-  turnClock.value = noteRunState(turnClock.value, live, Date.now())
-})
-const elapsedMs = computed<number | null>(() => turnClock.value.lastMs)
-
-/**
- * The request the reader can answer: the first one bound to the run in flight.
- *
- * §6.3 binds a request to the turn that asked for it, and the store refuses an answer for a
- * request whose run is not the live one — so showing another turn's request would be offering a
- * button the store will not accept. One at a time is the engine's own arrangement as well: a
- * turn may raise several, and the store stays in `waiting-permission` until the last is answered.
- */
-const pending = computed(() => {
-  const held = view.value
-  if (held === null) return null
-  return held.permissions.find((request) => request.runId === held.runId) ?? null
+/** The `/` menu (T8): the engine's published commands for this session, filtered by the token
+ *  being typed. Both halves of it are the panel's — the draft is the store's and the keys are the
+ *  composer's — which is why it is wired here and owned by `use-agent-command-menu`. */
+const { commands, choose: chooseCommand, composition: onComposition } = useAgentCommandMenu({
+  view,
+  text: draft,
 })
 
-/**
- * The transcript's row for the tool call the pending request is about, when it already has one.
- *
- * The join is by `toolCallId`, which is what the contract carries on both sides for exactly this
- * (`AgentPermissionRequest.toolCallId`'s own comment). It is made once, here, and read for the one
- * thing the request does not carry itself: the call's *status*, which arrives on the transcript's
- * frames rather than on the request.
- *
- * **Not for the blocks.** They used to be read off this row and handed to the prompt as a
- * fallback; the request carries its own now (`AgentPermissionRequest.content`), and the row is
- * deliberately not consulted for them — the two can disagree, and a prompt that drew the row's
- * would be showing the reader something other than what the engine asked with.
- */
-const pendingToolRow = computed<AgentToolEntry | null>(() => {
-  const request = pending.value
-  if (request === null) return null
-  // The predicate is the guard, not only the test: without it `find` answers with the whole
-  // `AgentTimelineEntry` union and `status` is a property of one member. `AgentToolEntry` carries
-  // it as a required field, so nothing here is being widened — the row that was selected is
-  // narrowed to the kind it was selected by.
-  const row = timeline.value.find(
-    (entry): entry is AgentToolEntry =>
-      entry.kind === 'tool' && entry.toolCallId === request.payload.toolCallId,
-  )
-  return row ?? null
+/** The composer's control row: the session's own config options, and the one write the panel
+ *  makes to the session's state. The call itself is `use-agent-config-row`'s. */
+const {
+  controls: config,
+  busy: configBusy,
+  failure: configFailure,
+  set: onConfigSet,
+} = useAgentConfigRow({
+  gateway: props.gateway,
+  session: props.session,
+  view,
+  adopt: (options) => store.adoptOptions(key, options),
 })
-
-/**
- * The status of that call, as the prompt reads it.
- *
- * `null` is "the host knows nothing here", which T7's prompt must not read as "this call is
- * over": a request whose row has not arrived yet is still waiting for its answer.
- */
-const pendingToolStatus = computed<AgentToolStatus | null>(
-  () => pendingToolRow.value?.status ?? null,
-)
-
-/** Whether the request can no longer be answered — the store's own rule, not a second opinion:
- *  an answer for a request whose run is not live is refused there. */
-const expired = computed(() => view.value === null || !isRunLive(view.value))
-
-/**
- * The session's own configuration options, as the composer's control row draws them.
- *
- * Read from the view — the engine's own frames, replaced whole by each `config-changed` — and
- * seeded by the session handle for as long as no frame has carried them, which is the state a
- * session is in the moment it opens. `services/agent-config-options.ts` holds that rule and the
- * reason for it; nothing here decides what the row contains, because what it contains is the
- * engine's report rather than this app's list.
- */
-const config = computed<readonly AgentConfigControl[]>(() =>
-  configControls(props.session, view.value?.config ?? []),
-)
-
-/** The control whose value is being set right now. A second choice while one is in flight is
- *  refused by the control itself (it is disabled), so this is also what the row reads to know
- *  which trigger to hold still. */
-const configBusy = ref<string | null>(null)
-
-/** The last set that did not take. Kept rather than dropped because the row goes on showing the
- *  engine's value: without a word about it, a press that did nothing looks like a press that
- *  worked. */
-const configFailure = ref<{ key: string; message: string } | null>(null)
-
-/**
- * One choice in the control row.
- *
- * Not the store's business and not the composer's: the option belongs to the session and the
- * call belongs to the gateway, and both are here. A refusal is already reported to the reader by
- * the row that made the choice, so nothing is thrown at a click handler that could not catch it.
- */
-/**
- * One choice in the control row.
- *
- * Not the store's business and not the composer's: the option belongs to the session and the
- * call belongs to the gateway, and both are here. A refusal is already reported to the reader by
- * the row that made the choice, so nothing is thrown at a click handler that could not catch it.
- *
- * **The engine's answer is written into the view, and that is the half that was missing.** The
- * command returns the refreshed option list (`commands/agent.rs`), the port used to drop it, and
- * the row therefore moved only when the engine *also* announced the change as `config-changed` —
- * true of the pinned engine, and not something a caller may rely on. Both paths end in the same
- * field, so the notification now finds the list already there rather than being the only way it
- * ever arrives. A `null` answer means the list could not be read, and the row keeps the engine's
- * last known value rather than being cleared by a response nobody understood.
- */
-async function onConfigSet(configKey: string, value: string | boolean): Promise<void> {
-  const control = config.value.find((entry) => entry.key === configKey)
-  if (control === undefined) return
-  configBusy.value = configKey
-  configFailure.value = null
-  const outcome = await setConfigOption(props.gateway, props.session, control, value)
-  configBusy.value = null
-  if (!outcome.accepted && outcome.reason === 'refused') {
-    configFailure.value = { key: configKey, message: outcome.message }
-  }
-  if (outcome.accepted && outcome.options !== null) {
-    store.adoptOptions(key, outcome.options)
-  }
-}
-
-/**
- * The `/` menu (T8): the engine's published commands for this session, filtered by the token
- * being typed.
- *
- * It lives here because both halves of it are here — the draft is the store's and the keys are
- * the composer's — and the panel is where the two meet. Its keys are taken *before* the
- * composer's own, which is why the field is handed `onKeydown` and asks for a verdict before
- * deciding what Enter means; the command's name is written back into the draft, because §4.1
- * sends a command as an ordinary prompt rather than running anything on this side.
- *
- * **The list it filters arrives here frame by frame**, through the store's own feed
- * (`store.observeEvents`): `useAgentCommands` is fed the engine's events through its
- * `accept(event)`, and those frames belong to the store. The reduced view is deliberately not the
- * source — it reports "nothing published yet" and "the engine published an empty list" as the same
- * empty `commands` array, and T8's menu tells those apart because the user's next move differs.
- * Feeding it the frames keeps that distinction where it is already modelled, and it is what makes
- * the empty state's `/ for commands` a true sentence rather than an offer of a menu that would
- * never fill.
- */
-const commands = useAgentCommands({
-  identity: () => view.value?.identity ?? null,
-  text: () => draft.value,
-  select: chooseCommand,
-})
-
-// The feed is released with the panel: a listener left behind would keep filtering frames for a
-// session whose menu is not on screen any more. Registered at setup rather than on mount, because
-// the events of the very first frame must not be missed between the two.
-const stopObserving = store.observeEvents((event) => commands.accept(event))
-onBeforeUnmount(stopObserving)
-
-// ...and the second way the same fact arrives. A *call* the host refused is not a frame, so it
-// never reaches `accept`: `agent_prompt` answering `session-stale` (or `runtime-unavailable`, or
-// `process-exited`) is recorded on the view by the store's send, and this is where the menu hears
-// it. The watch is on the failure alone rather than on the view, because every frame replaces the
-// view and the menu would otherwise be re-told about a failure it has already acted on.
-//
-// Only the codes that mean the conversation is gone do anything (`invalidate` is the rule's own
-// home, beside the frame arm that applies the same list). A refusal about the turn — the race of a
-// second send — leaves the rows alone, which is what the reader would expect: the session is busy,
-// not absent.
-watch(
-  () => view.value?.failure?.code ?? null,
-  (code) => {
-    if (code !== null) commands.invalidate(code)
-  },
-)
-
-/**
- * What settling on a menu row means: the command's name replaces the token, and everything the
- * reader typed after it is kept exactly as it was — this function cannot read an argument, so it
- * cannot trim, requote or reinterpret one (§4.1 「原样参数保留」).
- *
- * One function for both paths on purpose: `<AgentCommandMenu>`'s `@select` (a click) and T8's
- * own `select` (Enter on the highlighted row) are the same act on the same row.
- */
-function chooseCommand(command: AgentCommand): void {
-  draft.value = commands.textWithCommand(command)
-}
-
-function onComposition(phase: 'start' | 'end'): void {
-  if (phase === 'start') commands.onCompositionStart()
-  else commands.onCompositionEnd()
-}
-
-function onSend(text: string, attachments: readonly AgentPromptAttachment[]): void {
-  // A refusal is the store's to report and it keeps the text itself (§5.1: an error does not
-  // clear the draft); there is nothing for the panel to do with the outcome here.
-  void send(text, attachments)
-}
-
-/**
- * The sessions this engine holds (§5.3's history control): whether the control may be drawn at
- * all, and the list it opens.
- *
- * **Both controls are capabilities first.** `session/list` and `session/close` are what the engine
- * reports about itself in its handshake, `AgentGateway.capabilities` is where that report is read
- * back, and only an `available` finding draws the control that needs it — see
- * `capabilityAvailable`. The check happens once, on mount, because a panel is mounted per session:
- * a report belongs to the runtime the session belongs to, and a runtime the host replaced has no
- * answer left to give. A report this window could not read at all is *not* an available one:
- * neither control is drawn, and nothing is said about a call nobody answered.
- */
-const historyOffered = ref(false)
-const closeOffered = ref(false)
 
 /**
  * The whole report, kept as it arrived, for the surfaces that need a fact this panel does not read
  * itself.
  *
- * Two rows of it decide this panel's own controls (`historyOffered`, `closeOffered`), and two more
- * decide the composer's — whether a message may carry an image, and whether a file's contents may
- * travel. The composer is handed the *report* rather than two more booleans, because a boolean
- * cannot carry the third state: `unavailable` and `unverified` are different facts about an engine,
- * and a surface that showed them alike would be telling a reader their engine refuses something
- * nobody ever asked it.
+ * The composer is handed the *report* rather than two more booleans, because a boolean cannot
+ * carry the third state: `unavailable` and `unverified` are different facts about an engine, and a
+ * surface that showed them alike would be telling a reader their engine refuses something nobody
+ * ever asked it. The history surface reads its own two gates off the same report — an engine may
+ * answer `session/close` without answering `session/list`, and each control is drawn on its own
+ * answer rather than on the pair.
  *
- * The report belongs to the runtime the session belongs to and is read once, on mount, for the
- * reason above it: a panel is mounted per session, and a runtime the host has replaced has no
- * answer left to give.
+ * The report belongs to the runtime the session belongs to and is read once, on mount: a panel is
+ * mounted per session, and a runtime the host has replaced has no answer left to give.
  */
 const capabilityReports = ref<readonly AgentCapabilityReport[] | null>(null)
 
 onMounted(async () => {
   try {
-    const reports = await props.gateway.capabilities(props.session)
-    capabilityReports.value = reports
-    historyOffered.value = capabilityAvailable(reports, 'session-list')
-    closeOffered.value = capabilityAvailable(reports, 'session-close')
+    capabilityReports.value = await props.gateway.capabilities(props.session)
   } catch {
     // Nothing arrived, so nothing is offered — and the composer is left with `null` rather than
     // with an empty report. The two are different states: one is an engine that answered nothing,
     // the other an engine that answered "no".
     capabilityReports.value = null
-    historyOffered.value = false
-    closeOffered.value = false
   }
 })
 
 const barEl = ref<InstanceType<typeof AgentSessionBar> | null>(null)
+/** The two teleported popups, rendered by the template below and measured by the composables. */
 const historyEl = ref<InstanceType<typeof AgentSessionHistoryMenu> | null>(null)
 const menuEl = ref<InstanceType<typeof AgentPanelMenu> | null>(null)
 
-/** The list's element id, so the rows and the listbox agree on one name. */
-const historyListId = `agent-history-${props.session.sessionId}`
-
-/** What the menu is showing; four states rather than a `loaded` flag, because "the engine holds
- *  nothing" and "the engine did not answer" are different sentences (see the menu). */
-const historyView = ref<AgentSessionHistoryView>('loading')
-const historyRows = ref<readonly AgentSessionHistoryRow[]>([])
-const historyReason = ref<string | null>(null)
-/** The engine named a further page, so the list below is not the whole history. */
-const historyMore = ref(false)
 /**
- * The cursor the engine handed back with the page on screen — the only thing that can fetch the
- * next one.
+ * The engine's *other* sessions (§5.3's history control): whether the control may be drawn at all,
+ * the list it opens, and the free action's two calls. The control itself is the bar's; everything
+ * behind it is `use-agent-session-history`'s, which is also where each gate and each of the four
+ * states is explained.
  *
- * Held here rather than derived from the rows because it is opaque: this side cannot read it,
- * cannot reconstruct it from what it has, and may only give it back to the engine that issued it.
- * A list that showed the engine's "there is more" and kept no cursor was the whole of this
- * defect; a cursor kept and never passed back is the same defect one layer down.
+ * The three things this file supplies are the ones only it has: the element the list hangs from
+ * and the element the list *is* — both of which the template below owns — and the two events a
+ * pick or a new-session leaves through. Both leave the component rather than being carried out
+ * here, because a load has to be made for the rail's vault and it replaces the session this panel
+ * is mounted on.
  */
-const historyCursor = ref<string | null>(null)
-/** A page being read right now, so the control can say so and refuse a second press. */
-const historyMoreBusy = ref(false)
-/** Why the last page could not be read, in the gateway's own sentence. */
-const historyMoreReason = ref<string | null>(null)
-/** The instant every row's age is read against — one clock for the whole list. */
-const historyAt = ref(0)
-
-/**
- * Where the list goes, when it closes, and who owns Escape while it is up: the app's popup recipe,
- * measured against the control in the bar (which exposes its element for exactly this).
- */
-const historyMenu = useDetachedPopup({
-  floor: 220,
-  claim: 'agent-session-history',
+const {
+  offered: historyOffered,
+  closeable: closeOffered,
+  open: historyOpen,
+  placement: historyPlacement,
+  view: historyView,
+  rows: historyRows,
+  reason: historyReason,
+  more: historyMore,
+  moreBusy: historyMoreBusy,
+  moreReason: historyMoreReason,
+  now: historyAt,
+  footer: historyFooter,
+  confirming: freeTarget,
+  listId: historyListId,
+  toggle: openHistory,
+  close: closeHistory,
+  loadMore: loadMoreHistory,
+  ask: askFree,
+  cancel: cancelFree,
+  confirm: confirmFree,
+  pick: onHistoryPick,
+  openNew: onHistoryNew,
+} = useAgentSessionHistory({
+  gateway: props.gateway,
+  sessionId: props.session.sessionId,
+  cwd: props.cwd,
+  capabilities: capabilityReports,
+  openable: props.openable === true,
   trigger: computed(() => barEl.value?.triggerElement() ?? null),
-  popup: () => historyEl.value?.element() ?? null,
+  popup: historyEl,
+  onResume: (sessionId) => emit('resume', sessionId),
+  onNewSession: () => emit('new-session'),
 })
 
-/**
- * The rows the options menu would draw, which is also the answer to whether there is a control at
- * all.
- *
- * Derived from what the caller can carry rather than kept as a list of its own, so a row cannot
- * outlive the ability behind it: the menu is drawn only while this is non-empty, and an empty one
- * is not drawn rather than drawn empty. Both rows are doors out of this component — the settings
- * dialog and the rail's switch — which is why each is gated on its own capability rather than on
- * "the panel is live".
- */
-const menuRows = computed<readonly AgentPanelMenuRow[]>(() => {
-  const rows: AgentPanelMenuRow[] = []
-  if (props.settingsOpenable === true) rows.push({ id: 'settings', label: props.labels.menu.settings })
-  if (props.chatOpenable === true) rows.push({ id: 'chat', label: props.labels.menu.chat })
-  return rows
-})
-
-/**
- * Where the menu goes, when it closes, and who owns Escape while it is up — the same recipe as
- * the session list beside it, measured against the control in the bar.
- */
-const optionsMenu = useDetachedPopup({
-  floor: 180,
-  claim: 'agent-options-menu',
+/** The options menu, whose two rows are both doors out of this component — see
+ *  `use-agent-panel-menu` for why each is gated on its own capability. */
+const {
+  rows: menuRows,
+  open: menuOpenState,
+  placement: menuPlacement,
+  toggle: toggleMenu,
+  close: closeMenu,
+  choose: chooseMenuRow,
+} = useAgentPanelMenu({
   trigger: computed(() => barEl.value?.menuElement() ?? null),
-  popup: () => menuEl.value?.element() ?? null,
+  popup: menuEl,
+  settingsOpenable: props.settingsOpenable === true,
+  chatOpenable: props.chatOpenable === true,
+  labels: { settings: props.labels.menu.settings, chat: props.labels.menu.chat },
+  onSettings: () => emit('open-settings'),
+  onChat: () => emit('use-chat'),
 })
 
-/** Open the menu, or take it away — the trigger is a toggle, like the history control beside it. */
-async function toggleMenu(): Promise<void> {
-  if (optionsMenu.open.value) {
-    closeMenu()
-    return
-  }
-  await optionsMenu.show()
-  menuEl.value?.focusFirst()
-}
-
-/** Close the menu and hand the keyboard back to the control it belongs to. */
-function closeMenu(): void {
-  optionsMenu.hide()
-  barEl.value?.menuElement()?.focus()
-}
-
-/**
- * Act on a row.
- *
- * Both rows leave as an event, because neither thing they ask for is this component's: the dialog
- * belongs to the window root, and the rail's switch to the shell that reads it. `id` is typed as a
- * plain string because that is what crosses a component boundary in this codebase, and the two
- * cases below are exhaustive against {@link menuRows} — the ids pushed there and the ids handled
- * here are the same pair, and a row added to only one of them fails `AgentPanel.menu.test.ts`,
- * which is the test that exists for exactly that.
- */
-function chooseMenuRow(id: string): void {
-  closeMenu()
-  switch (id) {
-    case 'settings':
-      emit('open-settings')
-      return
-    case 'chat':
-      emit('use-chat')
-  }
-}
-
-/**
- * Show the engine's sessions, or take the list away again.
- *
- * The read is started before the popup is measured so the list is on screen — with its own
- * "reading" line — while the engine answers, and the outcome is *settled into a value* rather
- * than left as a rejecting promise for the two awaits in between to trip over.
- */
-async function openHistory(): Promise<void> {
-  if (historyMenu.open.value) {
-    closeHistory()
-    return
-  }
-  historyView.value = 'loading'
-  historyReason.value = null
-  // Opening the list asks for the first page: whatever cursor the reader walked to last time is
-  // a position in a list that is being rebuilt from the top, and reusing it would splice a page
-  // of the engine's table onto a list that no longer has the rows it continued from.
-  historyCursor.value = null
-  historyMoreReason.value = null
-  const answer = readHistory()
-  await historyMenu.show()
-  await answer
-  historyEl.value?.focus()
-}
-
-/**
- * Ask the engine for its list, and draw whatever it answers.
- *
- * One function for both readers — the control opening the list, and the refresh after a free —
- * because both are the same question and a second copy is a second place the four states could be
- * got wrong. The outcome is *settled into a value* rather than left as a rejecting promise for
- * the awaits around it to trip over, and everything it writes is the engine's own answer: the
- * rows, whether the list is a whole page, and the sentence a refusal came with.
- */
-async function readHistory(cursor: string | null = null): Promise<void> {
-  const settled = await props.gateway.listSessions(cursor ?? undefined).then(
-    (history) => ({ ok: true as const, history }),
-    (error: unknown) => ({ ok: false as const, error }),
-  )
-  if (!settled.ok) {
-    // The gateway's own sentence, shown in the list rather than swallowed: a control that asked
-    // the engine something and got nothing back owes the reader the reason. Which of the two
-    // sentences depends on what was asked: a first page that could not be read leaves no list to
-    // draw, and a *later* one leaves the rows on screen and says the page failed beside them —
-    // replacing a list the reader is using with an error would lose what they were reading.
-    const message = describeFailure(settled.error).message
-    if (cursor === null) {
-      historyReason.value = message
-      historyView.value = 'unreadable'
-    } else {
-      historyMoreReason.value = message
-    }
-    return
-  }
-  historyAt.value = Date.now()
-  const rows = agentSessionHistoryRows(settled.history, {
-    currentSessionId: props.session.sessionId,
-    cwd: props.cwd,
-  })
-  // A page is *appended* to the one before it, and only a first read replaces: the rows arrive in
-  // the engine's own order, and a page spliced in somewhere else would reorder a list the reader
-  // is reading.
-  historyRows.value = cursor === null ? rows : [...historyRows.value, ...rows]
-  historyCursor.value = settled.history.nextCursor
-  historyMore.value = settled.history.nextCursor !== null
-  historyView.value = historyRows.value.length === 0 ? 'empty' : 'rows'
-}
-
-/**
- * The page the engine named, asked for with the cursor it issued.
- *
- * Guarded by the cursor and by the busy flag rather than by the button alone: the button is
- * disabled while a read is in flight, and a second press that arrived anyway would ask for the
- * same page twice and draw every row of it twice. A refusal appends nothing, leaves the list
- * where it was, and puts the engine's sentence under the control.
- */
-async function loadMoreHistory(): Promise<void> {
-  const cursor = historyCursor.value
-  if (cursor === null || historyMoreBusy.value) return
-  historyMoreBusy.value = true
-  historyMoreReason.value = null
-  try {
-    await readHistory(cursor)
-  } finally {
-    historyMoreBusy.value = false
-  }
-}
-
-/** Close the list and hand the keyboard back to the control it belongs to. */
-function closeHistory(): void {
-  historyMenu.hide()
-  // The question goes with the list: a confirmation is about a row the reader can see, and one
-  // that outlived its list would be answered against a subject that is no longer on screen.
-  freeTarget.value = null
-  historyFooter.value = null
-  barEl.value?.triggerElement()?.focus()
-}
-
-/**
- * The free action: the strip under the rows, and the two calls behind it.
- *
- * `session/close` is a real change on the engine — it stops serving the session and cancels
- * whatever it was running — so the button that starts it asks first, and the answer's sentence
- * says the thing that would otherwise read as a failure: **the engine keeps the session in its
- * list**. That is measured behaviour, not leniency (`agent_session_lifecycle_test.rs` §4.4: the
- * row is still there afterwards, and removing one is `session/delete`, which this engine answers
- * `-32601` for). A reader who presses this and sees the row still on screen must not conclude it
- * did not work.
- */
-const freeTarget = ref<string | null>(null)
-const freeBusy = ref(false)
-const historyFooter = ref<AgentSessionHistoryFooter | null>(null)
-
-/** A row's action was pressed: ask, and name the row the question is about. */
-function askFree(sessionId: string): void {
-  freeTarget.value = sessionId
-  historyFooter.value = { kind: 'confirm' }
-}
-
-/** No: the row stays, and so does the engine's session. */
-function cancelFree(): void {
-  freeTarget.value = null
-  historyFooter.value = null
-}
-
-/** Yes: one call, then the engine's own list again. */
-async function confirmFree(): Promise<void> {
-  const sessionId = freeTarget.value
-  if (sessionId === null || freeBusy.value) return
-  freeBusy.value = true
-  try {
-    await freeAgentSession(props.gateway, sessionId)
-    // The list is *re-read* rather than edited: the engine's answer is what the reader sees, and
-    // the row is expected to still be in it. Anything else — dropping the row here — would be
-    // this window drawing its own idea of what a close means. From the first page, because the
-    // cursor the reader had walked to belongs to a table that just changed under it.
-    await readHistory()
-    freeTarget.value = null
-    historyFooter.value = { kind: 'freed' }
-  } catch (error) {
-    historyFooter.value = { kind: 'failed', reason: describeFailure(error).message }
-  } finally {
-    freeBusy.value = false
-  }
-}
-
-/**
- * One row settled on: close the list, and ask the rail for the session — unless it is the one
- * already on screen.
- *
- * That row is not an error and not a call. The engine refuses a load of a session it is currently
- * serving (`session-stale`, documented on `AgentGateway.loadSession`), and the honest reading of
- * "show me this one" about the session already showing is that there is nothing to do. The row is
- * drawn and marked as the open one rather than hidden: it is the engine's answer, and dropping it
- * would be this window editing a list the engine gave.
- */
-function onHistoryPick(sessionId: string): void {
-  closeHistory()
-  if (sessionId === props.session.sessionId) return
-  emit('resume', sessionId)
+function onSend(text: string, attachments: readonly AgentPromptAttachment[]): void {
+  // A refusal is the store's to report and it keeps the text itself (§5.1: an error does not
+  // clear the draft); there is nothing for the panel to do with the outcome here.
+  void send(text, attachments)
 }
 </script>
 
@@ -875,60 +392,26 @@ function onHistoryPick(sessionId: string): void {
       :result="view?.lastResult ?? null"
       :elapsed-ms="elapsedMs"
       :history="historyOffered"
-      :history-open="historyMenu.open.value"
+      :history-open="historyOpen"
       :menu="menuRows.length > 0"
-      :menu-open="optionsMenu.open.value"
+      :menu-open="menuOpenState"
       :menu-label="labels.menu.label"
       :labels="labels.bar"
       @history="openHistory"
       @menu="toggleMenu"
     />
-    <p
-      v-if="gap"
-      class="agent-panel-notice"
-      role="status"
-    >
-      <span class="agent-panel-notice-text">{{ labels.notice.gap }}</span>
-      <button
-        class="agent-panel-resync"
-        type="button"
-        @click="resync"
-      >
-        {{ labels.notice.resync }}
-      </button>
-    </p>
-    <!-- The other way the record on screen can stop being the session's record: frames that
-         arrived and were refused. Drawn only above zero (`dropped` is cumulative for the
-         session, so a naught is the ordinary state and a badge reading "0" would say nothing),
-         and it carries no button: the counter is not cleared by a reload, so a resync here would
-         be a control that leaves its own sentence standing.
-         The sentence says what happened and names the reducer's last reason — it does not say
-         the transcript is incomplete, because it is not always: a re-subscription replays frames
-         the view already has, and their refusal is `duplicate-sequence`
-         (`agent-event-reducer.ts`, `judgeSequence`). A sentence that read "content is missing"
-         would be false for the commonest case, which is the second kind of dishonesty §5.2
-         forbids. It sits in the flow above the transcript like the gap notice, and moving the
-         reader is not a risk it adds: the timeline watches its own box and re-anchors the visible
-         row on a container resize (`AgentTimeline.vue`, `ResizeObserver` → `contentChanged`). -->
-    <p
-      v-if="droppedSentence !== null"
-      class="agent-panel-notice is-quiet"
-      data-agent-dropped
-      role="status"
-    >
-      <span class="agent-panel-notice-text">{{ droppedSentence }}</span>
-    </p>
-    <!-- The transcript's first line, and only while there is no transcript: directly under the
-         title rule, in the panel's own monospace, so an empty session reads as the beginning of a
-         conversation rather than as an illustration. It is `aria-live="off"` like the transcript
-         beside it — it says nothing that changes per token. -->
-    <p
-      v-if="timeline.length === 0"
-      class="agent-panel-empty"
-      data-agent-empty
-    >
-      {{ labels.empty.line }}
-    </p>
+    <!-- The three lines about the record, directly under the title rule: the gap notice and its
+         resync, the refused-frame count, and the transcript's first line while there is no
+         transcript. Each is drawn only when it has something true to say — the component's own
+         note carries the reasons. -->
+    <AgentPanelNotices
+      :labels="labels.notice"
+      :gap="gap !== null"
+      :dropped="droppedSentence"
+      :empty="labels.empty.line"
+      :transcript-empty="timeline.length === 0"
+      @resync="resync"
+    />
     <!-- Keyed by the session: the timeline remembers where the reader was for one session's
          rows, and a switch is a different transcript rather than the same one re-pointed. -->
     <AgentTimeline
@@ -988,14 +471,14 @@ function onHistoryPick(sessionId: string): void {
     <Teleport to="body">
       <Transition name="agent-history-popup">
         <AgentPanelMenu
-          v-if="optionsMenu.open.value"
+          v-if="menuOpenState"
           ref="menuEl"
           :rows="menuRows"
           :labels="{ label: labels.menu.label }"
-          :left="optionsMenu.placement.value.left"
-          :top="optionsMenu.placement.value.top"
-          :min-width="optionsMenu.placement.value.minWidth"
-          :drop="optionsMenu.placement.value.drop"
+          :left="menuPlacement.left"
+          :top="menuPlacement.top"
+          :min-width="menuPlacement.minWidth"
+          :drop="menuPlacement.drop"
           @select="chooseMenuRow"
           @close="closeMenu"
         />
@@ -1009,7 +492,7 @@ function onHistoryPick(sessionId: string): void {
     <Teleport to="body">
       <Transition name="agent-history-popup">
         <AgentSessionHistoryMenu
-          v-if="historyMenu.open.value"
+          v-if="historyOpen"
           ref="historyEl"
           :view="historyView"
           :rows="historyRows"
@@ -1023,12 +506,12 @@ function onHistoryPick(sessionId: string): void {
           :confirming="freeTarget"
           :now="historyAt"
           :list-id="historyListId"
-          :left="historyMenu.placement.value.left"
-          :top="historyMenu.placement.value.top"
-          :min-width="historyMenu.placement.value.minWidth"
-          :drop="historyMenu.placement.value.drop"
+          :left="historyPlacement.left"
+          :top="historyPlacement.top"
+          :min-width="historyPlacement.minWidth"
+          :drop="historyPlacement.drop"
           @activate="onHistoryPick"
-          @open="emit('new-session')"
+          @open="onHistoryNew"
           @more="loadMoreHistory"
           @ask="askFree"
           @confirm="confirmFree"
@@ -1058,66 +541,6 @@ function onHistoryPick(sessionId: string): void {
   background: var(--app-panel);
   color: var(--app-text);
   font-family: var(--app-font);
-}
-.agent-panel-notice {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin: 0;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--app-border);
-  background: color-mix(in srgb, var(--app-warn) 12%, var(--app-panel));
-  color: var(--app-text);
-  font-size: 12px;
-}
-.agent-panel-notice-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* The refused-frame line. Same row, no warning tint and no button: a frame the transport
-   re-sent is not a fault the reader has to act on, and a notice painted in the danger family
-   would train them to fear the reload button that produces most of them. */
-.agent-panel-notice.is-quiet {
-  background: var(--app-elevated);
-  color: var(--app-muted);
-}
-.agent-panel-resync {
-  flex: none;
-  min-height: 24px;
-  padding: 0 8px;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-sm);
-  background: var(--app-elevated);
-  color: var(--app-text);
-  font-family: var(--app-font);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background var(--app-motion-fast) var(--app-ease);
-}
-.agent-panel-resync:hover {
-  background: color-mix(in srgb, var(--app-elevated) 84%, var(--app-accent-soft));
-}
-.agent-panel-resync:focus-visible {
-  outline: 2px solid var(--app-accent);
-  outline-offset: 1px;
-}
-/* The empty transcript's line. Monospace and muted, at the top of the transcript area rather
-   than centred in it: it is the first line of a conversation, not an illustration of one, and
-   the transcript below keeps the room it will need when the first row arrives. */
-.agent-panel-empty {
-  flex: none;
-  margin: 0;
-  padding: 10px 12px 0;
-  color: var(--app-muted);
-  font-family: var(--app-mono-font);
-  font-size: 12px;
-  line-height: 1.5;
-  /* One long sentence in a narrow rail may not fit; it wraps rather than disappearing into an
-     ellipsis, because every clause of it names something the reader can do. */
-  overflow-wrap: anywhere;
 }
 /* The pending request sits above the input, in its own padding, and takes only the height it
    needs: §5.1 asks that waiting for authorization not lock the editor, and a block that grew
