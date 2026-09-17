@@ -24,7 +24,11 @@ import { nextTick, ref } from 'vue'
 import { Plus, Search, X } from 'lucide-vue-next'
 import { t } from '../../../i18n'
 
-const props = defineProps<{
+// Not assigned to a name: every prop is read in the template by its own name, and this script never
+// touches the props object. Binding it anyway is what `@typescript-eslint/no-unused-vars` reports,
+// and it was reported — `pnpm lint` is a step of CI's `check` job, so a dead binding here is a red
+// gate. Nothing else changes: `<script setup>` still exposes each prop to the template.
+defineProps<{
   /** What is in the box. Owned by the list, which is also where the query is applied. */
   query: string
   /** Whether the box is drawn at all: there is one only when there are rows to narrow, and a
