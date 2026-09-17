@@ -36,8 +36,8 @@
  *   → `AppearanceSettings.vue:87` dark / `:111` the `forest` card / `:140` the `teal` swatch
  *      / `:214` the size field / `:225` the leading field
  *   → `AppearanceSettings.vue:168` the interface-font select, whose trigger
- *      (`SelectMenu.vue:333`) opens the popup this file is about (`:348` the teleport, `:354` the
- *      popup, `:363` its rows, `SelectMenu.vue:109-126` where the target is resolved).
+ *      (`SelectMenu.vue:335`) opens the popup this file is about (`:350` the teleport, `:356` the
+ *      popup, `:365` its rows, `SelectMenu.vue:108-127` where the target is resolved).
  *
  * The drawn half is a pair rather than a property, exactly as the dialog's was: `.shell` declares
  * `font-family: var(--app-font)` (`app/appShell-chrome.css:51`) and so does a row of the popup

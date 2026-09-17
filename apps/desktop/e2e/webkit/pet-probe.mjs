@@ -1697,8 +1697,9 @@ async function main() {
        return fields.length;`,
     )
     // The interface font, through its own select: the trigger, then the option the store knows by
-    // id. The popup is teleported to `body` by the component (`SelectMenu.vue:297`), so it is found
-    // at the top level and not inside the dialog.
+    // id. The popup is teleported by the component — into `.shell` rather than the page body, which
+    // is the `preview` step's reading below — so it is found by its own class and not by walking
+    // down from the dialog.
     await wd.execute(
       `const trigger = document.querySelector('#settings-ui-font');
        if (trigger) trigger.click();
