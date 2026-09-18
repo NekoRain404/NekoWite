@@ -320,18 +320,50 @@ test('the agent panel’s three popups resolve the shell’s appearance', async 
   const history = await readPopup(page, '.agent-history-popup')
   assertSurface(history, 'the session list', { face: true, shadow: true })
   const historyRow = await page.evaluate(() => {
-    // `.agent-history-option` and not `.agent-history-row`: the row is a `div` that declares no
-    // colour and its text is drawn by the option inside it (`AgentSessionHistoryRow.vue:167`),
-    // which is the element that declares `color: var(--app-text)` and therefore the one that can
-    // be paired with a surface that declares the same.
-    const row = document.querySelector('.agent-history-option')
+    // The **row**, and the option inside it as well. The row is the element that carries the states
+    // (`is-active`, `is-current`, `is-confirming`) and the box a reader's eye is on, and until this
+    // case read it, it declared no colour at all: its computed value was the UA's `rgb(0, 0, 0)`,
+    // which no palette has, and every future child that forgot to declare its own would have drawn
+    // it. Both are read because both have to be the palette's text — the row because it is the
+    // surface, the option because it is the text — and the option now inherits rather than
+    // restating it, so a pair that drifted apart would be two answers to one question.
+    const row = document.querySelector('.agent-history-row')
+    const option = document.querySelector('.agent-history-option')
     const panel = document.querySelector('.agent-panel')
-    if (!row || !panel) throw new Error('the history list drew no row')
-    return { row: getComputedStyle(row).color, panel: getComputedStyle(panel).color }
+    if (!row || !option || !panel) throw new Error('the history list drew no row')
+    return {
+      row: getComputedStyle(row).color,
+      option: getComputedStyle(option).color,
+      panel: getComputedStyle(panel).color,
+    }
   })
-  expect(historyRow.row, 'the session list: a row draws the colour the panel behind it draws')
+  expect(historyRow.row, 'the session list: the row draws the colour the panel behind it draws')
     .toBe(historyRow.panel)
   expect(historyRow.row, 'the session list: which is the dark palette’s text').toBe(DARK_TEXT)
+  expect(historyRow.option, 'the session list: and the option inside it draws the row’s text')
+    .toBe(historyRow.row)
+
+  // The one state in that list that is drawn in a colour, and the one that was dead: `is-current`
+  // is put on the *row* (`AgentSessionHistoryRow.vue`'s class binding) and the rule that reads it
+  // asked for it on the option, so the session the reader is in wore the same colour as every other
+  // row. The accent is measured rather than restated — a probe styled with the token, put in the
+  // shell and taken out again — so this is two independently read values and not this file's copy
+  // of a palette.
+  const current = await page.evaluate(() => {
+    const title = document.querySelector('.agent-history-row.is-current .agent-history-option-title')
+    const shell = document.querySelector('.shell')
+    if (!title || !shell) throw new Error('the history list drew no current row')
+    const probe = document.createElement('span')
+    probe.style.color = 'var(--app-accent)'
+    shell.append(probe)
+    const accent = getComputedStyle(probe).color
+    probe.remove()
+    return { title: getComputedStyle(title).color, accent }
+  })
+  expect(current.title, 'the session list: the session on screen is drawn in the accent')
+    .toBe(current.accent)
+  expect(current.title, 'the session list: which is not the colour of an ordinary row')
+    .not.toBe(DARK_TEXT)
   await page.keyboard.press('Escape')
   await page.locator('.agent-history-popup').waitFor({ state: 'detached', timeout: 5000 })
 

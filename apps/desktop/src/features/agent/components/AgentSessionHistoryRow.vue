@@ -137,11 +137,17 @@ const meta = computed((): string[] => {
 
 <style scoped>
 /* The row: the option, and the action beside it. The highlight belongs to the row rather than to
-   the option, so the free button is inside the same lit area as the text it acts on. */
+   the option, so the free button is inside the same lit area as the text it acts on.
+   `color` is declared *here* — the row is the element that carries the states (`is-active`,
+   `is-current`, `is-confirming`) and the box a reader's eye is on — and the option inside it
+   inherits rather than restating it: a row that declared none computed to the UA's `rgb(0, 0, 0)`,
+   which is a colour no palette has and one every future child that forgot to declare its own
+   would draw. */
 .agent-history-row {
   display: flex;
   align-items: center;
   gap: 2px;
+  color: var(--app-text);
   /* `--app-radius-sm` is the list-row radius this app uses (`AgentConfigOptionsPopup.vue`,
      `SelectMenu.vue`). */
   border-radius: var(--app-radius-sm);
@@ -164,7 +170,8 @@ const meta = computed((): string[] => {
   border: 0;
   border-radius: var(--app-radius-sm);
   background: transparent;
-  color: var(--app-text);
+  /* `color` is the row's, inherited (see the row's own rule): the option is inside the lit area and
+     its text is the row's text, so the two cannot drift apart. */
   font-family: var(--app-font);
   font-size: 12px;
   text-align: left;
@@ -197,8 +204,11 @@ const meta = computed((): string[] => {
   outline-offset: -1px;
 }
 /* The session on screen. Colour is the second signal and never the only one: the same fact is in
-   the row's meta line and in its `aria-current`. */
-.agent-history-option.is-current .agent-history-option-title {
+   the row's meta line and in its `aria-current`. `is-current` is one of the row's own states —
+   the template puts it beside `is-active` and `is-confirming` — so the selector starts at the row:
+   written against the option it matched nothing at all, and the session the reader is in wore the
+   same colour as every other row. */
+.agent-history-row.is-current .agent-history-option-title {
   color: var(--app-accent);
 }
 .agent-history-option-title {
