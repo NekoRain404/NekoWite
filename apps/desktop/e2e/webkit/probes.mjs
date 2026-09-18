@@ -19,6 +19,7 @@ import { chatScrollProbe } from './probe-chat-scroll.mjs'
 import { focusRingProbe } from './probe-focus-ring.mjs'
 import { listRoomProbe } from './probe-list-room.mjs'
 import { resizeProbe } from './probe-resize.mjs'
+import { settingsSwapProbe } from './probe-settings-swap.mjs'
 
 /** Dumps what is actually in the document, so the probes can address it. */
 const inspect = {
@@ -94,11 +95,17 @@ const inspect = {
  * measure the window they always did. Like `list-room` it reads a dialog, not the editor, which is
  * why neither can go before the probes that need the editor addressable.
  *
+ * `settings-swap` goes after `dialog-resize` and shares the same contract — it opens the dialog,
+ * never moves the window, and closes the dialog through its own overlay before returning. It reads
+ * the two layout claims this dialog carries: where a swap puts the reader, and how wide a select's
+ * list is against the control it belongs to. Both are settled by the engine rather than by the
+ * source, which is the only reason it is here and not only in the Chromium suite.
+ *
  * `focus-ring` goes last of all because it is the only probe that puts NEW DOM into
  * the page: it mounts four components nothing in the application hosts yet, in fixed
  * overlays over the top-left corner. A probe after it would be measuring a page with
  * four foreign panels on it, so nothing goes after it. The surfaces it reads on the
  * product's own page are read before it mounts anything.
  */
-export const PROBES = [motionProbe, panelProbe, tableProbe, tailProbe, noteSwitchProbe, dialogProbe, listRoomProbe, resizeProbe, agentScrollProbe, chatScrollProbe, focusRingProbe]
+export const PROBES = [motionProbe, panelProbe, tableProbe, tailProbe, noteSwitchProbe, dialogProbe, listRoomProbe, resizeProbe, settingsSwapProbe, agentScrollProbe, chatScrollProbe, focusRingProbe]
 export const ALL_PROBES = [inspect, ...PROBES]

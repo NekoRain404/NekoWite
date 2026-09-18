@@ -423,6 +423,57 @@ export function verify(results) {
     )
   }
 
+  // ---- What the settings dialog does when it swaps what it is showing -------
+  //
+  // Two layout claims, and both are the engine's to settle: where a reader is put down after a
+  // swap, and how wide a select's list is against the control it belongs to. The arithmetic is
+  // Chromium's (`e2e/settings-scroll-reset.spec.ts`, `e2e/select-popup-width.spec.ts`) and was
+  // measured there first; what these read is whether this engine lays the same thing out.
+  //
+  // Read on 6.0's MiniBrowser: the driver has 6.0 compiled in and `PATH` cannot select around it,
+  // so these are 6.0's numbers and not the shipping 4.1's. See `probe-resize.mjs`'s header.
+  const swap = results.probes['settings-swap']
+  /** The container's own offset, after a swap that started from its end. */
+  const landingOf = (a) =>
+    a && !a.error
+      ? { top: a.after.scrollTop, first: a.after.firstLine, had: a.from.max, was: a.from.top }
+      : null
+  if (swap && !swap.error) {
+    const rails = [
+      ['the dialog’s rail', landingOf(swap.section)],
+      ['the agents tree’s rail', landingOf(swap.agents)],
+    ]
+    for (const [name, at] of rails) {
+      // FAILS IF: the container keeps the old content's offset across the swap. The new content is
+      // usually shorter, so the engine clamps it and the reader arrives at the *bottom* of a page
+      // they have never seen the top of — measured in Chromium as `186/186` on a page whose height
+      // is 186, and `108` on the agents rail.
+      c.run(
+        `settings dialog: ${name} puts the reader at the top of the new page`,
+        at === null
+          ? 'UNMEASURED — the probe did not reach the swap'
+          : `left off at ${at.was}/${at.had}, arrives at ${at.top} with the page’s first line ${at.first}px down the box`,
+        at === null || (at.had > 0 && at.was === at.had && at.top === 0 && at.first >= 0),
+      )
+    }
+    // FAILS IF: the list goes back to a width of its own. The rule is the control's own width as a
+    // floor and the window as a ceiling (`SelectMenu.vue`'s `measurePlacement`), so the two numbers
+    // are read from two elements and compared — a list pinned to a constant passes neither half.
+    const list = swap.list ?? {}
+    c.run(
+      'settings dialog: the select’s list is as wide as the control it belongs to',
+      list.error
+        ? `UNMEASURED — ${list.error}`
+        : `list ${list.list} against control ${list.control}, ${list.rows} rows, inside ${list.left}..${list.right} of ${list.viewport}, max-width ${list.maxWidth}`,
+      !list.error &&
+        list.control > 280 &&
+        list.list >= list.control - 1 &&
+        list.right <= list.viewport &&
+        list.left >= 0 &&
+        list.rows > 0,
+    )
+  }
+
   // ---- The agent panel, in the engine that ships --------------------------
   //
   // Three rules, and each check below says which sentence it is. The panel's scroll
