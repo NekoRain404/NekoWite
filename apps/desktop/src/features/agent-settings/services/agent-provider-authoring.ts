@@ -1,6 +1,8 @@
 /**
- * The two calls a provider form makes that are not an edit: fetch the endpoint's models, and put the
- * key where the block's `{env:…}` reference will find it.
+ * The calls a provider form makes that are not an edit: fetch the endpoint's models, put the key
+ * where the block's `{env:…}` reference will find it, take one away again, and read which names the
+ * profile stores — the last because whether a block names a key at all is a fact about the store
+ * and not about the form's own field (see `AgentProviderAuthoring.vue`'s header).
  *
  * ## Why the model fetch is this app's own AI fetch
  *
@@ -41,6 +43,7 @@
  */
 
 import type { AgentCredentialClient } from './agent-credential-ipc'
+import type { CredentialField } from './agent-settings-policy'
 
 /** What the form asks the endpoint for: the address, the key it typed, and the app's own opt-in. */
 export interface ProviderModelsRequest {
@@ -61,6 +64,23 @@ export interface ProviderModelsRequest {
 export interface AgentProviderAuthoringClient {
   fetchModels(request: ProviderModelsRequest): Promise<string[]>
   setCredential(name: string, value: string): Promise<void>
+  /**
+   * Remove the credential stored under `name`.
+   *
+   * The form's explicit half, and the only way a provider stops carrying a key reference: the user
+   * asks for the key to go, and the block that follows names none. It is a removal rather than an
+   * empty value because an empty key is one a provider rejects far later and far less legibly.
+   */
+  removeCredential(name: string): Promise<void>
+  /**
+   * The credential names this profile stores — what the form asks before it can build a block.
+   *
+   * `options.apiKey` is present exactly when there is a key to name, and the field cannot answer
+   * that: it is blank on a provider whose key *is* stored, because this page never shows a value
+   * and clears the draft once a save lands. So the answer comes from the store, and a form that
+   * guessed at it is what dropped the reference on the second save.
+   */
+  storedCredentials(): Promise<readonly string[]>
 }
 
 /**
@@ -99,16 +119,35 @@ export function createAgentProviderAuthoringClient(deps: {
     },
 
     async setCredential(name: string, value: string): Promise<void> {
-      // Through `credentialWrite`'s own rule rather than a second one: a draft that is not null and
-      // not blank is a `set`, which is the only arm this form can produce — it calls this only when
-      // the field holds a key.
-      const answer = await deps.credentials.write([{ name, display: '', draft: value }])
-      // `refused` is the policy's pre-flight, and it is a rejection here rather than a value: the
-      // caller's next move is to stop the save, and a form that carried on would write a block
-      // pointing at a variable this call did not set. The arm is reachable from a real field — a
-      // value that is the placeholder the credentials section displays is refused by name — so it
-      // is not a branch nobody can reach.
-      if (answer.status === 'refused') throw new Error(answer.message)
+      await write(deps, { name, display: '', draft: value })
+    },
+
+    async removeCredential(name: string): Promise<void> {
+      // `draft: ''` is the policy's *clear* arm, which is the same `{op: 'remove'}` the credentials
+      // section sends when a field is emptied. `display: ''` because there is no placeholder to
+      // submit here: this call has no field, and the value it would guard against never exists.
+      await write(deps, { name, display: '', draft: '' })
+    },
+
+    async storedCredentials(): Promise<readonly string[]> {
+      return deps.credentials.names()
     },
   }
+}
+
+/**
+ * One credential patch, through `credentialWrite`'s own rule rather than a second one.
+ *
+ * `refused` is the policy's pre-flight, and it is a rejection here rather than a value: the caller's
+ * next move is to stop what it was doing, and a form that carried on would write a block pointing
+ * at a variable this call did not set. The arm is reachable from a real field — a value that is the
+ * placeholder the credentials section displays is refused by name — so it is not a branch nobody
+ * can reach.
+ */
+async function write(
+  deps: { credentials: AgentCredentialClient },
+  field: CredentialField,
+): Promise<void> {
+  const answer = await deps.credentials.write([field])
+  if (answer.status === 'refused') throw new Error(answer.message)
 }

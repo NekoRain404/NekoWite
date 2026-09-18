@@ -119,6 +119,26 @@ describe('the credential client', () => {
     )
   })
 
+  it('answers the names the profile stores, and never a value', async () => {
+    // The read the provider form needs before it can say whether a block should name a key at all.
+    // It is a readout field like any other here — the name is what the form compares, and the value
+    // is the placeholder on the wire and nowhere in the answer.
+    const fresh = readout()
+    fresh.credentials = [{ name: 'NWK_IAPP_API_KEY', value: '<redacted>' }]
+    const { client: credentials, profile } = client(undefined, fresh)
+
+    expect(await credentials.names()).toEqual(['NWK_IAPP_API_KEY'])
+    expect(profile.read).toHaveBeenCalledWith('opencode', 'default')
+  })
+
+  it('answers no names for a profile that stores nothing', async () => {
+    const fresh = readout()
+    fresh.credentials = []
+    const { client: credentials } = client(undefined, fresh)
+
+    expect(await credentials.names()).toEqual([])
+  })
+
   it('still answers a readout when the patch was empty', async () => {
     const { wire, profile, client: credentials } = client()
 

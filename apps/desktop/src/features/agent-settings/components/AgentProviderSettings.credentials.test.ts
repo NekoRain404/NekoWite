@@ -97,6 +97,10 @@ async function mountPage(initial: AgentProfileReadout): Promise<void> {
       if (answer instanceof Error) throw answer
       return answer
     }),
+    // The port's read, and this page is not a caller of it: the provider *form* asks what the
+    // profile stores so it can decide whether a block names a key. Here it answers the names the
+    // readout carries, which is what the real one does, so the double is not a second vocabulary.
+    names: vi.fn(async () => initial.credentials.map((entry) => entry.name)),
   }
   profile = { read: vi.fn(async () => initial), write: vi.fn() }
   const host = document.createElement('div')

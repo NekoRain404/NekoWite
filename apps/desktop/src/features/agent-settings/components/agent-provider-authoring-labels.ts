@@ -17,8 +17,10 @@
  *    has stored for its own AI, and the list would be about a credential the engine never uses.
  *  - {@link AgentProviderAuthoringLabels.fetchFailed} — the fetch reaches somebody else's server, so
  *    its failure is theirs and is reported rather than smoothed into a sentence about this page.
- *  - {@link AgentProviderAuthoringLabels.keyBlank} — what saving without a key actually does, stated
- *    before the save rather than discovered at the first request.
+ *  - {@link AgentProviderAuthoringLabels.keyStored}, {@link AgentProviderAuthoringLabels.keyNone} and
+ *    {@link AgentProviderAuthoringLabels.keyUnread} — the three states a blank key field can be in,
+ *    each stated before the save. One sentence for all three was the defect: the field is blank on
+ *    every provider that has a key, so "blank means no key" is a reading the page may not make.
  *
  * `{n}` in `fetched` and `{name}`/`{id}`/`{reason}` elsewhere are values, not copy: a count, the
  * derived credential name, the provider id and the backend's own sentence all stay exactly as they
@@ -38,8 +40,21 @@ export interface AgentProviderAuthoringLabels {
   baseUrlHint: string
   key: string
   keyHint: string
-  /** Saving with an empty key field: what the block then says. */
-  keyBlank: string
+  /** A value is in the field: it replaces whatever is stored. */
+  keyTyped: string
+  /** A key is stored under this name, and the block keeps naming it. */
+  keyStored: (credentialName: string) => string
+  /** Nothing is stored and nothing was typed: the block names no key. */
+  keyNone: string
+  /** The credential set could not be read, which is the one state a save refuses to guess at. */
+  keyUnread: string
+  /** Read it again. */
+  keyRetry: string
+  /** Ask for the stored key to go; and take that back. */
+  keyRemove: string
+  keyKeep: string
+  /** The removal, stated before the save that performs it. */
+  keyRemoving: (credentialName: string) => string
   allowPrivate: string
   allowPrivateHint: string
   fetch: string
@@ -67,6 +82,7 @@ export interface AgentProviderAuthoringLabels {
    */
   problem: (reason: string) => string
   credentialFailed: (reason: string) => string
+  removalFailed: (reason: string) => string
   editFailed: (reason: string) => string
   applied: string
   conflict: string
@@ -86,7 +102,16 @@ export function providerAuthoringLabels(): AgentProviderAuthoringLabels {
     baseUrlHint: t('agent.settings.config.provider.baseUrlHint'),
     key: t('agent.settings.config.provider.key'),
     keyHint: t('agent.settings.config.provider.keyHint'),
-    keyBlank: t('agent.settings.config.provider.keyBlank'),
+    keyTyped: t('agent.settings.config.provider.keyTyped'),
+    keyStored: (credentialName) =>
+      t('agent.settings.config.provider.keyStored', { name: credentialName }),
+    keyNone: t('agent.settings.config.provider.keyNone'),
+    keyUnread: t('agent.settings.config.provider.keyUnread'),
+    keyRetry: t('agent.settings.config.provider.keyRetry'),
+    keyRemove: t('agent.settings.config.provider.keyRemove'),
+    keyKeep: t('agent.settings.config.provider.keyKeep'),
+    keyRemoving: (credentialName) =>
+      t('agent.settings.config.provider.keyRemoving', { name: credentialName }),
     allowPrivate: t('agent.settings.config.provider.allowPrivate'),
     allowPrivateHint: t('agent.settings.config.provider.allowPrivateHint'),
     fetch: t('agent.settings.config.provider.fetch'),
@@ -106,6 +131,8 @@ export function providerAuthoringLabels(): AgentProviderAuthoringLabels {
     problem: (reason) => t('agent.settings.config.provider.problem', { reason }),
     credentialFailed: (reason) =>
       t('agent.settings.config.provider.credentialFailed', { reason }),
+    removalFailed: (reason) =>
+      t('agent.settings.config.provider.removalFailed', { reason }),
     editFailed: (reason) => t('agent.settings.config.provider.editFailed', { reason }),
     applied: t('agent.settings.config.provider.applied'),
     conflict: t('agent.settings.config.provider.conflict'),

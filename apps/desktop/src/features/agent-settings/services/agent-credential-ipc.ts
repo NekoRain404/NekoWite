@@ -25,6 +25,11 @@
  * `agent-profile-ipc.ts` already validated. The values only ever travel the *other* way, in
  * {@link AgentCredentialClient.write}'s argument.
  *
+ * **What it does read is the names** ({@link AgentCredentialClient.names}), because one page needs
+ * the answer before it can write anything at all: whether a provider block should name a key. That
+ * question is about the credential *set*, which is this client's subject and nobody else's, so it
+ * is asked here rather than through a second client bound to the same pair.
+ *
  * **It does not decide what a submission contains.** {@link credentialWrite} in the policy does —
  * including the guard that refuses a value that is the placeholder — and the page calls it before
  * this client is reached. What arrives here is a patch the policy has already cleared.
@@ -52,6 +57,17 @@ import type { AgentProviderClient } from './agent-profile-ipc'
  */
 export interface AgentCredentialClient {
   write(fields: readonly CredentialField[]): Promise<CredentialWriteOutcome>
+  /**
+   * The names this profile stores, in the readout's own order.
+   *
+   * The one read this port carries, and it is here rather than on the caller's own client because
+   * the subject is the credential set of *one pair* — which is what this client is bound to. The
+   * provider form asks it before it can write a block at all: `options.apiKey` is present exactly
+   * when there is a key to name, so "is one stored under this provider's derived name" is a fact
+   * the block is built from, and a form that guessed at it is the form that dropped the reference
+   * on the second save. Names only, as everywhere on this port.
+   */
+  names(): Promise<readonly string[]>
 }
 
 /** What one submission did: written, or refused before it was sent. */
@@ -79,6 +95,13 @@ export function createAgentCredentialClient(options: {
 }): AgentCredentialClient {
   const { wire, profile, agentId, profileId } = options
   return {
+    async names(): Promise<readonly string[]> {
+      // Through the profile client, like every readout in this feature: one narrowing of one
+      // answer, and the names are taken from it rather than a second opinion about the wire.
+      const readout = await profile.read(agentId, profileId)
+      return readout.credentials.map((entry) => entry.name)
+    },
+
     async write(fields: readonly CredentialField[]): Promise<CredentialWriteOutcome> {
       const submission = credentialWrite([...fields])
       // The placeholder guard, and the reason it is here rather than at the backend: what this

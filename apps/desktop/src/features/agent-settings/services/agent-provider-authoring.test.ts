@@ -13,7 +13,7 @@ import { createAgentProviderAuthoringClient } from './agent-provider-authoring'
 import { createAgentCredentialClient } from './agent-credential-ipc'
 import { REDACTED_CREDENTIAL, type AgentProfileReadout } from './agent-settings-policy'
 
-function readout(): AgentProfileReadout {
+function readout(stored: readonly string[] = []): AgentProfileReadout {
   return {
     profileId: 'default',
     agentId: 'bundled-engine',
@@ -24,7 +24,7 @@ function readout(): AgentProfileReadout {
     modelId: null,
     editable: true,
     sources: [],
-    credentials: [],
+    credentials: stored.map((name) => ({ name, value: REDACTED_CREDENTIAL })),
     credentialStorage: { kind: 'none' },
     permissions: { state: 'written', document: null, rules: [] },
     configDocument: null,
@@ -34,15 +34,29 @@ function readout(): AgentProfileReadout {
 /**
  * The profile client the credential client reads through.
  *
- * Only `read` is ever reached: the write the credential client makes answers the readout itself,
- * and re-reads through this port afterwards. `write` is here because the port declares it, and it
- * refuses rather than pretending — a call this test never intends to make.
+ * `read` answers the profile's credentials as the backend does — names, and the placeholder in
+ * every value — which is the only thing the authoring client reads off it. `write` is here because
+ * the port declares it, and it refuses rather than pretending: a call this test never intends to
+ * make.
  */
 const profile = {
-  read: async () => readout(),
+  read: async () => readout(['NWK_IAPP_API_KEY']),
   write: async () => {
     throw new Error('the credential write is not supposed to reach the record')
   },
+}
+
+/** The authoring client over one wire, with the credential client built the way the app builds it. */
+function authoring(made: ReturnType<typeof wire>) {
+  return createAgentProviderAuthoringClient({
+    models: made.models,
+    credentials: createAgentCredentialClient({
+      wire: made.credential,
+      profile,
+      agentId: 'bundled-engine',
+      profileId: 'default',
+    }),
+  })
 }
 
 /** The commands the client is built over, with every request kept. */
@@ -129,6 +143,25 @@ describe('the credential write', () => {
     ])
   })
 
+  it('removes one through the same patch rule the credentials section submits', async () => {
+    const made = wire()
+
+    await authoring(made).removeCredential('NWK_IAPP_API_KEY')
+
+    // `op: 'remove'`, not an empty value: a provider handed an empty key rejects much later and in
+    // a much less obvious way. This is the explicit half of the form — the user asked for the key
+    // to go — and it travels the same rule as clearing a field in the credentials section.
+    expect(made.changes).toEqual([[{ op: 'remove', name: 'NWK_IAPP_API_KEY' }]])
+  })
+
+  it('answers the names the profile stores, and nothing else', async () => {
+    const made = wire()
+
+    expect(await authoring(made).storedCredentials()).toEqual(['NWK_IAPP_API_KEY'])
+    // Nothing was written by asking: the read is the profile client's, and no patch went out.
+    expect(made.changes).toEqual([])
+  })
+
   it('rejects rather than reporting success when the policy refuses the value', async () => {
     const made = wire()
     const client = createAgentProviderAuthoringClient({
@@ -138,6 +171,8 @@ describe('the credential write', () => {
           status: 'refused' as const,
           message: 'that is the value this page shows in place of a key, not a key',
         }),
+        // Declared, and never reached on this path: the refusal above is what this test is about.
+        names: async () => [],
       },
     })
 

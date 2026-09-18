@@ -56,20 +56,45 @@ interface Harness {
   fetches: { baseUrl: string; apiKey: string; allowPrivate: boolean }[]
   /** Every credential the form stored. */
   credentials: { name: string; value: string }[]
+  /** Every credential the form asked to have removed. */
+  removals: string[]
   /** Every edit the form sent. */
   edits: { relative: string; revision: string | null; edits: readonly ConfigEdit[] }[]
+  /** What the profile stores, as the double's own store: the form's reads answer this. */
+  store: Set<string>
+  /** Whether reading it fails. A test turns this off to let a retry answer. */
+  readsFail: { on: boolean }
+  /**
+   * Every call that changed something, in the order it was made.
+   *
+   * The order is part of the contract rather than an implementation detail: a block that names a key
+   * the store does not hold is the state the engine resolves to an empty string, so which of the
+   * two writes goes first is what a half-finished save leaves behind.
+   */
+  order: string[]
 }
 
 function harness(
   options: {
     models?: string[] | Error
     credential?: Error
+    removal?: Error
     edit?: AgentConfigEditOutcome | Error
+    /** The credential names the profile stores when the form is opened. */
+    stored?: string[]
+    /** Whether reading them fails — the state in which nothing may be guessed. */
+    storedFails?: boolean
   } = {},
 ): Harness {
   const fetches: Harness['fetches'] = []
   const credentials: Harness['credentials'] = []
+  const removals: string[] = []
   const edits: Harness['edits'] = []
+  const order: string[] = []
+  // The double *is* the profile's credential file, so "save, then save again" is a sequence the
+  // form meets for real: the first save puts the name in here, the second one reads it back.
+  const store = new Set<string>(options.stored ?? [])
+  const readsFail = { on: options.storedFails === true }
   const authoring: AgentProviderAuthoringClient = {
     fetchModels: async (request) => {
       fetches.push({ baseUrl: request.baseUrl, apiKey: request.apiKey, allowPrivate: request.allowPrivate })
@@ -78,18 +103,46 @@ function harness(
     },
     setCredential: async (name, value) => {
       credentials.push({ name, value })
+      order.push(`set ${name}`)
       if (options.credential instanceof Error) throw options.credential
+      store.add(name)
+    },
+    removeCredential: async (name) => {
+      removals.push(name)
+      order.push(`remove ${name}`)
+      if (options.removal instanceof Error) throw options.removal
+      store.delete(name)
+    },
+    storedCredentials: async () => {
+      if (readsFail.on) throw new Error('the profile could not be read')
+      return [...store]
     },
   }
   const client: AgentConfigClient = {
     read: async () => ({ state: 'document', document: DOCUMENT }),
     edit: async (relative, revision, list) => {
       edits.push({ relative, revision, edits: list })
+      order.push('edit')
       if (options.edit instanceof Error) throw options.edit
       return options.edit ?? { status: 'written', revision: 'b'.repeat(64) }
     },
   }
-  return { authoring, client, fetches, credentials, edits }
+  return { authoring, client, fetches, credentials, removals, edits, store, readsFail, order }
+}
+
+/**
+ * Everything the component started, finished.
+ *
+ * A gesture here is a chain of awaits — a credential write, the re-read of the credential *names*
+ * the block is built from, the document edit — and each hop is a microtask. `nextTick` alone covers
+ * the render they cause but not the chain that causes it, so the boundary between them is a
+ * macrotask: everything queued before it has run by the time it fires. Waiting with a tick count
+ * instead would be a guess that grows with every call the form makes.
+ */
+async function settle(): Promise<void> {
+  await nextTick()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await nextTick()
 }
 
 async function render(made: Harness): Promise<void> {
@@ -102,7 +155,9 @@ async function render(made: Harness): Promise<void> {
   })
   app.mount(host)
   mounted.push(app)
-  await nextTick()
+  // The mount's own read included: the block is built from the credential names it answers, so a
+  // test that pressed save before it landed would be measuring a form mid-flight.
+  await settle()
 }
 
 function el(test: string): HTMLElement | null {
@@ -126,9 +181,7 @@ function tick(test: string, checked: boolean): void {
 
 async function press(test: string): Promise<void> {
   el(test)?.click()
-  await nextTick()
-  await nextTick()
-  await nextTick()
+  await settle()
 }
 
 /** The form filled in, up to but not including the fetch. */
@@ -139,6 +192,23 @@ async function fill(made: Harness): Promise<void> {
   type('provider-form-base-url', 'https://ai.example.org/v1')
   type('provider-form-api-key', 'sk-not-a-real-key')
   await nextTick()
+}
+
+/**
+ * The form opened on an id and an address, with one model, and the key field left alone.
+ *
+ * The key field is what the two halves of this file are about: `fill` puts a value in it, and this
+ * leaves it empty — the state a form is in when it is opened on a provider whose key is already
+ * stored, which is the state the defect was invisible from.
+ */
+async function opened(made: Harness): Promise<void> {
+  await render(made)
+  type('provider-form-id', 'iapp')
+  type('provider-form-base-url', 'https://ai.example.org/v1')
+  await nextTick()
+  type('provider-form-manual', 'glm-5.2')
+  await nextTick()
+  await press('provider-form-manual-add')
 }
 
 describe('fetching the models', () => {
@@ -286,6 +356,268 @@ describe('saving', () => {
     expect(document.querySelector<HTMLInputElement>('[data-test="provider-form-api-key"]')?.value).toBe('')
   })
 
+  /**
+   * The defect, in the sequence the maintainer hit: fill the form, save, save again.
+   *
+   * The field is cleared by the first save — deliberately, because a credential on screen for as
+   * long as the dialog is open is a second copy of a key — so the second save is built from a blank
+   * field over a provider whose key *is* stored. Read as "no key", that save wrote a block naming
+   * none while the credential stayed in the file, and the engine then authenticated with nothing:
+   * the relay answered 「请求缺少有效的用户或 API Key 认证上下文」, and the key looked fine everywhere it
+   * was checked.
+   */
+  it('keeps the block’s key reference when the same form is saved twice', async () => {
+    const made = harness()
+    await fill(made)
+    await press('provider-form-fetch')
+    await press('provider-form-save')
+    await press('provider-form-save')
+
+    expect(made.edits).toHaveLength(2)
+    const options = (edit: number): unknown =>
+      ((made.edits[edit]?.edits[1]?.value as Record<string, unknown>)['options'])
+    expect(options(0)).toEqual({
+      baseURL: 'https://ai.example.org/v1',
+      apiKey: '{env:NWK_IAPP_API_KEY}',
+    })
+    expect(options(1)).toEqual({
+      baseURL: 'https://ai.example.org/v1',
+      apiKey: '{env:NWK_IAPP_API_KEY}',
+    })
+    // The second save had no value to write, and the store still holds the one the first one put
+    // there — which is what makes the reference it keeps naming a key that is really there.
+    expect(made.credentials).toHaveLength(1)
+    expect([...made.store]).toEqual(['NWK_IAPP_API_KEY'])
+  })
+
+  /**
+   * The same defect's second face: a form opened on a provider that already has a credential.
+   *
+   * The field is blank from the start — there is no value on the page to put in it — so the first
+   * save from that state is a save with a blank field over a stored key, and the reference goes the
+   * same way as above unless the form asks the store instead of reading the field.
+   */
+  it('keeps the reference on the first save after being opened on a provider that has a key', async () => {
+    const made = harness({ stored: ['NWK_IAPP_API_KEY'] })
+    await render(made)
+    type('provider-form-id', 'iapp')
+    type('provider-form-base-url', 'https://ai.example.org/v1')
+    await nextTick()
+    type('provider-form-manual', 'glm-5.2')
+    await nextTick()
+    await press('provider-form-manual-add')
+    await press('provider-form-save')
+
+    const options = (made.edits[0]?.edits[1]?.value as Record<string, unknown>)['options']
+    expect(options).toEqual({
+      baseURL: 'https://ai.example.org/v1',
+      apiKey: '{env:NWK_IAPP_API_KEY}',
+    })
+    // Nothing was written back to the store: the key that is there is the one the block names.
+    expect(made.credentials).toEqual([])
+    expect(made.removals).toEqual([])
+  })
+
+  it('says a key is stored rather than showing an empty field as an empty provider', async () => {
+    const made = harness({ stored: ['NWK_IAPP_API_KEY'] })
+    await render(made)
+    type('provider-form-id', 'iapp')
+    await nextTick()
+
+    const note = el('provider-form-key-stored')?.textContent ?? ''
+    expect(note).toContain('NWK_IAPP_API_KEY')
+    // Not the sentence for a provider with no key: the two states read differently, which is the
+    // whole reason the blank field stopped being allowed to carry both.
+    expect(el('provider-form-key-none')).toBeNull()
+  })
+
+  it('says nothing is stored when the id names no credential, and writes no reference', async () => {
+    const made = harness({ stored: ['NWK_OTHER_API_KEY'] })
+    await render(made)
+    type('provider-form-id', 'iapp')
+    type('provider-form-base-url', 'https://ai.example.org/v1')
+    await nextTick()
+    type('provider-form-manual', 'glm-5.2')
+    await nextTick()
+    await press('provider-form-manual-add')
+    await press('provider-form-save')
+
+    expect(el('provider-form-key-none')).not.toBeNull()
+    expect(el('provider-form-key-stored')).toBeNull()
+    expect((made.edits[0]?.edits[1]?.value as Record<string, unknown>)['options']).toEqual({
+      baseURL: 'https://ai.example.org/v1',
+    })
+  })
+
+  /**
+   * The same fact, one page over: both pages of this dialog are on screen at once, so the
+   * credentials section can move while this form is mounted. A block built from the answer this
+   * form mounted with would be the defect again — a reference to a key that was just removed, or
+   * no reference to one that was just stored.
+   */
+  it('stops naming a key that was removed while this form was on screen', async () => {
+    const made = harness({ stored: ['NWK_IAPP_API_KEY'] })
+    await opened(made)
+    made.store.delete('NWK_IAPP_API_KEY')
+    await press('provider-form-save')
+
+    const options = (made.edits[0]?.edits[1]?.value as Record<string, unknown>)['options']
+    expect(options).toEqual({ baseURL: 'https://ai.example.org/v1' })
+  })
+
+  it('names a key that was stored while this form was on screen', async () => {
+    const made = harness()
+    await opened(made)
+    made.store.add('NWK_IAPP_API_KEY')
+    await press('provider-form-save')
+
+    const options = (made.edits[0]?.edits[1]?.value as Record<string, unknown>)['options']
+    expect(options).toEqual({
+      baseURL: 'https://ai.example.org/v1',
+      apiKey: '{env:NWK_IAPP_API_KEY}',
+    })
+  })
+
+  it('refuses to guess, and writes nothing, when the credential set cannot be read', async () => {
+    // The one arm where the page does not know. Guessing "no key" is the defect; guessing "a key"
+    // writes a reference to a variable that may not be set. So it writes neither and says so.
+    const made = harness({ storedFails: true })
+    await render(made)
+    type('provider-form-id', 'iapp')
+    type('provider-form-base-url', 'https://ai.example.org/v1')
+    await nextTick()
+    type('provider-form-manual', 'glm-5.2')
+    await nextTick()
+    await press('provider-form-manual-add')
+    await press('provider-form-save')
+
+    expect(made.edits).toEqual([])
+    expect(made.credentials).toEqual([])
+    expect(el('provider-form-key-unread')).not.toBeNull()
+    expect(el('provider-form-problem')?.textContent).toContain('Nothing was written')
+  })
+
+  it('asks for a re-read, and then writes the reference the profile stores', async () => {
+    const made = harness({ stored: ['NWK_IAPP_API_KEY'], storedFails: true })
+    await render(made)
+    type('provider-form-id', 'iapp')
+    type('provider-form-base-url', 'https://ai.example.org/v1')
+    await nextTick()
+    type('provider-form-manual', 'glm-5.2')
+    await nextTick()
+    await press('provider-form-manual-add')
+
+    // The read failed once — a profile that could not be opened — and answers on the retry.
+    made.readsFail.on = false
+    await press('provider-form-key-retry')
+    await press('provider-form-save')
+
+    expect((made.edits[0]?.edits[1]?.value as Record<string, unknown>)['options']).toEqual({
+      baseURL: 'https://ai.example.org/v1',
+      apiKey: '{env:NWK_IAPP_API_KEY}',
+    })
+  })
+
+  it('offers the removal where a key is stored under this id', async () => {
+    const made = harness({ stored: ['NWK_IAPP_API_KEY'] })
+    await opened(made)
+
+    expect(el('provider-form-key-remove')).not.toBeNull()
+  })
+
+  it('offers no removal for a credential that belongs to another provider', async () => {
+    const made = harness({ stored: ['NWK_OTHER_API_KEY'] })
+    await opened(made)
+
+    expect(el('provider-form-key-remove')).toBeNull()
+  })
+
+  it('says what the removal will do before it does it', async () => {
+    const made = harness({ stored: ['NWK_IAPP_API_KEY'] })
+    await opened(made)
+    await press('provider-form-key-remove')
+
+    expect(el('provider-form-key-removing')?.textContent).toContain('NWK_IAPP_API_KEY')
+    // Nothing has happened yet: the change is the save's, and a control that removed the key the
+    // moment it was pressed would leave the block naming a variable nothing sets until the next one.
+    expect(made.removals).toEqual([])
+    expect(made.edits).toEqual([])
+  })
+
+  it('drops the reference, then the credential, in that order', async () => {
+    const made = harness({ stored: ['NWK_IAPP_API_KEY'] })
+    await opened(made)
+    await press('provider-form-key-remove')
+    await press('provider-form-save')
+
+    expect((made.edits[0]?.edits[1]?.value as Record<string, unknown>)['options']).toEqual({
+      baseURL: 'https://ai.example.org/v1',
+    })
+    expect(made.removals).toEqual(['NWK_IAPP_API_KEY'])
+    // The block first: a block that names a key the store still holds is invisible and harmless,
+    // and the other order leaves the engine authenticating with nothing whenever the second call
+    // is the one that fails.
+    expect(made.order).toEqual(['edit', 'remove NWK_IAPP_API_KEY'])
+    expect([...made.store]).toEqual([])
+  })
+
+  it('keeps the credential when the block could not be written', async () => {
+    const made = harness({ stored: ['NWK_IAPP_API_KEY'], edit: new Error('the document moved') })
+    await opened(made)
+    await press('provider-form-key-remove')
+    await press('provider-form-save')
+
+    expect(made.removals).toEqual([])
+    expect([...made.store]).toEqual(['NWK_IAPP_API_KEY'])
+    expect(el('provider-form-failed')?.textContent).toContain('the document moved')
+  })
+
+  it('stops being a pending removal once the key is typed again', async () => {
+    const made = harness({ stored: ['NWK_IAPP_API_KEY'] })
+    await opened(made)
+    await press('provider-form-key-remove')
+    type('provider-form-api-key', 'sk-a-new-key')
+    await nextTick()
+    await press('provider-form-save')
+
+    expect(made.removals).toEqual([])
+    expect(made.credentials).toEqual([{ name: 'NWK_IAPP_API_KEY', value: 'sk-a-new-key' }])
+    expect((made.edits[0]?.edits[1]?.value as Record<string, unknown>)['options']).toEqual({
+      baseURL: 'https://ai.example.org/v1',
+      apiKey: '{env:NWK_IAPP_API_KEY}',
+    })
+  })
+
+  it('can be taken back before it is saved', async () => {
+    const made = harness({ stored: ['NWK_IAPP_API_KEY'] })
+    await opened(made)
+    await press('provider-form-key-remove')
+    const label = el('provider-form-key-remove')?.textContent
+    await press('provider-form-key-remove')
+
+    expect(label).toBeTruthy()
+    expect(el('provider-form-key-removing')).toBeNull()
+    await press('provider-form-save')
+    expect(made.removals).toEqual([])
+    expect([...made.store]).toEqual(['NWK_IAPP_API_KEY'])
+  })
+
+  it('reports the block as written and the key as still stored when only the second call fails', async () => {
+    const made = harness({ stored: ['NWK_IAPP_API_KEY'], removal: new Error('the vault is locked') })
+    await opened(made)
+    await press('provider-form-key-remove')
+    await press('provider-form-save')
+
+    // The block no longer names the key — that half landed — and the credential is still there. The
+    // failure is reported as itself rather than as a save that did nothing, because the user's next
+    // move is the removal, and the control that retries it is the one still on screen.
+    expect(el('provider-form-removal-failed')?.textContent).toContain('the vault is locked')
+    expect([...made.store]).toEqual(['NWK_IAPP_API_KEY'])
+    expect(el('provider-form-key-remove')).not.toBeNull()
+  })
+})
+
+describe('saving, and what it refuses', () => {
   it('says nothing was written, and writes nothing, when the key cannot be stored', async () => {
     const made = harness({ credential: new Error('vault is locked') })
     await fill(made)
@@ -296,7 +628,7 @@ describe('saving', () => {
     expect(el('provider-form-credential-failed')?.textContent).toContain('vault is locked')
   })
 
-  it('writes no credential when the key field is empty, and names none in the block', async () => {
+  it('writes no credential when the profile stores none and none was typed', async () => {
     const made = harness()
     await render(made)
     type('provider-form-id', 'iapp')
@@ -310,7 +642,7 @@ describe('saving', () => {
     expect(made.credentials).toEqual([])
     const value = made.edits[0]?.edits[1]?.value as Record<string, unknown>
     expect(value['options']).toEqual({ baseURL: 'https://ai.example.org/v1' })
-    expect(el('provider-form-key-blank')).not.toBeNull()
+    expect(el('provider-form-key-none')).not.toBeNull()
   })
 
   it('refuses a save with no models without asking the backend', async () => {

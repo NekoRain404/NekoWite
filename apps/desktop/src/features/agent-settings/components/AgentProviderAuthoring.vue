@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * The provider form: the fields the engine's provider block is built from, and the two calls a save
- * makes.
+ * The provider form: the fields the engine's provider block is built from, and the calls a save
+ * makes — two of them when the key moves, and one when it does not.
  *
  * ## What this exists for
  *
@@ -17,22 +17,33 @@
  *
  *  - **the document**, one member, `provider.<id>`, spliced — plus the `provider` group itself when
  *    the document has none, through the backend's `if_absent` arm, which leaves a group the user
- *    already has byte for byte. `agent-provider-block.ts` builds the value; the rules about which ids
- *    and which names are legal live there too, so the form and the write cannot disagree about them.
- *  - **the profile's credential file**, through `agent_credentials_write`, for the key — and only when
- *    the field holds one. The block carries `{env:NWK_<ID>_API_KEY}` and never a value.
- *  - **nowhere else.** The key is a draft in this component: it is handed to the client and dropped,
- *    it is cleared from the field once a save lands, and no sentence, log or preview here renders it.
- *    The preview is built by the same function that builds the block, and the block has a reference in
- *    it rather than a key.
+ *    already has byte for byte. `agent-provider-block.ts` builds the value, and the rules about ids
+ *    and names live there too, so the form and the write cannot disagree about them.
+ *  - **the profile's credential file**, through `agent_credentials_write`, for the key this save
+ *    sets, replaces or removes. The block carries `{env:NWK_<ID>_API_KEY}` and never a value.
+ *  - **nowhere else.** The key is a draft here: handed to the client, dropped, cleared from the
+ *    field once a save lands. No sentence, log or preview renders it — the preview is the same
+ *    function's output as the write, with a reference in it rather than a key.
  *
- * ## Order, and why the key goes first
+ * ## The blank field, and the two states it used to be read as one
  *
- * A credential with no block pointing at it is invisible and harmless; a block pointing at a variable
- * nothing sets is an engine that fails authentication on its first request with a message about the
- * provider. So the credential write happens first and a failure there stops the save outright. A
- * document that then conflicts leaves the credential behind — deliberately: the next save re-writes
- * it, and the alternative is a block that names a key that was never stored.
+ * This form clears the draft once a save lands and never puts a stored value back, so blank is what
+ * the user meets on *every* provider that has a key. Read as "no key", that wrote a block naming
+ * none while the credential stayed in the file, and the engine then authenticated with nothing. So
+ * the field does not answer the question — {@link stored} does: the profile's own credential
+ * *names*, read at every save. A typed value and {@link removing} are the user's own answers and
+ * outrank it, and nothing here guesses: a credential set that could not be read is a save that
+ * writes nothing and says why.
+ *
+ * ## Order, and why it is not always the same order
+ *
+ * One invariant, stated in full at {@link providerWriteOrder}: **the block never names a key the
+ * store does not hold.** A reference to a variable nothing sets is not a request without a key —
+ * the engine substitutes an empty string, and the adapter then sends no `Authorization` header —
+ * so it lands as an authentication error on the endpoint, with nothing here to read. A set
+ * therefore stores the value first and stops if that fails, and a removal writes the block first
+ * and leaves the credential alone if *that* fails: what a half-finished save may leave behind is a
+ * credential no block points at — invisible and harmless — and never the other way round.
  *
  * ## 「获取模型」, and what it does not do
  *
@@ -44,15 +55,20 @@
  * request, because the command would otherwise fill it in with the key this app has stored for its
  * own AI and answer about a credential the engine never uses.
  */
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 
 import {
-  modelDisplayName,
+  addTypedModel,
+  mergeListedModels,
   providerBlock,
   providerCredentialName,
   providerDraftProblem,
   providerEdits,
+  providerKey,
+  providerWriteOrder,
+  type ModelRow,
   type ProviderDraft,
+  type ProviderKey,
   type ProviderModel,
 } from '../services/agent-provider-block'
 import type { AgentProviderAuthoringClient } from '../services/agent-provider-authoring'
@@ -66,17 +82,14 @@ import {
   type AgentProviderAuthoringLabels,
 } from './agent-provider-authoring-labels'
 
-/** One row of the model list: what the endpoint listed, or what the user typed. */
-interface ModelRow extends ProviderModel {
-  checked: boolean
-  /** `listed` rows are replaced by a fetch; `typed` ones are not. */
-  source: 'listed' | 'typed'
-}
-
 const props = defineProps<{
   /** The document's client, bound to the same pair this page is showing. */
   client: AgentConfigClient
-  /** The model fetch and the credential write, bound to the same pair. */
+  /**
+   * Everything else a save needs, bound to the same pair: the endpoint's model list, the credential
+   * a save sets or removes, and the names the profile stores — the answer this form cannot read off
+   * its own field.
+   */
   authoring: AgentProviderAuthoringClient
   /** The document as this page last read it — the revision a save is built on. */
   document: ConfigRead
@@ -97,13 +110,25 @@ const form = reactive({ id: '', name: '', baseUrl: '', apiKey: '', allowPrivate:
 const rows = ref<ModelRow[]>([])
 const manual = ref('')
 
+/**
+ * The credential *names* this profile stores, or `null` when they could not be read.
+ *
+ * `null` is not "none": it is the state this page refuses to write from, because both readings of
+ * it are facts nobody established. Read on mount and again at every save — which is what makes the
+ * second save of a form see the key the first one stored.
+ */
+const stored = ref<readonly string[] | null>(null)
+
+/** Whether the user asked for the stored credential to go. Reset per id, and after a save. */
+const removing = ref(false)
+
 const busy = ref(false)
 const fetching = ref(false)
 /** The fetch's own state, kept apart from the save's: a failed fetch is not a failed save. */
 const fetchState = ref<'idle' | 'loading' | 'ok' | 'need-key' | 'failed'>('idle')
 const fetchDetail = ref('')
 const fetchedCount = ref(0)
-const outcome = ref<'idle' | 'problem' | 'credential-failed' | 'failed' | 'applied' | 'conflict'>('idle')
+const outcome = ref<'idle' | 'problem' | 'credential-failed' | 'removal-failed' | 'failed' | 'applied' | 'conflict'>('idle')
 const message = ref('')
 
 /** The models that will be written: the rows the user ticked. */
@@ -111,14 +136,79 @@ const chosen = computed<ProviderModel[]>(() =>
   rows.value.filter((row) => row.checked).map((row) => ({ id: row.id, name: row.name })),
 )
 
+/** The credential variable this provider's key will live under — shown, so the user can check it. */
+const credentialName = computed(() =>
+  form.id.trim() === '' ? '' : providerCredentialName(form.id),
+)
+
+/** Whether the profile stores a key under that name; `null` while that is not known. */
+const keyStored = computed<boolean | null>(() =>
+  stored.value === null || credentialName.value === ''
+    ? null
+    : stored.value.includes(credentialName.value),
+)
+
+/** What this save does about the key. The precedence is `providerKey`'s, not a second one here. */
+const key = computed<ProviderKey>(() =>
+  providerKey({ field: form.apiKey, stored: keyStored.value, removing: removing.value }),
+)
+
+/**
+ * The sentence under the key field, its tone, and the id a test drives it by.
+ *
+ * Four states, each a different next move: a value about to replace the stored one, a stored key
+ * this block will keep naming, no key at all, and the one state where this page does not know —
+ * which is a save that refuses rather than a guess. One table rather than four template branches,
+ * so the tone and the id cannot drift from their sentence. `null` is the id nobody has typed yet,
+ * where there is nothing to say about a credential that has no name.
+ */
+const keyNote = computed<{ test: string; tone: string; text: string } | null>(() => {
+  if (form.apiKey.trim() !== '') {
+    return { test: 'provider-form-key-typed', tone: '', text: labels.value.keyTyped }
+  }
+  if (credentialName.value === '') return null
+  if (keyStored.value === true) {
+    return removing.value
+      ? {
+          test: 'provider-form-key-removing',
+          tone: 'is-warn',
+          text: labels.value.keyRemoving(credentialName.value),
+        }
+      : {
+          test: 'provider-form-key-stored',
+          tone: '',
+          text: labels.value.keyStored(credentialName.value),
+        }
+  }
+  return keyStored.value === false
+    ? { test: 'provider-form-key-none', tone: 'is-warn', text: labels.value.keyNone }
+    : { test: 'provider-form-key-unread', tone: 'is-error', text: labels.value.keyUnread }
+})
+
 /** What a save would submit — the value of `provider.<id>`, and nothing else. */
 const draft = computed<ProviderDraft>(() => ({
   id: form.id.trim(),
   name: form.name,
   baseUrl: form.baseUrl,
-  apiKey: form.apiKey.trim(),
+  key: key.value,
   models: chosen.value,
 }))
+
+/** Reads the credential names, and keeps the last answer's `null` when the read does not land. */
+async function readStored(): Promise<void> {
+  try {
+    stored.value = await props.authoring.storedCredentials()
+  } catch {
+    stored.value = null
+  }
+}
+
+// A different provider is a different credential, so a pending removal does not travel with the id.
+watch(credentialName, () => {
+  removing.value = false
+})
+
+onMounted(readStored)
 
 /**
  * The block as it will be written.
@@ -127,11 +217,6 @@ const draft = computed<ProviderDraft>(() => ({
  * there is no second rendering of the value to drift from the first.
  */
 const preview = computed(() => JSON.stringify(providerBlock(draft.value), null, 2))
-
-/** The credential variable this provider's key will live under — shown, so the user can check it. */
-const credentialName = computed(() =>
-  form.id.trim() === '' ? '' : providerCredentialName(form.id),
-)
 
 /** A rejection's sentence, as Tauri sends it: a string, not an `Error`. */
 function failureText(error: unknown): string {
@@ -142,31 +227,6 @@ function failureText(error: unknown): string {
     if (typeof held === 'string' && held !== '') return held
   }
   return String(error)
-}
-
-/**
- * The list with a fetch's ids merged in.
- *
- * A row that is already there keeps its tick — re-fetching after a failed first attempt must not
- * clear a choice the user made — and rows the user typed are kept beside the listed ones, because a
- * fetch is not a statement about what the endpoint *has*; it is a listing of what it answered with.
- */
-function merge(ids: readonly string[]): void {
-  const ticked = new Set(rows.value.filter((row) => row.checked).map((row) => row.id))
-  const typed = rows.value.filter((row) => row.source === 'typed')
-  const listed: ModelRow[] = ids.map((id) => ({
-    id,
-    name: modelDisplayName(id),
-    checked: true,
-    source: 'listed',
-  }))
-  // An id the user typed and the endpoint also lists is one row, and the listed spelling wins: the
-  // id the endpoint reports is the one the engine will be asked for.
-  const listedIds = new Set(ids)
-  rows.value = [...listed, ...typed.filter((row) => !listedIds.has(row.id))]
-  for (const row of rows.value) {
-    if (row.source === 'typed' && ticked.has(row.id)) row.checked = true
-  }
 }
 
 async function fetchModels(): Promise<void> {
@@ -187,7 +247,7 @@ async function fetchModels(): Promise<void> {
       apiKey: form.apiKey.trim(),
       allowPrivate: form.allowPrivate,
     })
-    merge(ids)
+    rows.value = mergeListedModels(rows.value, ids)
     fetchedCount.value = ids.length
     fetchState.value = 'ok'
   } catch (error) {
@@ -201,14 +261,7 @@ async function fetchModels(): Promise<void> {
 }
 
 function addTyped(): void {
-  const id = manual.value.trim()
-  if (id === '') return
-  const existing = rows.value.find((row) => row.id === id)
-  if (existing) {
-    existing.checked = true
-  } else {
-    rows.value = [...rows.value, { id, name: modelDisplayName(id), checked: true, source: 'typed' }]
-  }
+  rows.value = addTypedModel(rows.value, manual.value)
   manual.value = ''
 }
 
@@ -216,50 +269,82 @@ async function save(): Promise<void> {
   if (busy.value) return
   outcome.value = 'idle'
   message.value = ''
-  const value = draft.value
-  const problem = providerDraftProblem(value)
-  if (problem !== null) {
-    outcome.value = 'problem'
-    message.value = problem
-    return
-  }
-  const write = {
-    path: props.document.path,
-    revision: props.document.revision,
-    edits: providerEdits(value),
-  }
-  // The same rule the backend applies, asked before anything is sent: a stale revision or a
-  // document this host may not write is a refusal here rather than a round trip that does nothing.
-  const decision = decideConfigWrite(props.document, write)
-  if (decision.status === 'refused') {
-    outcome.value = 'problem'
-    message.value = decision.message
-    return
-  }
-  if (decision.status === 'conflict') {
-    outcome.value = 'conflict'
-    emit('reload')
-    return
-  }
+  // The whole of a save is busy, the read included: a second press during it cannot start a second
+  // one, and the store's answer — read *now* rather than as it was when this form mounted, because
+  // both pages of this dialog are on screen at once and the credential can move next door — is what
+  // the draft below is built from.
   busy.value = true
   try {
-    if (value.apiKey !== '') {
+    await readStored()
+    const value = draft.value
+    const problem = providerDraftProblem(value)
+    if (problem !== null) {
+      outcome.value = 'problem'
+      message.value = problem
+      return
+    }
+    // The one state this page may not write from. Guessing here is the defect in either direction:
+    // "no key" drops a reference the store still backs, "a key" writes one nothing backs — so the
+    // save stops and says which read has to land first.
+    if (value.key.kind === 'none' && keyStored.value === null) {
+      outcome.value = 'problem'
+      message.value = labels.value.keyUnread
+      return
+    }
+    const write = {
+      path: props.document.path,
+      revision: props.document.revision,
+      edits: providerEdits(value),
+    }
+    // The same rule the backend applies, asked before anything is sent: a stale revision or a
+    // document this host may not write is a refusal here rather than a round trip that does nothing.
+    const decision = decideConfigWrite(props.document, write)
+    if (decision.status === 'refused') {
+      outcome.value = 'problem'
+      message.value = decision.message
+      return
+    }
+    if (decision.status === 'conflict') {
+      outcome.value = 'conflict'
+      emit('reload')
+      return
+    }
+    const order = providerWriteOrder(value.key)
+    if (order === 'key-first' && value.key.kind === 'set') {
       try {
-        await props.authoring.setCredential(providerCredentialName(value.id), value.apiKey)
+        await props.authoring.setCredential(providerCredentialName(value.id), value.key.value)
       } catch (error) {
         outcome.value = 'credential-failed'
         message.value = failureText(error)
         return
       }
+      // The store moved, and the fact the next save is built on is what it holds now.
+      await readStored()
     }
     const answer = await props.client.edit(write.path, write.revision, decision.edits)
     if (answer.status === 'conflict') {
       outcome.value = 'conflict'
     } else {
+      if (order === 'key-last') {
+        try {
+          await props.authoring.removeCredential(providerCredentialName(value.id))
+        } catch (error) {
+          // The document half landed and the credential half did not, and that order is the one
+          // that leaves a key nothing points at rather than a block pointing at nothing. Said as
+          // what it is: the removal is still there to be asked for again, and the control for it
+          // is still on screen because the credential is.
+          outcome.value = 'removal-failed'
+          message.value = failureText(error)
+          emit('reload')
+          return
+        }
+        await readStored()
+      }
       outcome.value = 'applied'
       // The value is stored; a field still holding it would be a second copy of a credential on
       // screen for as long as the dialog is open.
       form.apiKey = ''
+      removing.value = false
     }
     emit('reload')
   } catch (error) {
@@ -304,9 +389,35 @@ async function save(): Promise<void> {
         data-test="provider-form-api-key"
       >
       <span class="settings-note">{{ labels.keyHint }}</span>
-      <span v-if="form.apiKey.trim() === ''" class="settings-note is-warn" data-test="provider-form-key-blank">
-        {{ labels.keyBlank }}
-      </span>
+      <!-- What the field cannot say, and the table that decides it is `keyNote`'s. -->
+      <span
+        v-if="keyNote"
+        class="settings-note"
+        :class="keyNote.tone"
+        :data-test="keyNote.test"
+      >{{ keyNote.text }}</span>
+      <!-- The one way a provider stops carrying a key, and it is a control rather than the meaning
+           an untouched field would otherwise have had. Drawn where the key it is about is, and only
+           where there is one to remove. -->
+      <button
+        v-if="keyStored === true"
+        type="button"
+        class="config-button provider-key-button"
+        data-test="provider-form-key-remove"
+        @click="removing = !removing"
+      >
+        {{ removing ? labels.keyKeep : labels.keyRemove }}
+      </button>
+      <!-- The state this page may not write from, and the gesture that ends it. -->
+      <button
+        v-if="keyStored === null && credentialName !== ''"
+        type="button"
+        class="config-button provider-key-button"
+        data-test="provider-form-key-retry"
+        @click="readStored"
+      >
+        {{ labels.keyRetry }}
+      </button>
     </label>
 
     <label class="settings-field settings-toggle">
@@ -412,6 +523,13 @@ async function save(): Promise<void> {
       >
         {{ labels.credentialFailed(message) }}
       </span>
+      <span
+        v-else-if="outcome === 'removal-failed'"
+        class="settings-note is-error"
+        data-test="provider-form-removal-failed"
+      >
+        {{ labels.removalFailed(message) }}
+      </span>
       <span v-else-if="outcome === 'failed'" class="settings-note is-error" data-test="provider-form-failed">
         {{ labels.editFailed(message) }}
       </span>
@@ -474,4 +592,7 @@ async function save(): Promise<void> {
 .provider-model-name { font-size: 12px; color: var(--app-text); }
 .provider-model-id { font-family: var(--app-mono-font); font-size: 11px; color: var(--app-muted); overflow-wrap: anywhere; }
 .provider-manual { flex: 1 1 12rem; }
+/* The key's own two controls sit under the field they are about, and are narrow: they are about one
+   member of the key's state, not about the provider the save button writes. */
+.provider-key-button { align-self: flex-start; padding: 2px 8px; font-size: 10px; }
 </style>
