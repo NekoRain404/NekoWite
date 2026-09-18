@@ -17,6 +17,9 @@
 //! The scratch directory is cargo's own (`CARGO_TARGET_TMPDIR`, inside this crate's `target/`)
 //! rather than the system temporary directory: these are key files, and a run that left them
 //! outside the tree would be leaving key material somewhere nobody expects to look for it.
+//!
+//! **`CARGO_TARGET_TMPDIR` is shared by every concurrent `cargo test` process**, and this
+//! repository runs several at once, so the label alone is not a directory — see [`scratch`].
 
 use nekowite_lib::commands::key_vault::{
     key_file_error, status_of, unlock_error, VaultCommandError, VaultKeyStatus,
@@ -30,11 +33,44 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// A directory of this process's own, inside the crate's target directory.
+///
+/// **The process id is what makes it this process's.** `CARGO_TARGET_TMPDIR` is one directory for
+/// every `cargo test` process that shares this target, so a label alone names the same path in all
+/// of them — and the `remove_dir_all` below, which exists so a previous run's leftovers cannot be
+/// what a test passes on, then deletes a *concurrent* run's key files out from under it. That is
+/// not hypothetical: `a_status_read_creates_no_key_file` reported
+/// `…/target/tmp/key-vault-status-creates-nothing/master.key: no such file or folder` under two
+/// runs at once, and passed on its own. The three sibling helpers in this directory
+/// (`agent_skills_test.rs`, `agent_skills_scope_test.rs`, `agent_skills_ipc_test.rs`) carried the
+/// id already; this was the one that did not.
 fn scratch(label: &str) -> PathBuf {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("key-vault-status-{label}"));
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("key-vault-status-{label}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
+}
+
+/// The property the three key-file cases depend on and cannot see: the directory `scratch` hands
+/// them is one no concurrent `cargo test` process can be handed.
+///
+/// Two processes share `CARGO_TARGET_TMPDIR`, so nothing but the id in the name tells them apart —
+/// and the failure it prevents is silent and intermittent, which is why the case is here rather
+/// than left to the discipline of whoever writes the next helper: a second run's `remove_dir_all`
+/// lands on the first run's `master.key` and the first run reports a missing file it never lost.
+#[test]
+fn a_scratch_directory_is_this_processs_own() {
+    let name = scratch("uniqueness")
+        .file_name()
+        .expect("the scratch path has a final component")
+        .to_string_lossy()
+        .into_owned();
+    assert!(
+        name.ends_with(&format!("-{}", std::process::id())),
+        "the scratch directory is named {name}, which another `cargo test` process would also \
+         take for this label: `CARGO_TARGET_TMPDIR` is shared by all of them, and each run removes \
+         its own directory before use"
+    );
 }
 
 /// What the window is told, as the two fields it branches on.
