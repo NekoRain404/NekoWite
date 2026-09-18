@@ -442,10 +442,18 @@ test.describe('what the runtime has actually been measured to do', () => {
         agentVersion: '1.18.29',
         authMethods: [{ id: 'login', name: 'Log in' }],
       },
+      // `host` is the page's third subject and it is **required** — `agent-runtime-ipc.ts:186` makes a
+      // row without it a *rejection of the whole readout*, not a row whose member is missing, so a
+      // fixture that omits it leaves the page with nothing to draw and every later locator fails with
+      // "not found". That is the same trap the paragraph above describes from the other side, and it
+      // caught this file on 2026-09-18 when the member was added: the fixture was right when it was
+      // written and the page moved. The three values below are `capabilities.rs`'s `host_offer` for
+      // these three features, read out of it rather than invented — a fixture that guessed would
+      // assert a claim about the shipped command surface that is not true of it.
       capabilities: [
-        { feature: 'slash-commands', declared: 'not-advertised', standing: 'advertised', detail: null },
-        { feature: 'audio-attachments', declared: 'not-advertised', standing: 'not-advertised', detail: 'not advertised by this engine' },
-        { feature: 'session-config-options', declared: 'advertised', standing: 'unverified', detail: 'no session has been opened in this run' },
+        { feature: 'slash-commands', declared: 'not-advertised', standing: 'advertised', detail: null, host: { status: 'control' } },
+        { feature: 'audio-attachments', declared: 'not-advertised', standing: 'not-advertised', detail: 'not advertised by this engine', host: { status: 'nothing' } },
+        { feature: 'session-config-options', declared: 'advertised', standing: 'unverified', detail: 'no session has been opened in this run', host: { status: 'command', command: 'agent_set_config_option' } },
       ],
     })
 
