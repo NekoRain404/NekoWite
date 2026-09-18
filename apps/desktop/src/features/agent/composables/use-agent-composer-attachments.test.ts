@@ -275,12 +275,21 @@ describe('a paste before the engine has answered', () => {
     expect(empty.held.value).toEqual([])
   })
 
-  it('draws no control for either, which is the half the two states do agree on', async () => {
-    // `unreported` is one arm: a window that drew an offer here would be offering something nobody
-    // has said the engine reads. The two differ in words, not in what may be pressed.
-    expect(overReport(null).imageStanding.value.kind).toBe('unreported')
-    expect(overReport([]).imageStanding.value.kind).toBe('unreported')
-    expect(overReport(null).resourceStanding.value.kind).toBe('unreported')
+  it('builds no block for either, which is the half the two states do agree on', async () => {
+    // The two `unreported`s differ in what the reader is *told*; what they agree on is that nothing
+    // may travel. Read through the public surface — a picked note answers `path-in-message` and the
+    // workspace is never read at all — rather than through the standings themselves, which are the
+    // composable's private vocabulary now: nothing outside it ever read one, and a value published
+    // for a caller that does not exist is a claim rather than a feature. The case used to assert
+    // "draws no control for either", which named a control this composable has never drawn.
+    const nothing = overReport(null)
+    expect(await nothing.attachFile('welcome.md')).toBe('path-in-message')
+    const empty = overReport([])
+    expect(await empty.attachFile('welcome.md')).toBe('path-in-message')
+
+    expect(readMock).not.toHaveBeenCalled()
+    expect(nothing.held.value).toEqual([])
+    expect(empty.held.value).toEqual([])
   })
 })
 

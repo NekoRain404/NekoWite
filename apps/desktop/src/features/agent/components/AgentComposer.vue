@@ -136,9 +136,19 @@ const props = defineProps<{
    *
    * It reaches this component for one reason: whether a chosen file becomes an attachment the
    * engine reads or a path in the message is the engine's answer and nobody else's, and this is
-   * the layer that owns both the file row and the send. Null is a state of its own — nothing has
-   * answered yet — and it draws no attach affordance at all rather than a disabled one, because a
-   * control nothing can licence is not a control the reader can act on.
+   * the layer that owns both the file row and the send.
+   *
+   * **It gates no control, and this comment used to say it did** — that a `null` report "draws no
+   * attach affordance at all rather than a disabled one". Nothing here has ever drawn or withheld
+   * one: the `+` is `AgentComposerContext.vue`'s, that file holds no report, and its own header
+   * says so ("there is no capability gate here"), because a row there is a file a person may point
+   * at and pressing one means the same thing whichever block the engine reads. A claim about a
+   * gate that does not exist is worse than a missing one — it tells the next reader the question is
+   * answered — so what this prop does is stated instead: `null` and an empty report part company in
+   * a *sentence*, never in what may be pressed. An attachment the report does not licence is
+   * refused with the engine's own words by `use-agent-composer-attachments.ts`, and a file whose
+   * block is not licensed travels as its path. Both halves are pinned in
+   * `AgentComposer.attachments.test.ts`.
    */
   capabilities?: readonly AgentCapabilityReport[] | null
   labels: AgentComposerLabels

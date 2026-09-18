@@ -113,8 +113,11 @@ async function settle(): Promise<void> {
   }
 }
 
+/** `null` and `undefined` are two different mounts and both are wanted: `undefined` is a caller that
+ *  passes no report at all (every caller before the feature), `null` is the panel's own
+ *  `capabilityReports` before its read lands. */
 function mountComposer(
-  capabilities?: readonly AgentCapabilityReport[],
+  capabilities?: readonly AgentCapabilityReport[] | null,
   vault: string = VAULT,
 ): void {
   host = document.createElement('div')
@@ -288,6 +291,59 @@ describe('a file picked in the `+`', () => {
 
     expect(chips()).toEqual([])
     expect(notices).toEqual([t('agent.panel.composer.attach.unreadable', { name: 'gone.md' })])
+  })
+})
+
+describe('the `+`, and the report it is not gated on', () => {
+  /**
+   * **The claim this block exists to keep from coming back.** `AgentComposer.vue`'s `capabilities`
+   * prop said, from the commit that added it until this one, that a `null` report "draws no attach
+   * affordance at all rather than a disabled one, because a control nothing can licence is not a
+   * control the reader can act on". Nothing in this component has ever drawn or withheld such a
+   * control: the report reaches `useAgentComposerAttachments`, which reads it to decide what a
+   * chosen file *becomes*, and the `+` belongs to `AgentComposerContext.vue` — a file row there
+   * means the same thing whatever the engine reads, and that file's own header says so ("there is
+   * no capability gate here").
+   *
+   * A comment that claims a gate is a defect of the same class as a control that does nothing: it
+   * tells the next reader the question is handled. So the claim is replaced by the rule, and the
+   * rule is pinned here rather than left to the prose — the case fails if anyone builds the gate
+   * the old comment described, which is the change a reader who believed it would make.
+   *
+   * `null` is not the same mount as "no prop": the panel passes `capabilityReports`, which is
+   * `null` until the gateway's answer lands, so this is the state of the composer in the first
+   * frames of every session — the state a reader is most likely to be looking at it in.
+   */
+  it('is drawn, enabled and openable while the engine has answered nothing', async () => {
+    listMock.mockResolvedValue([entry('welcome.md')])
+    readMock.mockResolvedValue('# welcome')
+    mountComposer(null)
+    await withSession()
+
+    const add = host.querySelector<HTMLButtonElement>('[data-action="context"]')
+    expect(add).not.toBeNull()
+    expect(add?.disabled).toBe(false)
+
+    await openMenu()
+
+    // Openable is the half that matters: a button that exists and does nothing is the failure this
+    // whole claim was about, and the list is what says it is a control the reader can act on.
+    expect(host.querySelectorAll('.agent-reference-row').length).toBeGreaterThan(0)
+  })
+
+  it('still hands a picked file to the engine’s answer, which is what the report is for', async () => {
+    // The other half, and the reason the report is a prop at all: with nothing answered, the row
+    // still does the thing that has always worked — the path goes into the message — and no chip
+    // is built. `path-in-message` is the composable's own word for it.
+    listMock.mockResolvedValue([entry('welcome.md')])
+    mountComposer(null)
+    await withSession()
+
+    await openMenu()
+    await clickRow('welcome.md')
+
+    expect(chips()).toEqual([])
+    expect(field().value).toBe('welcome.md ')
   })
 })
 

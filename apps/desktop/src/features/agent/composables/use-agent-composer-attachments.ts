@@ -7,11 +7,24 @@
  * parts only an element can do — where the caret is, which clipboard event arrived, whether a drag
  * is over it.
  *
- * **The gate is read here and nowhere else.** One control is offered per attachment kind and it is
- * offered only where the engine's own report says `available`; a `refused` or `unreported` report
- * draws no control at all, and the chip strip's own sentence says which of the two it is. The host
- * reads the same report at send time and refuses a block it does not license, so a report that went
- * stale between the two is a refusal rather than a protocol violation.
+ * **The gate is read here and nowhere else, and it gates no control.** It decides two things, both
+ * about what a file *becomes*: a block the report does not license is never built, and the reader is
+ * told why in the engine's own words rather than having the attachment dropped. Nothing is offered
+ * per attachment kind and nothing is withheld — the `+` is `AgentComposerContext.vue`'s, its rows
+ * are the folder's files, and a row means the same thing whichever block the engine reads (that
+ * file's header states the split). The sentence that used to stand here — "one control is offered
+ * per attachment kind … the chip strip's own sentence says which of the two it is" — described a
+ * control that has never existed, and a claim about a gate that is not there is worse than no
+ * claim: it tells the next reader the question is answered. The host reads the same report at send
+ * time and refuses a block it does not license, so a report that went stale between the two is a
+ * refusal rather than a protocol violation.
+ *
+ * **The two standings are the gate's own vocabulary and are not published.** They were returned to
+ * callers for a while and no caller ever read one — the only reader was the `standingFor` below —
+ * so they are private now. A value exported for a component that does not ask for it is this
+ * repository's signature failure with an API on top of it (建好了但够不到), and the way to find out
+ * whether a UI wants one is for a UI to ask: `AgentComposer.attachments.test.ts` asserts what the
+ * reader can observe, which is a refusal with a sentence, not a standing.
  */
 
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
@@ -90,9 +103,6 @@ export interface AgentComposerAttachments {
   /** Whether there is anything to draw. The strip is drawn on this and nothing else, so an empty
    *  message has no frame pretending to hold something. */
   hasAny: ComputedRef<boolean>
-  /** What the engine's report says about images, and about embedded files. */
-  imageStanding: ComputedRef<AgentAttachmentStanding>
-  resourceStanding: ComputedRef<AgentAttachmentStanding>
   /** The two counts the strip's own sentence uses. */
   addFromTransfer(data: DataTransfer | null): Promise<void>
   /** Attach a file of the workspace. Which of the two blocks it becomes is decided by the file —
@@ -322,8 +332,6 @@ export function useAgentComposerAttachments(
   return {
     held,
     hasAny: computed(() => held.value.length > 0),
-    imageStanding,
-    resourceStanding,
     addFromTransfer,
     attachFile,
     remove,
