@@ -485,7 +485,6 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
       // keeps a green test from modelling a call production answers with its own refusal.
       const record = recordFor(sessionId)
       if (dead) throw new AgentFailure('process-exited', 'the agent runtime exited')
-      if (dead) throw new AgentFailure('process-exited', 'the agent runtime exited')
       const run = record.run
       if (run) {
         // ACP's own words for a close: the agent "must cancel any ongoing work related to the
