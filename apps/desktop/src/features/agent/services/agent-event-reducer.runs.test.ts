@@ -1,11 +1,15 @@
 /**
- * The reducer's tests.
+ * The run: which one a frame belongs to, what a stopped one may still say, and how a turn ends.
  *
- * Most events here are built by hand rather than taken from the double: the reducer's job
- * is to judge an envelope, and a test that has to arrange a gateway to produce a frame with
- * a foreign `runtimeEpoch` would be testing the arrangement. The last section drives the
- * memory double instead, because the one behaviour that matters most — a cancelled run's
- * late text — is only proved by frames a real producer emitted.
+ * After the envelope, the reducer's next judgement is the run a frame is attributed to, and most of
+ * this file is the ways that can be refused: another run's content, content that names no run at
+ * all, content for a run that was never started, and every frame of a run that is over. The
+ * cancelled run is the case worth the most care, because the protocol tells a client to keep
+ * accepting a cancelled run's final frames — so accepting them must not mean reviving it.
+ *
+ * Most frames are built by hand; the last describe drives the memory double instead, because the
+ * behaviour that matters most here — a cancelled run's late text arriving after the cancel — is
+ * only proved by frames a real producer emitted.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -16,23 +20,19 @@ import {
   type AgentIdentity,
   type AgentPayloads,
   type AgentSession,
-  type AgentSessionSnapshot,
 } from '../../../platform/gateways/agent-contracts'
 import {
   createMemoryAgentGateway,
   type MemoryAgentGateway,
   type MemoryRunScript,
 } from '../../../platform/gateways/memory-agent'
-import { AGENT_TEXT_LIMIT, reduceAgentEvent, type AgentDropReason } from './agent-event-reducer'
-import { adoptSnapshot, repairFromSnapshot } from './agent-session-snapshot'
+import { reduceAgentEvent, type AgentDropReason } from './agent-event-reducer'
+import { adoptSnapshot } from './agent-session-snapshot'
 import {
   endRun,
-  IDENTITY_FIELDS,
   initialAgentSessionView,
   resolvePermission,
-  sessionKey,
   startAgentRun,
-  type AgentIdentityField,
   type AgentSessionView,
 } from './agent-session-view'
 
@@ -46,12 +46,6 @@ const IDENTITY: AgentIdentity = {
 
 function fresh(options: { timelineLimit?: number } = {}): AgentSessionView {
   return initialAgentSessionView(IDENTITY, options)
-}
-
-function withField(field: AgentIdentityField, value: string): Partial<AgentIdentity> {
-  // A computed key over a union widens to an index signature, so the assignment needs the
-  // assertion back to the shape the caller is building.
-  return { [field]: value } as Partial<AgentIdentity>
 }
 
 /** One frame, as an adapter would deliver it. The assertion is the correlation between
@@ -108,88 +102,6 @@ function dropReason(view: AgentSessionView, event: AgentEvent): AgentDropReason 
   expect(reduced.view).toBe(view)
   return (reduced.outcome as { reason: AgentDropReason }).reason
 }
-
-describe('the composite identity', () => {
-  // One case per field, because they answer different questions and the reducer reports
-  // which one failed: a stale runtime and a foreign vault are not the same mistake.
-  for (const field of IDENTITY_FIELDS) {
-    it(`drops a frame whose ${field} is not this session's, and says which field`, () => {
-      const view = liveRun()
-      const result = reduceAgentEvent(
-        view,
-        frame('text-delta', { text: 'x' }, {
-          sequence: 5,
-          runId: 'run-1',
-          identity: withField(field, 'somewhere-else'),
-        }),
-      )
-      expect(result.outcome).toEqual({ status: 'dropped', reason: 'identity-mismatch', field })
-      expect(result.view).toBe(view)
-    })
-  }
-
-  it('identifies a session by all five fields, including the runtime instance', () => {
-    expect(sessionKey(IDENTITY)).not.toBe(sessionKey({ ...IDENTITY, runtimeEpoch: 'epoch-2' }))
-    expect(sessionKey(IDENTITY)).not.toBe(sessionKey({ ...IDENTITY, sessionId: 'session-2' }))
-  })
-})
-
-describe('the host sequence', () => {
-  it('applies a frame that follows the last one', () => {
-    const view = liveRun()
-    const next = reduceAgentEvent(
-      view,
-      frame('text-delta', { text: ' more' }, { sequence: 2, runId: 'run-1' }),
-    )
-    expect(next.outcome).toEqual({ status: 'applied' })
-    expect(next.view.sequence).toBe(2)
-    expect(next.view.gap).toBeNull()
-  })
-
-  it('drops a sequence that has already been applied, rather than applying it twice', () => {
-    const view = liveRun()
-    // The same frame delivered again — the case a re-subscription produces.
-    expect(dropReason(view, frame('text-delta', { text: 'working' }, { sequence: 1, runId: 'run-1' }))).toBe(
-      'duplicate-sequence',
-    )
-    expect(view.timeline).toHaveLength(2)
-  })
-
-  it('drops a sequence older than the window has already read', () => {
-    const view = reduceAgentEvent(
-      liveRun(),
-      frame('text-delta', { text: ' more' }, { sequence: 4, runId: 'run-1' }),
-    ).view
-    expect(dropReason(view, frame('text-delta', { text: ' late' }, { sequence: 3, runId: 'run-1' }))).toBe(
-      'out-of-order-sequence',
-    )
-  })
-
-  it('applies a frame after a jump and records the hole instead of stitching it', () => {
-    const view = liveRun()
-    const jumped = reduceAgentEvent(
-      view,
-      frame('text-delta', { text: ' after the hole' }, { sequence: 5, runId: 'run-1' }),
-    )
-    expect(jumped.outcome).toEqual({ status: 'applied' })
-    expect(jumped.view.sequence).toBe(5)
-    expect(jumped.view.gap).toEqual({ expected: 2, received: 5 })
-    // The hole is a fact about the record: the frames after it do not erase it.
-    const next = reduceAgentEvent(
-      jumped.view,
-      frame('text-delta', { text: ' on' }, { sequence: 6, runId: 'run-1' }),
-    )
-    expect(next.view.gap).toEqual({ expected: 2, received: 5 })
-  })
-
-  it('does not call the beginning of a session a hole', () => {
-    const started = reduceAgentEvent(
-      startingRun(),
-      frame('text-delta', { text: 'first' }, { sequence: 7, runId: 'run-1' }),
-    )
-    expect(started.view.gap).toBeNull()
-  })
-})
 
 describe("a cancelled run's late frames", () => {
   it("does not revive the run, and does not touch the transcript", () => {
@@ -525,252 +437,6 @@ describe('the state machine', () => {
     ).view
     expect(failed.failure).not.toBeNull()
     expect(startAgentRun(failed, 'again').view.failure).toBeNull()
-  })
-})
-
-describe('every kind the contract carries', () => {
-  /** The text of the last row that holds any. */
-  function lastText(view: AgentSessionView): string {
-    const rows = view.timeline.filter((entry) => 'text' in entry)
-    return rows[rows.length - 1]?.text ?? ''
-  }
-
-  // Typed as a Record, so a fifteenth kind in `AgentPayloads` is a missing entry here
-  // rather than a kind nothing asserts anything about.
-  const effects: Record<AgentEventKind, (view: AgentSessionView) => void> = {
-    // The last text row is the run's own answer, which the chunk coalesces into — see the
-    // coalescing section below for what happens when it does not.
-    'text-delta': (view) => expect(lastText(view)).toContain('chunk'),
-    'user-delta': (view) => expect(lastText(view)).toBe('chunk'),
-    'thought-delta': (view) => expect(lastText(view)).toBe('chunk'),
-    'tool-update': (view) => expect(view.timeline.at(-1)).toMatchObject({ kind: 'tool', toolCallId: 'call-1' }),
-    'permission-request': (view) => expect(view.permissions).toHaveLength(1),
-    'commands-changed': (view) => expect(view.commands).toEqual([{ name: '/review' }]),
-    'plan-changed': (view) => expect(view.plan).toHaveLength(1),
-    'mode-changed': (view) => expect(view.modeId).toBe('plan'),
-    'config-changed': (view) => expect(view.config[0]?.id).toBe('model'),
-    'session-changed': (view) => expect(view.title).toBe('Renamed'),
-    'usage-changed': (view) => expect(view.usage?.usedTokens).toBe(10),
-    'files-changed': (view) => expect(view.changedFiles).toEqual(['notes/a.md']),
-    'run-finished': (view) => expect(view.lastResult?.stopReason).toBe('end-turn'),
-    'run-failed': (view) => expect(view.failure?.code).toBe('process-exited'),
-  }
-
-  const payloads: { [K in AgentEventKind]: AgentPayloads[K] } = {
-    'text-delta': { text: 'chunk' },
-    'user-delta': { text: 'chunk' },
-    'thought-delta': { text: 'chunk' },
-    'tool-update': {
-      toolCallId: 'call-1',
-      title: 'Reading a.md',
-      kind: 'read',
-      status: 'in_progress',
-      paths: ['a.md'],
-      content: [],
-      input: { state: 'absent' },
-      output: { state: 'absent' },
-    },
-    'permission-request': {
-      requestId: 'req-1',
-      toolCallId: 'call-1',
-      title: 'Run a command?',
-      input: { state: 'absent' },
-      content: [],
-      options: [{ optionId: 'yes', name: 'Yes', kind: 'allow_once' }],
-    },
-    'commands-changed': { commands: [{ name: '/review' }] },
-    'plan-changed': { entries: [{ content: 'step', status: 'pending', priority: 'low' }] },
-    'mode-changed': { modeId: 'plan' },
-    'config-changed': {
-      options: [{ id: 'model', name: 'Model', value: { kind: 'select', current: 'a', choices: [{ value: 'a', name: 'A' }] } }],
-    },
-    'session-changed': { title: 'Renamed' },
-    'usage-changed': { usedTokens: 10, contextTokens: 100, cost: null },
-    'files-changed': { paths: ['notes/a.md'] },
-    'run-finished': { stopReason: 'end-turn', usage: null },
-    'run-failed': { code: 'process-exited', message: 'the runtime exited' },
-  }
-
-  for (const kind of Object.keys(payloads) as AgentEventKind[]) {
-    it(`applies ${kind} to the state it is about`, () => {
-      const view = liveRun()
-      const reduced = reduceAgentEvent(
-        view,
-        frame(kind, payloads[kind], { sequence: 2, runId: 'run-1' }),
-      )
-      expect(reduced.outcome).toEqual({ status: 'applied' })
-      effects[kind](reduced.view)
-    })
-  }
-
-  it('keeps a title the update does not mention, and clears one it sends as null', () => {
-    const titled = reduceAgentEvent(
-      liveRun(),
-      frame('session-changed', { title: 'Renamed' }, { sequence: 2, runId: 'run-1' }),
-    ).view
-    const untouched = reduceAgentEvent(
-      { ...titled, sequence: 3 },
-      frame('session-changed', { updatedAt: '2026-09-16T00:00:00Z' }, { sequence: 4, runId: 'run-1' }),
-    ).view
-    expect(untouched.title).toBe('Renamed')
-    const cleared = reduceAgentEvent(
-      { ...untouched, sequence: 5 },
-      frame('session-changed', { title: null }, { sequence: 6, runId: 'run-1' }),
-    ).view
-    expect(cleared.title).toBeNull()
-  })
-})
-
-describe('coalescing and the bounds', () => {
-  it('merges consecutive chunks into the row they continue', () => {
-    let view = liveRun()
-    for (const [index, text] of ['one ', 'two ', 'three'].entries()) {
-      view = reduceAgentEvent(view, frame('text-delta', { text }, { sequence: 2 + index, runId: 'run-1' })).view
-    }
-    const texts = view.timeline.filter((entry) => entry.kind === 'text')
-    expect(texts).toHaveLength(1)
-    expect(texts[0]).toMatchObject({ text: 'workingone two three' })
-  })
-
-  it("does not merge a chunk into another run's answer", () => {
-    // run-1 has to end before run-2 can begin: the state machine allows one active
-    // generation per session, so a second run's frames are refused outright while one is
-    // live (that refusal has its own case above).
-    const ended = cancelled(liveRun())
-    const next = startAgentRun(ended, 'again').view
-    const second = reduceAgentEvent(
-      next,
-      frame('text-delta', { text: 'second' }, { sequence: 3, runId: 'run-2' }),
-    ).view
-    expect(second.timeline.filter((entry) => entry.kind === 'text')).toHaveLength(2)
-  })
-
-  it('aborts the run that crosses the timeline bound, and trims nothing', () => {
-    // Two rows already: the user's own message, and the answer's first row.
-    const view = liveRun()
-    expect(view.timeline).toHaveLength(2)
-    const tight: AgentSessionView = { ...view, timelineLimit: 3 }
-    const third = reduceAgentEvent(tight, frame('thought-delta', { text: 'think' }, { sequence: 2, runId: 'run-1' }))
-    expect(third.outcome).toEqual({ status: 'applied' })
-    expect(third.view.timeline).toHaveLength(3)
-
-    const crossed = reduceAgentEvent(
-      third.view,
-      frame('user-delta', { text: 'and mine' }, { sequence: 3, runId: 'run-1' }),
-    )
-    expect(crossed.outcome).toEqual({ status: 'aborted', limit: 'timeline', value: 3 })
-    expect(crossed.view.state).toBe('failed')
-    expect(crossed.view.failure?.code).toBe('buffer-conflict')
-    // Nothing was trimmed: the row that crossed the line is kept, because the abort is the
-    // report rather than a second loss.
-    expect(crossed.view.timeline).toHaveLength(4)
-    expect(crossed.view.timeline.at(-1)).toMatchObject({ text: 'and mine' })
-    // And the run is closed, so nothing after it can grow the timeline either.
-    expect(
-      dropReason(crossed.view, frame('text-delta', { text: 'more' }, { sequence: 4, runId: 'run-1' })),
-    ).toBe('closed-run')
-  })
-
-  it('aborts a message that passes the size the host will hold, and keeps it', () => {
-    const huge = 'x'.repeat(AGENT_TEXT_LIMIT + 1)
-    const reduced = reduceAgentEvent(liveRun(), frame('text-delta', { text: huge }, { sequence: 2, runId: 'run-1' }))
-    expect(reduced.outcome).toEqual({ status: 'aborted', limit: 'text', value: AGENT_TEXT_LIMIT })
-    expect(reduced.view.state).toBe('failed')
-    expect(reduced.view.timeline.at(-1)).toMatchObject({ text: 'working' + huge })
-  })
-
-  it('keeps a permission request when the run is aborted', () => {
-    const asked = reduceAgentEvent(
-      { ...liveRun(), timelineLimit: 2 },
-      frame(
-        'permission-request',
-        { requestId: 'req-1', toolCallId: 'call-1', title: 'Run a command?', input: { state: 'absent' }, content: [], options: [{ optionId: 'yes', name: 'Yes', kind: 'allow_once' }] },
-        { sequence: 2, runId: 'run-1' },
-      ),
-    ).view
-    // A request is never what crosses a bound, and the abort it triggers does not take it
-    // away: §6.2 forbids losing a permission request.
-    expect(asked.permissions).toHaveLength(1)
-  })
-})
-
-describe('snapshots', () => {
-  function snapshot(overrides: Partial<AgentSessionSnapshot> = {}): AgentSessionSnapshot {
-    return {
-      identity: IDENTITY,
-      state: 'running',
-      runId: 'run-1',
-      sequence: 0,
-      events: [],
-      permissions: [],
-      ...overrides,
-    }
-  }
-
-  it('adopts a snapshot and continues from the sequence it carries', () => {
-    const events = [
-      frame('text-delta', { text: 'earlier' }, { sequence: 4, runId: 'run-1' }),
-      frame('text-delta', { text: ' and later' }, { sequence: 5, runId: 'run-1' }),
-    ]
-    const adopted = adoptSnapshot(fresh(), snapshot({ sequence: 5, events, runId: 'run-1' }))
-    expect(adopted.outcome).toEqual({ status: 'adopted' })
-    expect(adopted.view.sequence).toBe(5)
-    expect(adopted.view.runId).toBe('run-1')
-    // The tail begins where the host's record begins. That is not a hole — counting it as
-    // one would mark every restored long session as damaged.
-    expect(adopted.view.gap).toBeNull()
-    expect(adopted.view.timeline.filter((entry) => entry.kind === 'text')).toHaveLength(1)
-  })
-
-  it("adopts the host's ending, so a run that ended while the window was away stays ended", () => {
-    const events = [frame('text-delta', { text: 'bye' }, { sequence: 4, runId: 'run-1' })]
-    const adopted = adoptSnapshot(fresh(), snapshot({ state: 'cancelled', runId: 'run-1', sequence: 4, events }))
-    expect(adopted.view.state).toBe('cancelled')
-    // The run it names is closed, so its late frames are refused from the first moment the
-    // new view exists — the guard survives a remount.
-    const late = frame('text-delta', { text: ' more' }, { sequence: 5, runId: 'run-1' })
-    expect(dropReason(adopted.view, late)).toBe('closed-run')
-  })
-
-  it('refuses a snapshot taken under another identity, naming the field', () => {
-    const refused = adoptSnapshot(fresh(), snapshot({ identity: { ...IDENTITY, vaultId: 'vault-2' } }))
-    expect(refused.outcome).toEqual({ status: 'refused', reason: 'identity-mismatch', field: 'vaultId' })
-  })
-
-  it('refuses a state an open session cannot be in', () => {
-    const refused = adoptSnapshot(fresh(), snapshot({ state: 'starting' }))
-    expect(refused.outcome).toEqual({ status: 'refused', reason: 'unreachable-state', state: 'starting' })
-  })
-
-  it('refuses to rewind a view that has already read past the snapshot', () => {
-    const view = reduceAgentEvent(
-      liveRun(),
-      frame('text-delta', { text: ' more' }, { sequence: 2, runId: 'run-1' }),
-    ).view
-    const refused = repairFromSnapshot(view, snapshot({ sequence: 1 }))
-    expect(refused.outcome).toEqual({ status: 'refused', reason: 'rewind', held: 2, offered: 1 })
-    expect(refused.view).toBe(view)
-  })
-
-  it('repairs the state from the host without taking the conversation off the screen', () => {
-    // The view believes run-1 is in flight; the host says it ended. The timeline is what the
-    // user is reading, so it stays — and the run it belongs to is closed by the repair.
-    const view = liveRun()
-    const repaired = repairFromSnapshot(view, snapshot({ state: 'cancelled', runId: 'run-1', sequence: 1 }))
-    expect(repaired.outcome).toEqual({ status: 'adopted' })
-    expect(repaired.view.state).toBe('cancelled')
-    expect(repaired.view.timeline).toHaveLength(view.timeline.length)
-    const late = frame('text-delta', { text: 'late' }, { sequence: 2, runId: 'run-1' })
-    expect(dropReason(repaired.view, late)).toBe('closed-run')
-  })
-
-  it("reduces the frames between the view's position and the snapshot, which nothing else would deliver", () => {
-    // A subscription continues at `snapshot.sequence + 1`, so an event the view never applied
-    // and the snapshot still holds exists only in the snapshot's own tail.
-    const events = [frame('usage-changed', { usedTokens: 42, contextTokens: 100, cost: null }, { sequence: 2, runId: 'run-1' })]
-    const repaired = repairFromSnapshot(liveRun(), snapshot({ sequence: 2, events }))
-    expect(repaired.view.usage?.usedTokens).toBe(42)
-    expect(repaired.view.sequence).toBe(2)
   })
 })
 
