@@ -14,8 +14,9 @@
  * browser's own text drop away from the reader: a selection dragged into a textarea lands at the
  * caret without any code, and it stops doing that the moment a handler calls `preventDefault()` on
  * it. `apps/desktop/src/features/agent/components/AgentComposer.vue` declines text drags on
- * purpose and has a test pinning it. The custom type is the app saying "this is a file", which no
- * selection ever is.
+ * purpose — the gesture rules themselves live beside it, in
+ * `features/agent/composables/use-agent-composer-intake.ts` — and has a test pinning it. The
+ * custom type is the app saying "this is a file", which no selection ever is.
  *
  * The readers exist as functions rather than as a `getData` call at each site because the two halves
  * have different rules: `types` is readable in a `dragover` and `getData` is not (the browser

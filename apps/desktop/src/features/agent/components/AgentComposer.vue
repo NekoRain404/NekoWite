@@ -26,35 +26,28 @@ export interface AgentComposerLabels {
  * Props in, events out — the text arrives as a model and a send leaves as an event; nothing
  * here knows what a session is, and nothing here talks to the store (§10.2).
  *
- * **Enter does not send during an IME composition.** That is §10.2's acceptance, and it is
- * the one place in this feature where a keystroke must be read as the input method's rather
- * than the reader's: a candidate is committed with Enter, and a composer that sent on it
- * would submit half a word and, on a Chinese or Japanese layout, send on every candidate
- * change. Three signals decide it, because the engines disagree about which one they set —
- * the composition events this element saw, `KeyboardEvent.isComposing`, and the legacy 229
- * key code a browser sends for a key it handed to the input method. All three are checked:
- * the composition events are the ones that are always there, and the other two cover the
- * deliveries that arrive outside a composition as far as this element is concerned.
- *
  * **A second send while a run is in flight does nothing at all.** Not a queue, not a
  * reminder: §6.2 allows one active generation per session, and the text stays in the field
  * for the reader to send when the run ends. The text is not cleared on a refusal, which is
  * §5.1's rule about drafts surviving errors, applied to the one refusal that happens
  * without an error.
  *
- * The field grows with its content to about a third of the panel and then scrolls
- * (§5.3 「输入区初始约 96–120px，随内容增长到面板高度的约 35% 后内部滚动」). The bound is
- * measured from the nearest positioned ancestor — the panel, which is what it must not
- * outgrow — and not from the window, because the panel is not always the window.
+ * **What the field does about itself is `use-agent-composer-field.ts`'s, and the rule that an
+ * Enter during an IME composition is not a send lives there** with the three signals it is read
+ * from (§10.2) — as does the growth bound and what a reference at the caret becomes.
+ * `use-agent-composer-intake.ts` owns what a paste and a drag mean, and `AgentComposerMentions.vue`
+ * owns the `@` list. What is left here is what only the assembly can do: place the three, decide
+ * what a key means to each of them in turn, and own the turn itself.
  *
  * **The message can carry more than its words, and this is the layer that decides what travels.**
  * A turn is built from a text block plus one block per attachment (`agent_runtime/attachments.rs`
- * on the host side), and everything that puts something in is here: a paste of an image, a drag
- * over the field, and a file picked in the `+`'s own list. What may go out is the engine's own
- * report and nothing else — `promptCapabilities` decides, the host reads it again at send time, and
- * a block it does not licence is refused with the engine's own sentence rather than dropped. The
- * rules that do not need an element — what a file becomes, what fits, what is refused — live in
- * `services/agent-composer-attachments.ts` and `composables/use-agent-composer-attachments.ts`.
+ * on the host side), and every way in passes through this component: a paste of an image and a drag
+ * over the field (reported by `use-agent-composer-intake.ts`), and a file picked in the `+`'s own
+ * list. What may go out is the engine's own report and nothing else — `promptCapabilities` decides,
+ * the host reads it again at send time, and a block it does not licence is refused with the engine's
+ * own sentence rather than dropped. The rules that do not need an element — what a file becomes,
+ * what fits, what is refused — live in `services/agent-composer-attachments.ts` and
+ * `composables/use-agent-composer-attachments.ts`.
  */
 import { computed, nextTick, ref, watch } from 'vue'
 import { Send, Square } from 'lucide-vue-next'
@@ -64,18 +57,14 @@ import type {
 } from '../../../platform/gateways/agent-contracts'
 import { t } from '../../../i18n'
 import { useAgentComposerAttachments } from '../composables/use-agent-composer-attachments'
-import {
-  textWithoutMention,
-  useAgentComposerMentions,
-} from '../composables/use-agent-composer-mentions'
+import { useAgentComposerField } from '../composables/use-agent-composer-field'
+import { useAgentComposerIntake } from '../composables/use-agent-composer-intake'
+import { textWithoutMention } from '../composables/use-agent-composer-mentions'
 import type { AgentConfigControl } from '../services/agent-config-options'
-import { draggedReference, insertReferenceText } from '../services/agent-context-references'
-import { carriesDraggedPath, draggedPath } from '../../../services/drag-payload'
 import AgentComposerAttachments from './AgentComposerAttachments.vue'
 import AgentComposerContext, { type AgentComposerSelection } from './AgentComposerContext.vue'
+import AgentComposerMentions from './AgentComposerMentions.vue'
 import AgentConfigRow from './AgentConfigRow.vue'
-import AgentReferenceMenu, { type AgentReferenceRow } from './AgentReferenceMenu.vue'
-import { FileText } from 'lucide-vue-next'
 
 const props = defineProps<{
   /** A run is in flight: the button is a stop, and Enter will not send. */
@@ -178,30 +167,29 @@ const emit = defineEmits<{
   setConfig: [key: string, value: string | boolean]
 }>()
 
-const field = ref<HTMLTextAreaElement | null>(null)
-/** Set by the composition events this element saw, and the authority on whether Enter is the
- *  reader's or the input method's. */
-const composing = ref(false)
+/** The field's own element, bound by the template. Everything that needs it — its height, its
+ *  caret, the composition events it saw — is `use-agent-composer-field.ts`'s, and it takes the
+ *  element rather than reaching for it: a template ref is the template's to name. */
+const el = ref<HTMLTextAreaElement | null>(null)
 
-/**
- * How long after a composition ends an Enter is still read as the input method's.
- *
- * WebKit — the engine this application ships on, WebKitGTK 4.1 — delivers the Enter that
- * *committed* a candidate after `compositionend`, by which time both `isComposing` and this
- * element's own flag say the composition is over. Trusting the flags alone would send half a
- * word on the product's own engine. A reader cannot commit a candidate and mean "send" inside
- * this window: committing is itself an Enter, so the send would have to be a second keystroke
- * inside 60ms.
- */
-const COMMIT_GRACE = 60
-let composedAt = Number.NEGATIVE_INFINITY
+const field = useAgentComposerField({
+  el,
+  draft,
+  // The event is this component's to report; the flag it is reported from is the composable's.
+  composition: (phase) => emit('composition', phase),
+})
+
+/** The `@` list, drawn by its own component — and asked for its keys from here, because the keydown
+ *  lands on this field rather than in that box. See {@link onKeydown}. */
+const mentionMenu = ref<InstanceType<typeof AgentComposerMentions> | null>(null)
 
 /**
  * What the message is carrying, and the three intakes that put something there.
  *
  * The vault is a prop — the panel's own session's, see {@link vault} — and every reader below
- * resolves against it: `attachments` reads it when a file is picked or pasted, `onDrop` reads it for
- * a dragged path, the `+`'s listing reads it, and the `@` menu reads it.
+ * resolves against it: `attachments` reads it when a file is picked or pasted, the intake reads it
+ * for a dragged path, the `+`'s listing reads it, and the `@` list reads it through its own
+ * component.
  */
 /** The workspace a picked or dropped file is addressed in, or `null` before a session is on
  *  screen.
@@ -220,55 +208,17 @@ const attachments = useAgentComposerAttachments({
 })
 
 /**
- * The `@` menu: typing a note's name into the message.
- *
- * The rows are the workspace's own notes (`services/vault-files.ts`'s index, which is what the
- * file tree lists), and settling on one puts the file into the turn rather than its name into the
- * text — the same two outcomes `pickFile` chooses between, for the same reason. The typed word is
- * taken out of the message when it settles, because the file is now a chip and the half-written
- * name is no longer what the reader meant to say.
- */
-/**
  * The file a mention settled on: the half-typed word comes out of the message, and the file goes
  * into the turn.
  *
- * One function for both ways in — the row the reader clicked and the Enter the menu took — because
- * the two have to do exactly the same thing, and the second of them is reached from inside the
- * composable that was built with this very function as its `select`.
+ * One path for both ways in — the row the reader clicked and the Enter the list took — because the
+ * two have to do exactly the same thing, and both of them arrive here as one `pick` from
+ * `AgentComposerMentions.vue`, whose own composable was built with it as its `select`.
  */
-function pickMention(path: string): void {
+function onMentionPick(path: string): void {
   draft.value = textWithoutMention(draft.value)
   pickFile(path)
 }
-
-const mentions = useAgentComposerMentions({
-  vault: sessionVault,
-  text: () => draft.value,
-  select: pickMention,
-})
-
-/** The rows the `@` menu draws. Ids are the paths themselves, so the row the reader took and the
- *  file that is attached cannot drift apart. */
-const mentionRows = computed((): AgentReferenceRow[] =>
-  mentions.matches.value.map((path) => ({ id: path, label: path, icon: FileText })),
-)
-
-/** A sentence for each way the `@` menu can have nothing to show. `closed` and `rows` draw the
- *  list itself, so they are not here. */
-const mentionNotice = computed((): string | null => {
-  switch (mentions.view.value) {
-    case 'reading':
-      return t('agent.panel.composer.attach.mention.reading')
-    case 'empty':
-      return t('agent.panel.composer.attach.mention.empty')
-    case 'no-match':
-      return t('agent.panel.composer.attach.mention.noMatch')
-    case 'unreadable':
-      return t('agent.panel.composer.attach.mention.unreadable')
-    default:
-      return null
-  }
-})
 
 const blank = computed(() => draft.value.trim() === '')
 
@@ -281,10 +231,6 @@ const blank = computed(() => draft.value.trim() === '')
  * of the reader's own clears this and takes a manual clearing with it.
  */
 const pendingSend = ref<string | null>(null)
-
-function focus(): void {
-  field.value?.focus()
-}
 
 /**
  * A file the reader picked in the `+`'s list, and what becomes of it.
@@ -306,100 +252,18 @@ function focus(): void {
  */
 function pickFile(path: string): void {
   void attachments.attachFile(path).then((outcome) => {
-    if (outcome === 'path-in-message') insertReference(path)
+    if (outcome === 'path-in-message') field.insertReference(path)
   })
 }
 
-/**
- * A paste. Images become attachments; anything else is left to the field.
- *
- * The event is only taken when the clipboard actually carried an image: a paste of text must reach
- * the textarea unchanged, and preventing the default on every paste would be this component
- * swallowing the reader's copy of a sentence to look for a screenshot in it.
- */
-function onPaste(event: ClipboardEvent): void {
-  const clipboard = event.clipboardData
-  const carriesImage = Array.from(clipboard?.items ?? []).some(
-    (item) => item.kind === 'file' && item.type.startsWith('image/'),
-  )
-  if (!carriesImage) return
-  event.preventDefault()
-  void attachments.addFromTransfer(clipboard)
-}
-
-/** A drag over the field. Only claimed when the drag carries files or a document of this app's
- *  own, and refused by default otherwise so the field keeps its ordinary text-drop behaviour. */
-function onDragOver(event: DragEvent): void {
-  const data = event.dataTransfer
-  if (!carriesFiles(data) && !carriesDraggedPath(data)) return
-  event.preventDefault()
-  if (data !== null) data.dropEffect = offeredEffect(data)
-}
-
-function onDrop(event: DragEvent): void {
-  // The whole reason a document drag is not a file drag: the bytes were never in the transfer.
-  // What arrives is a path this window dragged, and it goes exactly where the `+`'s file row goes —
-  // through `attachFile`, the one place that decides between an image, a resource block and a path
-  // in the message by asking the engine's own report. See {@link pickFile}.
-  //
-  // The conversion is `draggedReference`'s and not this component's: a reference is vault-relative
-  // because that is the only spelling the engine can resolve, and the same rule produces the `+`'s
-  // rows. A path that cannot become one — from outside the vault, or with no vault open yet —
-  // leaves the drag unclaimed rather than inserting a path that names nothing the turn can read.
-  const dropped = draggedReference(draggedPath(event.dataTransfer), sessionVault())
-  if (dropped !== null) {
-    event.preventDefault()
-    pickFile(dropped)
-    return
-  }
-  if (!carriesFiles(event.dataTransfer)) return
-  event.preventDefault()
-  void attachments.addFromTransfer(event.dataTransfer)
-}
-
-function carriesFiles(data: DataTransfer | null): boolean {
-  if (data === null) return false
-  return Array.from(data.types).includes('Files')
-}
-
-/**
- * Which effect to ask for, out of the ones the source is offering.
- *
- * The two producers of a document drag do not offer the same thing: the tab strip offers a copy
- * (the document stays where it was) and the vault tree offers a move (its drag re-parents a node).
- * A target may only accept an effect the source offers — asking for a copy of a move-only drag
- * makes the browser cancel the drop before this handler ever runs — so the field asks for the copy
- * when it may and settles for the move when it may not. Either way the message is the same: the
- * *effect* is a promise about the source, not about what this component does with the path.
- */
-function offeredEffect(data: DataTransfer): 'copy' | 'move' {
-  const allowed = data.effectAllowed
-  const copies = allowed === 'copy' || allowed === 'copyMove' || allowed === 'copyLink' || allowed === 'all'
-  // `uninitialized` is the value a source that never set one leaves behind, and every effect is
-  // available there; `link` alone is the one case with no copy and no move to ask for, and the
-  // field asks for neither rather than inventing a third.
-  if (copies || allowed === 'uninitialized') return 'copy'
-  return 'move'
-}
-
-/** How tall the field may grow: about a third of the panel (§5.3).
- *
- *  Measured from the panel's own marker rather than from `offsetParent`: the panel is what the
- *  field must not outgrow, and between the two of them now sits the menu's positioning box —
- *  an ancestor, but not the bound. */
-function limit(el: HTMLTextAreaElement): number {
-  const panel = el.closest('[data-agent-panel]') as HTMLElement | null
-  return Math.round((panel?.clientHeight ?? 480) * 0.35)
-}
-
-/** Grow to fit the text, then let the panel's share cap it. Runs after the DOM has the new
- *  value, because `scrollHeight` is measured from it. */
-function grow(): void {
-  const el = field.value
-  if (el === null) return
-  el.style.height = 'auto'
-  el.style.height = `${Math.min(el.scrollHeight, limit(el))}px`
-}
+/** The two intakes that arrive as events on the field. Bound below, and both of them end in one of
+ *  the two routes above: a transfer's files go to the attachments composable, and a dragged path
+ *  goes through `pickFile` exactly as a `+` row does. */
+const intake = useAgentComposerIntake({
+  vault: sessionVault,
+  addFromTransfer: attachments.addFromTransfer,
+  pick: pickFile,
+})
 
 function submit(): void {
   // The ends are trimmed and nothing else is touched: a trailing newline from Shift+Enter is
@@ -421,65 +285,29 @@ function submit(): void {
   // refusal therefore leaves the chips exactly where they were, beside the text that came back.
   pendingSend.value = text
   emit('send', text, carried)
-  void nextTick(focus)
+  void nextTick(field.focus)
 }
 
 function onKeydown(event: KeyboardEvent): void {
   // The menus are asked first, and the `@` list before the engine's: a word starting `@` cannot be
   // a `/command` (that one has to start the message), so the two never both have a claim, and the
   // order only decides which one answers when neither does. Both say "mine" by having already
-  // called `preventDefault`, and both tell the IME apart from a key of their own.
-  const mentioned = mentions.onKeydown(event)
+  // called `preventDefault`, and both tell the IME apart from a key of their own. The `@` list is
+  // asked through the instance because the keydown lands on this field rather than in its box —
+  // `AgentComposerMentions.vue` exposes the one function and says why.
+  const mentioned = mentionMenu.value?.onKeydown(event) ?? 'pass'
   if (mentioned !== 'pass') return
   const verdict = props.resolveKey?.(event) ?? 'pass'
   if (verdict !== 'pass') return
   if (event.key !== 'Enter') return
-  // Enter during a composition is the input method committing a candidate. See the header.
-  if (composing.value || event.isComposing || event.keyCode === 229) return
-  // …and so is the Enter a WebKit delivers just after one ended. See COMMIT_GRACE.
-  if (performance.now() - composedAt < COMMIT_GRACE) return
+  // A composition's Enter — including the one an engine delivers just after its `compositionend` —
+  // is the input method committing a candidate rather than the reader sending. The three signals
+  // and the grace window are `use-agent-composer-field.ts`'s.
+  if (field.inputMethodOwnsEnter(event)) return
   // Shift+Enter is a newline, which is the field's own behaviour — nothing to do.
   if (event.shiftKey) return
   event.preventDefault()
   submit()
-}
-
-/**
- * Put a reference the reader picked into the message, at the caret.
- *
- * The caret is where the reader was typing, so the text lands there; a field that has never been
- * focused has no selection to read and the reference is appended. What the message becomes is
- * `insertReferenceText`'s decision rather than this component's — the spaces, the clamp and the
- * new caret live with the rest of the reference rules — and what is left here is the two things
- * only the element can do: read the caret off the textarea, and put focus and the caret back.
- *
- * Focus goes to the field, and it goes there in a `nextTick`: the list that produced the reference
- * is being torn down in this same turn, and a field that asked for focus before that patch would
- * be handing it straight back to a dying menu. Choosing a row is the one way out of that list that
- * ends here rather than on the control (`AgentComposerContext` returns focus to the control when
- * the reader *dismisses* it), because the reader's next act is a word, not another file.
- */
-function insertReference(reference: string): void {
-  const el = field.value
-  const placed = insertReferenceText(draft.value, el?.selectionStart ?? draft.value.length, reference)
-  draft.value = placed.text
-  void nextTick(() => {
-    const target = field.value
-    if (target === null) return
-    target.focus()
-    target.setSelectionRange(placed.caret, placed.caret)
-  })
-}
-
-function onCompositionStart(): void {
-  composing.value = true
-  emit('composition', 'start')
-}
-
-function onCompositionEnd(): void {
-  composing.value = false
-  composedAt = performance.now()
-  emit('composition', 'end')
 }
 
 watch(draft, (value) => {
@@ -490,7 +318,7 @@ watch(draft, (value) => {
     pendingSend.value = null
     attachments.clear()
   }
-  void nextTick(grow)
+  void nextTick(field.grow)
 })
 
 /** A keystroke of the reader's own: whatever send was outstanding is no longer what this draft is
@@ -499,7 +327,9 @@ function onInput(): void {
   if (pendingSend.value !== null && draft.value !== pendingSend.value) pendingSend.value = null
 }
 
-defineExpose({ focus })
+/** The panel's way in for a caller that wants the reader in the field — kept where it has always
+ *  been exposed, on this component, though the element and the call are the field's own. */
+defineExpose({ focus: field.focus })
 </script>
 
 <template>
@@ -515,34 +345,17 @@ defineExpose({ focus })
       :attachments="attachments.held.value"
       @remove="attachments.remove"
     />
-    <!-- The `@` list, over the field it is being typed into. Its own positioning box, because
-         `AgentReferenceMenu` places itself against the element that owns it and this is not the
-         `+`'s control: it belongs to the field, and it opens upward from the field's top edge. -->
-    <div class="agent-composer-mentions">
-      <Transition name="v">
-        <AgentReferenceMenu
-          v-if="mentions.view.value !== 'closed'"
-          :rows="mentionRows"
-          :label="t('agent.panel.composer.attach.mention.list')"
-          @select="pickMention"
-          @close="mentions.close"
-          @leave="mentions.close"
-        />
-      </Transition>
-      <!-- A list with nothing in it says which nothing it is: still being read, a workspace with
-           no notes, a word that matches none, or an index that could not be walked. Drawn in the
-           field's own box rather than as an empty menu, because an empty frame is the failure
-           this sentence exists to avoid. -->
-      <p
-        v-if="mentionRows.length === 0 && mentionNotice !== null"
-        class="agent-composer-mention-notice"
-        role="status"
-      >
-        {{ mentionNotice }}
-      </p>
-    </div>
+    <!-- The `@` list, over the field it is being typed into: its own box, its own rows, its own
+         sentences and its own keys, all `AgentComposerMentions.vue`'s. The instance is held here
+         because the keydown lands on the field below and `onKeydown` asks it before anything else. -->
+    <AgentComposerMentions
+      ref="mentionMenu"
+      :text="draft"
+      :vault="vault"
+      @pick="onMentionPick"
+    />
     <textarea
-      ref="field"
+      ref="el"
       v-model="draft"
       class="agent-composer-field"
       :placeholder="labels.placeholder"
@@ -551,12 +364,12 @@ defineExpose({ focus })
       rows="2"
       spellcheck="false"
       @keydown="onKeydown"
-      @compositionstart="onCompositionStart"
-      @compositionend="onCompositionEnd"
+      @compositionstart="field.onCompositionStart"
+      @compositionend="field.onCompositionEnd"
       @input="onInput"
-      @paste="onPaste"
-      @dragover="onDragOver"
-      @drop="onDrop"
+      @paste="intake.onPaste"
+      @dragover="intake.onDragOver"
+      @drop="intake.onDrop"
     />
     <div class="agent-composer-bar">
       <!-- The left-hand end of the row: the files of the folder the agent works in, brought into
@@ -568,7 +381,7 @@ defineExpose({ focus })
       <AgentComposerContext
         :vault="vault"
         :selection="selection"
-        @insert="insertReference"
+        @insert="field.insertReference"
         @pick="pickFile"
       />
       <p class="agent-composer-hint">
@@ -650,28 +463,6 @@ defineExpose({ focus })
 }
 .agent-composer-field::placeholder {
   color: var(--app-muted);
-}
-/* The `@` list's positioning box: the anchor `AgentReferenceMenu` places itself against, and the
-   place the "nothing to show" sentences are drawn that is not the menu box. `position: relative`
-   and no size of its own — it must not take a line of the composer's height when it is empty. */
-.agent-composer-mentions {
-  position: relative;
-}
-/* The sentence a state with no rows is said with. It sits below the field's top edge, over the
-   field rather than pushing it, so the composer does not change height as the reader types. */
-.agent-composer-mention-notice {
-  position: absolute;
-  top: 4px;
-  left: 0;
-  z-index: 300;
-  margin: 0;
-  padding: 5px 8px;
-  border: 1px solid color-mix(in srgb, var(--app-border) 86%, transparent);
-  border-radius: var(--app-radius-sm);
-  background: color-mix(in srgb, var(--app-elevated) 96%, var(--app-panel));
-  box-shadow: var(--app-shadow-menu);
-  color: var(--app-muted);
-  font-size: 12px;
 }
 .agent-composer-bar {
   display: flex;
