@@ -241,6 +241,53 @@ describe('a click on a pet task this window cannot show', () => {
     expect(document.querySelector('[data-agent-panel]')).toBe(before)
   })
 
+  it('says the engine is still starting when one is on its way', async () => {
+    const gateway = createMemoryAgentGateway({ agentId: 'opencode', profileId: 'default' })
+    // A composition whose `session/new` never answers: the rail sits in its `starting` arm for as
+    // long as the case needs it to, which is the only way that arm is reachable in a test — the
+    // memory gateway opens a session on the first tick.
+    composeMock.mockReturnValue({
+      gateway,
+      start: async () => {
+        await gateway.start()
+      },
+      openSession: () => new Promise<AgentSession>(() => {}),
+      stop: async () => {
+        await gateway.stop()
+      },
+      connectSvgInsertion: () => {
+        throw new Error('connectSvgInsertion is not part of this test')
+      },
+      registry: {
+        read: () => {
+          throw new Error('the registry is not part of this test')
+        },
+        add: () => {
+          throw new Error('the registry is not part of this test')
+        },
+        setEnabled: () => {
+          throw new Error('the registry is not part of this test')
+        },
+      },
+    } satisfies AgentComposition)
+    const store = useSettingsStore()
+    store.agentPanel = true
+    shell({})
+    // Waited for through the composition rather than through the rail: `AgentRailBody` draws the
+    // same sentence for `idle` and for `starting` whenever a folder is open (its `v-else` arm),
+    // so the DOM cannot tell the two apart — and the state is the thing under test. The stub's
+    // `openSession` never answers, so the rail stays in `starting` for as long as the case needs.
+    await untilDom(() => composeMock.mock.calls.length === 1, 'the composition to be built')
+
+    // A moment away rather than unavailable: the runtime is coming up for this very folder, and
+    // once it is live the key *is* one of its sessions, so the click is a move rather than a
+    // refusal — which is why the sentence says to press the task again rather than naming a folder.
+    deliver(keyOf())
+    await nextTick()
+
+    expect(toasts).toEqual([t('agent.rail.taskUnavailable.starting')])
+  })
+
   it('names the engine when the window runs another one for the same folder', async () => {
     const fake = fakeComposition('opencode')
     composeMock.mockReturnValue(fake.composition)
