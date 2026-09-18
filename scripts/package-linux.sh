@@ -49,6 +49,38 @@ echo "[4/7] Build optimized executable and every bundle"
 # rebuild carries the frontend of that earlier moment with no way to tell.
 # That happened here, and the only reason it was caught is that the timestamps
 # were compared by hand.
+# **The AppImage runtime, fetched once and kept.** `linuxdeploy-plugin-appimage` asks `appimagetool` to
+# build the AppImage, and `appimagetool` downloads its own type-2 runtime from
+# `github.com/AppImage/type2-runtime` at that moment. That download failed here with `server returned
+# status code 0` on a machine whose network was fine — `curl` on the same URL returned HTTP 200 and
+# 944,632 bytes a minute later — and the failure costs the whole run, because the script exits before
+# `[5/7]` copies anything, so `release/` keeps the previous build's artifacts and nothing says why.
+#
+# Handing the plugin a runtime it does not have to fetch removes the network from the AppImage step
+# entirely (`LDAI_RUNTIME_FILE` is the plugin's own variable). The file is fetched here only when it
+# is absent, so a fresh checkout pays for it once and every later build is offline.
+#
+# `~/.cache/tauri` is where this script already keeps `linuxdeploy-x86_64.AppImage`, so the tools live
+# together; nothing about the file is committed.
+APPIMAGE_RUNTIME="$HOME/.cache/tauri/runtime-x86_64"
+APPIMAGE_RUNTIME_URL="https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64"
+if [ ! -s "$APPIMAGE_RUNTIME" ]; then
+  echo "  the appimage runtime is not cached; fetching it once into $APPIMAGE_RUNTIME"
+  mkdir -p "$(dirname "$APPIMAGE_RUNTIME")"
+  if ! curl -fSL --retry 3 --connect-timeout 20 -o "$APPIMAGE_RUNTIME.part" "$APPIMAGE_RUNTIME_URL"; then
+    rm -f "$APPIMAGE_RUNTIME.part"
+    echo "FAIL: the appimage runtime could not be fetched from $APPIMAGE_RUNTIME_URL." >&2
+    echo "      Fetch it by hand into $APPIMAGE_RUNTIME and run this script again." >&2
+    exit 1
+  fi
+  mv "$APPIMAGE_RUNTIME.part" "$APPIMAGE_RUNTIME"
+fi
+[ -s "$APPIMAGE_RUNTIME" ] || {
+  echo "FAIL: $APPIMAGE_RUNTIME is empty; linuxdeploy would fetch its own and may fail." >&2
+  exit 1
+}
+export LDAI_RUNTIME_FILE="$APPIMAGE_RUNTIME"
+
 BUILD_STARTED="$(mktemp)"
 APPDIR="$TARGET/bundle/appimage/nekowite.AppDir"
 set +e
