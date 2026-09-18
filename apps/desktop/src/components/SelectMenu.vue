@@ -135,10 +135,16 @@ const selectedLabel = computed(() => {
 const enabledIndexes = (): number[] =>
   props.options.flatMap((option, index) => (option.disabled ? [] : [index]))
 
-/** Put the popup against its trigger, inside the viewport: below the control,
- *  flipped above when that overflows, nudged sideways to fit. */
-async function place(): Promise<void> {
-  await nextTick()
+/**
+ * Put the popup against its trigger, inside the viewport: below the control,
+ * flipped above when that overflows, nudged sideways to fit.
+ *
+ * Synchronous, and that is what {@link followTrigger} needs: its loop runs once a frame and must
+ * not have two placements in flight, so the measuring half is separated from the `nextTick` that
+ * waits for the popup to exist. That await is real — `popupEl` is rendered by the `v-if` `show()`
+ * sets and is null until it is — so {@link place} keeps it.
+ */
+function measurePlacement(): void {
   const trigger = triggerEl.value
   const popup = popupEl.value
   if (!trigger || !popup) return
@@ -167,6 +173,105 @@ async function place(): Promise<void> {
     // Never narrower than the control it belongs to, never wider than a menu.
     minWidth: floor,
     drop: dropsDown ? 'down' : 'up',
+  }
+}
+
+async function place(): Promise<void> {
+  await nextTick()
+  measurePlacement()
+}
+
+/**
+ * The trigger, followed while it moves — `ComboBox.vue`'s shape, where it was measured first, and
+ * the same blind spot this file and `use-detached-popup.ts` both had.
+ *
+ * The trigger can move *without* any of the two things this component watched — the window
+ * resizing, anything scrolling — and a `ResizeObserver` cannot see it either, because `scale` and
+ * `translate` leave every number of a box unchanged. The settings pages arrive through exactly that
+ * spring (`SettingsPanel.vue:347-355`), so a press landing while the page is still on its way in is
+ * placed against a trigger that goes on moving. Measured in Chromium at 1280x720, pressed the
+ * moment `#settings-ui-font` existed: the list settled **5.031px** further off its trigger than the
+ * recipe's four, and **3.938px** to its right.
+ *
+ * So the rectangle is read once a frame, and the loop stops as soon as two frames agree — three
+ * reads for an open with nothing moving, and nothing once the trigger has arrived. The stop is the
+ * rectangle rather than a timeout, so no duration of the design system is repeated here; two
+ * agreeing frames rather than one, because a spring has a frame of near-zero movement at its peak.
+ *
+ * Re-armed by {@link watchMotion}, and that half is not a refinement: a press made *before* the
+ * spring has begun leaves the rectangle still for the two frames this loop allows, so the loop has
+ * stopped by the time the movement starts. A movement beginning later announces itself, and the
+ * loop is re-armed from there rather than kept alive by a timer guessing an engine's delay.
+ */
+let follow = 0
+/** The rectangle as the last frame read it, and how many frames in a row have agreed. */
+let watched = ''
+let still = 0
+
+/** The trigger's placement-relevant geometry, as a string to compare frame against frame. Only the
+ *  numbers {@link measurePlacement} reads: a rect that differs in a field nothing is placed from
+ *  would keep the loop alive for a change no reader can see. */
+function rectKey(): string {
+  const rect = triggerEl.value?.getBoundingClientRect()
+  return rect === undefined ? '' : `${rect.top}:${rect.left}:${rect.width}:${rect.height}`
+}
+
+function stopFollowing(): void {
+  if (follow !== 0) cancelAnimationFrame(follow)
+  follow = 0
+  watched = ''
+  still = 0
+}
+
+function followTrigger(): void {
+  if (follow !== 0) return
+  watched = rectKey()
+  still = 0
+  const step = (): void => {
+    follow = 0
+    // The list may have closed inside the frame (Escape, a commit, a press outside), and a frame
+    // spent placing a popup that is gone is a write to the *next* one's position.
+    if (!open.value) return
+    const now = rectKey()
+    if (now !== watched) {
+      watched = now
+      still = 0
+      measurePlacement()
+    } else {
+      // Two agreeing frames, not one: a spring has a frame of near-zero movement at its peak, and a
+      // loop that stopped there would leave the list at the wrong end of the overshoot.
+      still += 1
+      if (still >= 2) return
+    }
+    follow = requestAnimationFrame(step)
+  }
+  follow = requestAnimationFrame(step)
+}
+
+/**
+ * A movement starting under an open list, taken from the DOM rather than waited for.
+ *
+ * `transitionrun` and `animationstart` bubble, so one listener on the document hears every arrival
+ * in it, and the filter is what keeps that from being a re-place per hover colour: only a target
+ * that is the trigger itself or a box *above* it can move the trigger. `transitionrun` rather than
+ * `transitionstart`: it fires when the transition is created, before any delay.
+ */
+function onMotionStart(event: Event): void {
+  if (!open.value) return
+  const target = event.target
+  const trigger = triggerEl.value
+  if (!(target instanceof Element) || trigger === null) return
+  if (target !== trigger && !target.contains(trigger)) return
+  followTrigger()
+}
+
+function watchMotion(watching: boolean): void {
+  if (watching) {
+    document.addEventListener('transitionrun', onMotionStart)
+    document.addEventListener('animationstart', onMotionStart)
+  } else {
+    document.removeEventListener('transitionrun', onMotionStart)
+    document.removeEventListener('animationstart', onMotionStart)
   }
 }
 
@@ -219,7 +324,11 @@ function show(): void {
   // closes the whole dialog out from under the open list.
   escapeToken = modalStack.claimModal('select-menu')
   watchViewport(true)
+  watchMotion(true)
   void place()
+  // And the trigger is followed from here, because a movement that began before the press is one no
+  // event of ours will announce — see `followTrigger()`.
+  followTrigger()
 }
 
 function hide(): void {
@@ -228,6 +337,8 @@ function hide(): void {
   modalStack.releaseModal(escapeToken)
   escapeToken = null
   watchViewport(false)
+  watchMotion(false)
+  stopFollowing()
 }
 
 function commit(index: number): void {
@@ -315,6 +426,8 @@ onBeforeUnmount(() => {
   modalStack.releaseModal(escapeToken)
   escapeToken = null
   watchViewport(false)
+  watchMotion(false)
+  stopFollowing()
 })
 </script>
 

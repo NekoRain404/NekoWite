@@ -75,6 +75,15 @@ const BODY_SIZE = 17
 const LINE_HEIGHT = 2
 const UI_FONT = 'serif'
 
+/**
+ * The settings dialog's rail rows, by the order `SettingsNavigation.vue:17-24` declares them: the
+ * appearance page the interface-font select lives on, and the AI page beside it. The second case
+ * below settle on one and presses the other's row, which is what makes the select arrive under the
+ * press rather than stand still for it.
+ */
+const APPEARANCE_ROW = 1
+const AI_ROW = 4
+
 /** The dark `forest` `--app-text`, the face and the shadow — the numbers the defect was measured at,
  *  and their light counterparts, which are what a popup outside `.shell` draws. */
 const DARK_TEXT = 'rgb(232, 243, 226)'
@@ -304,4 +313,86 @@ test('the select popup resolves the appearance the shell carries, value for valu
   expect(read.box.right).toBeLessThanOrEqual(read.viewport.width)
   expect(read.box.top).toBeGreaterThanOrEqual(0)
   expect(read.box.bottom).toBeLessThanOrEqual(read.viewport.height)
+})
+
+/**
+ * The same list, opened **while the page it is on is still arriving** — the defect the case above
+ * cannot see, because it reads at rest.
+ *
+ * `SelectMenu.vue` re-placed only when the window resized or something scrolled, and the settings
+ * page arrives through a `scale`/`translate` spring (`SettingsPanel.vue:347-355`), so a press made
+ * during the arrival was placed against a trigger that went on moving and stayed there. It is the
+ * same defect `ea160cd` fixed in `ComboBox.vue`, in the component that established the recipe —
+ * which is the point: fixing one thing on a control is not the same as the control being right.
+ *
+ * ## The instrument, and the half of it that had to change
+ *
+ * **The press is forced.** `click()` runs actionability checks, one of which waits for the element
+ * to hold still for two frames; a waited-for press therefore lands at the end of the spring, where
+ * the residual movement is under a pixel and the check would pass for the wrong reason. Measured:
+ * the forced press reproduced the drift on every run, the waited-for press did not. A reader's
+ * press is neither — it lands the moment the field is visible, which is during the arrival.
+ *
+ * **The assertion is two independently measured values**: the list's own rect and the trigger's,
+ * read in one `evaluate` after everything has come to rest. The recipe puts the list's left edge on
+ * the trigger's and four pixels off the edge it opened from. Nothing here re-states a palette or a
+ * number the component owns; a list that had followed a transform-carried trigger shows a `dx` of
+ * exactly the distance that trigger still had to travel.
+ *
+ * The click path, hop by hop, is the one above plus the page swap:
+ *
+ *   `AppShell.vue:457` the status bar's settings button
+ *   → `SettingsNavigation.vue:45` the AI row (`:22`), so the press below lands on a page that is
+ *     still arriving rather than on one already at rest
+ *   → `SettingsNavigation.vue:44` the appearance row, whose press starts the swap
+ *   → `AppearanceSettings.vue:168` `#settings-ui-font` — a `SelectMenu` trigger, its press opening
+ *     the list (`SelectMenu.vue:331`) — pressed with the reader's timing, not the checker's
+ */
+test('the select’s list follows its trigger through the settings page swap', async ({ page }) => {
+  await openNote(page)
+  await page.locator('.status-btn').last().click()
+  await page.locator('.settings-overlay').waitFor({ state: 'visible', timeout: 5000 })
+
+  // Settle on the AI page first. Without this the appearance row's press would be a no-op — the
+  // dialog opens on the first page — and the select would be pressed at rest, which is the
+  // reading the case above already makes.
+  await page.locator('.dialog-nav .nav-row').nth(AI_ROW).click()
+  await page.waitForTimeout(900)
+
+  const content = page.locator('.dialog-content')
+  await page.locator('.dialog-nav .nav-row').nth(APPEARANCE_ROW).click()
+  await content.locator('#settings-ui-font').click({ force: true })
+  await page.locator('.select-popup').waitFor({ state: 'visible', timeout: 5000 })
+  // The spring, the list's own arrival and the last frame the follow loop reads: what is measured
+  // is where the two boxes came to rest rather than where they were mid-flight.
+  await page.waitForTimeout(1200)
+
+  const read = await page.evaluate(() => {
+    const popup = document.querySelector('.select-popup') as HTMLElement | null
+    const trigger = document.querySelector('#settings-ui-font') as HTMLElement | null
+    if (!popup || !trigger) throw new Error('the list or its trigger is not in the document')
+    const a = trigger.getBoundingClientRect()
+    const b = popup.getBoundingClientRect()
+    // Which pair of edges to subtract is the side's to decide, and the side is read from the two
+    // boxes' own centres rather than from the class the placement wrote — a list that had flipped
+    // while its trigger moved past it would otherwise report a gap of the wrong sign.
+    const side = b.top + b.height / 2 < a.top + a.height / 2 ? 'above' : 'below'
+    return {
+      gap: side === 'above' ? a.top - b.bottom : b.top - a.bottom,
+      dx: b.left - a.left,
+      side,
+      inside: b.left >= 0 && b.right <= window.innerWidth && b.top >= 0
+        && b.bottom <= window.innerHeight,
+      rect: { top: b.top, left: b.left, right: b.right, bottom: b.bottom },
+      triggerRect: { top: a.top, left: a.left, bottom: a.bottom },
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+    }
+  })
+
+  expect(
+    read.gap,
+    `the list hangs ${read.gap}px off its trigger on the ${read.side}, list ${JSON.stringify(read.rect)} of trigger ${JSON.stringify(read.triggerRect)} in a ${read.viewport.width}x${read.viewport.height} window`,
+  ).toBeCloseTo(4, 1)
+  expect(Math.abs(read.dx), `the list’s left edge is ${read.dx}px off the trigger’s`).toBeLessThanOrEqual(2)
+  expect(read.inside, `the list is inside the window: ${JSON.stringify(read.rect)}`).toBe(true)
 })

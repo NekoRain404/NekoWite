@@ -1052,6 +1052,34 @@ function verify(results) {
   )
 
   /*
+   * And the select's list, pressed **while its page was still moving** — the half the reading above
+   * cannot see, because it is taken at rest.
+   *
+   * `SelectMenu.vue` re-placed only on the window's `resize`/`scroll`, and the settings page arrives
+   * through a scale/translate spring (`SettingsPanel.vue`), so a press made during the arrival was
+   * placed against a trigger that went on moving and stayed there. The check is the recipe's own two
+   * numbers, read as a delta against the trigger's final position: four pixels off the edge it
+   * opened from and its left edge on the trigger's. Two *independently read* values — the list's own
+   * rect and the trigger's — and the failure mode is a fixed offset that no fixture can produce.
+   *
+   * FAILS IF: the list stops following its trigger (the follow loop is removed), and it fails at the
+   * width of the movement that was left. Read on this engine before the fix, on this page: `dx`
+   * **3.859375** and `gap` **-1.53125** — the list's left edge 3.86px right of its trigger's, and
+   * the list overlapping that trigger by a pixel and a half, because here it opens upward and the
+   * trigger moved down into it.
+   */
+  run(
+    'and a select’s list follows its trigger when the page it is on is still arriving',
+    `list in ${JSON.stringify(preview?.selectSwap?.select?.parent)}; ${JSON.stringify(preview?.selectSwap?.box?.gap)}px off the trigger, dx ${JSON.stringify(preview?.selectSwap?.box?.dx)}; inside the window ${JSON.stringify(preview?.selectSwap?.box?.inside)}; font ${JSON.stringify(preview?.selectSwap?.select?.font)} = shell ${JSON.stringify(preview?.shell?.font)} ≠ root ${JSON.stringify(preview?.root?.font)}`,
+    familyHolds(preview?.selectSwap?.select) &&
+      preview?.selectSwap?.select?.font === preview?.shell?.font &&
+      preview?.selectSwap?.box !== null &&
+      Math.abs((preview?.selectSwap?.box?.gap ?? 0) - 4) < 1 &&
+      Math.abs(preview?.selectSwap?.box?.dx ?? 99) < 2 &&
+      preview?.selectSwap?.box?.inside === true,
+  )
+
+  /*
    * The app's **inherited** size and leading, which is the other half of the same defect: they were
    * stated on `body` (`style.css:3`) and `body` is outside `.shell`, so `var(--app-body-size)`
    * resolved there to the token block's `15px` and the whole application inherited that result at
@@ -1493,6 +1521,7 @@ const wrote = arguments[0], done = arguments[arguments.length - 1];
     combo: family('.combo-popup'),
     comboRow: family('.combo-option'),
     comboField: family('#settings-ai-model'),
+    select: family('.select-popup'),
   });
 
   /*
@@ -1536,6 +1565,62 @@ const wrote = arguments[0], done = arguments[arguments.length - 1];
   if (comboTrigger) {
     comboTrigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  /*
+   * The *select*'s list, placed while its page is still arriving — the same defect as the combobox
+   * above, in the control that established the recipe.
+   *
+   * The step at the top of this block reads a select's list **at rest**, and that is exactly the
+   * instrument that cannot see this: SelectMenu.vue watched the window's resize/scroll and nothing
+   * else, so a list opened against a trigger the page-swap spring goes on moving settled where the
+   * trigger was, not where it arrived. Read the same way the combobox above is read — press the
+   * row, then press the trigger the moment it exists, with no settling delay — on the appearance
+   * page, which is where the interface-font select lives.
+   *
+   * dx and gap are both read, and both are the assertion: the recipe puts the list's left edge on
+   * the trigger's and four pixels off the edge it opened from, so a list that followed a
+   * transform-carried trigger shows a dx of the distance that trigger still had to travel.
+   */
+  const appearanceRow = document.querySelectorAll('.dialog-nav .nav-row')[1];
+  let selectBox = null;
+  let selectRead = null;
+  if (appearanceRow) {
+    appearanceRow.click();
+    for (let i = 0; i < 100 && document.querySelector('#settings-ui-font') === null; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const fontTrigger = document.querySelector('#settings-ui-font');
+    if (fontTrigger) {
+      fontTrigger.click();
+      // The spring, the list's own arrival and the follow loop's last frame, so what is read is
+      // where the two boxes came to rest.
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      const list = document.querySelector('.select-popup');
+      const box = fontTrigger.getBoundingClientRect();
+      if (list) {
+        const rect = list.getBoundingClientRect();
+        // Which side the list is on, read from the two boxes' own centres rather than from the
+        // class the placement wrote: the gap below is a difference of edges, and which pair of
+        // edges to subtract is the only thing the side decides. The class is reported beside it.
+        const above = rect.top + rect.height / 2 < box.top + box.height / 2;
+        const gap = above ? box.top - rect.bottom : rect.top - box.bottom;
+        selectBox = {
+          gap,
+          dx: rect.left - box.left,
+          side: above ? 'above' : 'below',
+          box: [rect.top, rect.left, rect.right, rect.bottom],
+          trigger: [box.top, box.left, box.right, box.bottom],
+          inline: [list.style.top, list.style.left],
+          classes: String(list.className),
+          inside: rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight,
+          viewport: [innerWidth, innerHeight],
+        };
+      }
+      selectRead = readFamily();
+      fontTrigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
   }
 
   /*
@@ -1634,6 +1719,9 @@ const wrote = arguments[0], done = arguments[arguments.length - 1];
     guide: guideRead,
     ctxMenu: ctxRead,
     combo: { ...comboRead, box: comboBox },
+    // The select's list, pressed while the appearance page was still arriving: the same reading as
+    // the combobox above, on the control the recipe came from.
+    selectSwap: { ...selectRead, box: selectBox },
   });
 })().catch((error) => done({ ok: false, why: String((error && error.message) || error) }));
 `

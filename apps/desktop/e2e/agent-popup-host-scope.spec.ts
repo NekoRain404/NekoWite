@@ -398,3 +398,125 @@ test('the agent panel’s three popups resolve the shell’s appearance', async 
   await page.locator('.agent-config-popup').waitFor({ state: 'detached', timeout: 5000 })
   await unmountPanel(page)
 })
+
+/**
+ * The panel's controls, pressed **while the rail carrying them is still arriving** — the placement
+ * half of the same recipe, which the three cases above never measure because they read at rest.
+ *
+ * `useDetachedPopup` re-placed on the window's `resize`/`scroll` and on either box *changing size*,
+ * and a `ResizeObserver` cannot see a movement: the rail arrives on a `translate`
+ * (`appShell.css:181-185`, `--app-motion-drawer-offset`), which moves the control without changing
+ * one number of its box. So a press made during the drawer was placed against a control that went
+ * on moving, and stayed where that control had been — **55px** in Chromium, measured here before
+ * the fix.
+ *
+ * ## Why the rail, and why the picker
+ *
+ * The drawer is the one transform in the product that carries a panel control: every other motion
+ * an agent popup could sit through is either a size change (the history list arriving, which the
+ * `ResizeObserver` does catch — measured, `AgentSessionHistory.test.ts`'s own family) or an opacity
+ * fade (`rail-panel-enter-active`, which moves nothing). The *config* picker is the control that
+ * can show it: the rail is pinned to the window's right edge, so the history list and the options
+ * menu are clamped back to their floor and a horizontal drift is invisible in them, while the
+ * picker's list is narrow enough to sit beside its trigger unclamped.
+ *
+ * ## The instrument, and the half of it that had to change
+ *
+ * **The press is forced, and the run is warmed.** `click()` waits for an element to hold still for
+ * two frames, so an unforced press lands after the drawer has finished and reads the correct 0 on
+ * an unfixed tree — measured: 0 unforced, 55 forced. The warm pass exists because the module graph
+ * has to be resolved before the drawer can be caught at all: the mount costs ~6ms warm against a
+ * 300ms drawer, and leaving the imports cold put the whole animation behind the mount.
+ *
+ * **The instrument reports whether it caught the drawer**, and the case fails if it did not. That
+ * is the half that keeps this from being a check that passes for the wrong reason: a press that
+ * landed after the rail had settled would read a correct `dx` on any tree at all. The control's
+ * own left edge, read at the press and again at rest, is the number that says the press was inside
+ * the movement.
+ *
+ * ## The click path, hop by hop
+ *
+ *   `AppShell.vue:488-490` the status bar's rail button → `App.vue:42`'s `railOpen`
+ *   → `AppShell.vue:450-455` the `<Transition name="rail">`, whose enter state is the translate
+ *   → `AppShell.vue:421` `InfoRail`'s body slot → this file's own mount into `.rail-body`
+ *   → `AgentConfigRow.vue`'s `.agent-config-trigger`
+ *   → `AgentConfigPicker.vue:261` its own press handler → `useDetachedPopup`'s `place()`
+ *
+ * The gateway is the memory double, exactly as the three cases above use it, and for the same
+ * reason: a live engine refuses in sentences on this page.
+ */
+test('the config picker’s list follows its trigger while the rail is still arriving', async ({ page }) => {
+  await openNote(page)
+
+  /** Open the rail, mount the panel, and take the mount down again — the warm pass. */
+  const openRailAndMount = async (): Promise<void> => {
+    await page.locator('.status-btn').first().click()
+    await page.locator('.rail-body').waitFor({ state: 'visible', timeout: 5000 })
+    await mountPanel(page)
+  }
+
+  await openRailAndMount()
+  // Warm: every dynamic import above resolved, and the components compiled. The measurement below
+  // is a race against a 300ms drawer and this is the half that makes the race winnable.
+  await page.waitForTimeout(800)
+  await unmountPanel(page)
+  await page.locator('.status-btn').first().click()
+  await page.locator('.rail-body').waitFor({ state: 'detached', timeout: 5000 })
+  await page.waitForTimeout(600)
+
+  await openRailAndMount()
+  const atPress = await page.evaluate(() => {
+    const trigger = document.querySelector<HTMLElement>('.agent-config-trigger')
+    return { left: trigger?.getBoundingClientRect().left ?? null }
+  })
+  // Read once more the instant the press returns: the two together are what say the press landed
+  // while the control was still moving, which the placement assertions below cannot say themselves.
+  // The reader's press: the moment the control is on screen, with nothing waited for.
+  await page.locator('.agent-config-trigger').first().click({ force: true })
+  const justAfter = await page.evaluate(() => {
+    const trigger = document.querySelector<HTMLElement>('.agent-config-trigger')
+    return { left: trigger?.getBoundingClientRect().left ?? null }
+  })
+  await page.locator('.agent-config-popup').waitFor({ state: 'visible', timeout: 5000 })
+  await page.waitForTimeout(1200)
+
+  const read = await page.evaluate(() => {
+    const popup = document.querySelector('.agent-config-popup') as HTMLElement | null
+    const trigger = document.querySelector('.agent-config-trigger') as HTMLElement | null
+    if (!popup || !trigger) throw new Error('the list or its trigger is not in the document')
+    const a = trigger.getBoundingClientRect()
+    const b = popup.getBoundingClientRect()
+    const side = b.top + b.height / 2 < a.top + a.height / 2 ? 'above' : 'below'
+    return {
+      gap: side === 'above' ? a.top - b.bottom : b.top - a.bottom,
+      dx: b.left - a.left,
+      side,
+      inside: b.left >= 0 && b.right <= window.innerWidth && b.top >= 0
+        && b.bottom <= window.innerHeight,
+      rect: { top: b.top, left: b.left, right: b.right, bottom: b.bottom },
+      triggerRect: { top: a.top, left: a.left, bottom: a.bottom },
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+    }
+  })
+
+  // The instrument first: without this the placement assertions below are satisfied by a press that
+  // landed after the rail had come to rest, on any tree at all.
+  //
+  // The number that says so is the control's *remaining* travel read as the press returns, not the
+  // distance it moved overall: a press made after the drawer finished leaves nothing ahead of it,
+  // and one made inside the draw leaves most of the drawer. Read at the press rather than at the
+  // end because a control that moved and then moved back would satisfy the total too. It is a
+  // threshold rather than an equality — the drawer is still running while this is read, and the
+  // first version of this guard compared two readings of a moving element for equality and flaked.
+  const ahead = Math.abs((justAfter.left ?? 0) - (read.triggerRect.left ?? 0))
+  expect(
+    ahead,
+    `the press landed inside the draw: the control still had ${ahead}px to travel when it was pressed (${atPress.left} → ${justAfter.left} → ${read.triggerRect.left}), and a press made after the drawer settles measures nothing`,
+  ).toBeGreaterThan(10)
+  expect(
+    read.gap,
+    `the list hangs ${read.gap}px off its trigger on the ${read.side}, list ${JSON.stringify(read.rect)} of trigger ${JSON.stringify(read.triggerRect)} in a ${read.viewport.width}x${read.viewport.height} window`,
+  ).toBeCloseTo(4, 1)
+  expect(Math.abs(read.dx), `the list’s left edge is ${read.dx}px off the trigger’s`).toBeLessThanOrEqual(2)
+  expect(read.inside, `the list is inside the window: ${JSON.stringify(read.rect)}`).toBe(true)
+})
