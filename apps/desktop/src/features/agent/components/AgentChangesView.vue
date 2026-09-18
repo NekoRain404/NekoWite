@@ -1,91 +1,15 @@
 <script lang="ts">
 /**
- * The change view's copy, handed in rather than reached for.
+ * The change view's copy tree, which lives beside this file and is re-exported from here.
  *
- * The same arrangement as `AgentPanelLabels`, and for the same reason: this component does not own
- * `src/i18n/namespaces/agent.ts`, so a sentence printed from a catalogue key that does not exist
- * would ship as an English string in a Chinese window. The caller supplies the words, and a
- * missing one is a compile error at the composition site instead of a surprise on screen.
+ * The re-export is not decoration. The specifier both callers already name is *this file* —
+ * `AgentChangedFiles.vue` imports the type from `./AgentChangesView.vue`, and the e2e spec from
+ * `/src/features/agent/components/AgentChangesView.vue` — and an SFC's named type exports are what
+ * such a specifier resolves against. A split keeps the old path working; moving the definition is a
+ * change to where the copy lives, while moving the name a caller imports would be a change to the
+ * caller.
  */
-export interface AgentChangesLabels {
-  title: string
-  /** Nothing has changed yet: said, rather than left as an empty box. */
-  empty: string
-  /** One line for the whole list, counts and all — what the header still reads when collapsed. */
-  summary: string
-  collapse: string
-  expand: string
-  /**
-   * What the row claims about who changed the file — §7.2's three states, each its own sentence
-   * because they are three different facts and the user is owed the difference.
-   */
-  attribution: {
-    /** A write-kind tool call of this session named the file. */
-    agent: string
-    /** The file changed on disk and nothing in this session claims it. */
-    external: string
-    /** The engine named the path; no tool call and no disk change confirmed it. */
-    reported: string
-  }
-  /** What this window holds for the file, when a tab holds it at all. */
-  verdict: {
-    followsDisk: string
-    unsavedEdits: string
-  }
-  /** The three answers, in the order the row draws them: look at it, keep it, put it back. */
-  offer: {
-    view: string
-    keep: string
-    recover: string
-  }
-  /** Why an action is not on the row. Codes in, sentences out — see `AgentChangeRefusal`. */
-  refused: {
-    notAgentChange: string
-    writeInFlight: string
-    noBaseline: string
-    vaultMismatch: string
-    unsavedEdits: string
-    resultUnstated: string
-    changedSince: string
-  }
-  /** What the user answered, said on the row that is no longer asking. */
-  decision: {
-    kept: string
-    rejected: string
-  }
-  /** What a rejection did, in the three facts §7.2 keeps apart — the editor's own write. */
-  written: {
-    saved: string
-    saveFailed: string
-    unavailable: string
-  }
-  /**
-   * What the host's own recovery did, and why it did not.
-   *
-   * `recovered` is the file put back, and `recoveredWarning` is drawn under it when the app could
-   * not keep the version it replaced — "the file is back, but the previous version is gone" is a
-   * fact the reader has to be told. `refused` is keyed by the host's own six codes, one sentence
-   * each, for the same reason the review's refusals are: each names a different thing to do.
-   */
-  recovered: {
-    recovered: string
-    recoveredWarning: string
-    refused: {
-      noBaseline: string
-      baselineStale: string
-      unavailable: string
-      changedSinceRecorded: string
-      alreadyAtBaseline: string
-      writeRefused: string
-    }
-    /** The call itself did not complete; the host's own sentence says which fact it was. */
-    unreachable: string
-  }
-  /** The two texts of a note in conflict, labelled so a merge view cannot show one as the other. */
-  unsavedBuffer: string
-  agentVersion: string
-  diskUnread: string
-}
+export type { AgentChangesLabels } from './agent-changes-labels'
 </script>
 
 <script setup lang="ts">
@@ -114,9 +38,11 @@ export interface AgentChangesLabels {
 import { Check, ChevronDown, ChevronRight, FileWarning, History, RotateCcw, Trash2 } from 'lucide-vue-next'
 import type { AgentRecoveryRefusalCode } from '../../../platform/gateways/agent-contracts'
 import type { AgentChangeOffer, AgentChangeRow } from '../services/agent-change-review'
+import type { AgentChangesLabels } from './agent-changes-labels'
 
-// `AgentChangesLabels` needs no import: the plain `<script>` block above is the same module, which
-// is how `AgentPanel.vue` declares its own labels type and uses it in its setup block.
+// The type is taken from the labels module and not from the re-export block above, the way
+// `AgentSkillsSettings.vue` takes its own: that block exists to keep *other* modules' specifiers
+// valid, and a setup block naming its own SFC would be a module importing itself.
 const props = defineProps<{
   rows: readonly AgentChangeRow[]
   labels: AgentChangesLabels

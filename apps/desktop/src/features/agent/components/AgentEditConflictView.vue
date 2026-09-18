@@ -48,7 +48,7 @@ import { ArrowRightLeft, FileWarning } from 'lucide-vue-next'
 import type { AgentEditConflict } from '../services/agent-edit-apply'
 
 // `AgentEditConflictLabels` needs no import: the plain `<script>` block above is the same
-// module, which is how `AgentChangesView.vue` declares its own labels type.
+// module, which is how `AgentChangesView.vue` re-exports its own labels type.
 /**
  * "Nothing to decide" is not a state of this component: with no conflicts there is no section at
  * all, rather than an empty box that reads as a conflict whose texts failed to load.
