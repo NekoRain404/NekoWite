@@ -17,6 +17,7 @@ import { tableProbe } from './probe-table.mjs'
 import { agentScrollProbe } from './probe-agent-scroll.mjs'
 import { chatScrollProbe } from './probe-chat-scroll.mjs'
 import { focusRingProbe } from './probe-focus-ring.mjs'
+import { listRoomProbe } from './probe-list-room.mjs'
 
 /** Dumps what is actually in the document, so the probes can address it. */
 const inspect = {
@@ -78,11 +79,18 @@ const inspect = {
  * under the other's flag — and a run that asked for one and got a skip is the
  * failure `measure.mjs` records `results.agent` / `results.chat` to make visible.
  *
+ * `list-room` goes straight after `motion-dialog`, and for the same reason the two of them are
+ * adjacent: both open the settings dialog, and it is closed again by the time either returns. It is
+ * also the one probe that moves the window — the product's own minimum is where the room under a
+ * control is smallest, and the claim it reads is about that window — so it puts the viewport back
+ * to 1280x800 before it returns, and everything after it (the rail's two probes) measures the window
+ * it always did.
+ *
  * `focus-ring` goes last of all because it is the only probe that puts NEW DOM into
  * the page: it mounts four components nothing in the application hosts yet, in fixed
  * overlays over the top-left corner. A probe after it would be measuring a page with
  * four foreign panels on it, so nothing goes after it. The surfaces it reads on the
  * product's own page are read before it mounts anything.
  */
-export const PROBES = [motionProbe, panelProbe, tableProbe, tailProbe, noteSwitchProbe, dialogProbe, agentScrollProbe, chatScrollProbe, focusRingProbe]
+export const PROBES = [motionProbe, panelProbe, tableProbe, tailProbe, noteSwitchProbe, dialogProbe, listRoomProbe, agentScrollProbe, chatScrollProbe, focusRingProbe]
 export const ALL_PROBES = [inspect, ...PROBES]
