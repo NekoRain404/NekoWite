@@ -355,7 +355,9 @@ describe('AgentPanel — the authorization a run waits on', () => {
     app.mount(host)
     mounted.push(app)
     await nextTick()
-    // The panel reads the report on mount, so the composer's gate is answered before the paste.
+    // The panel reads the report on mount, so the answer this paste is judged against has arrived
+    // before it — not a "gate" on the composer, which holds none: what the report decides is
+    // whether the screenshot becomes a chip or is refused with the engine's own sentence.
     await flush()
     await nextTick()
 
@@ -383,6 +385,52 @@ describe('AgentPanel — the authorization a run waits on', () => {
 
     expect(carried).toHaveLength(1)
     expect(carried[0]).toMatchObject({ kind: 'image', name: 'shot.png', mediaType: 'image/png' })
+  })
+
+  it('draws the composer’s controls when there is no report at all, which is what it does not gate', async () => {
+    // The panel's half of the claim `AgentComposer.vue`'s `capabilities` prop used to make — that a
+    // `null` report "draws no attach affordance at all rather than a disabled one" — and the same
+    // overstatement this file's own `capabilityReports` note carried ("both leave every control
+    // un-drawn"). Neither is true: the report is what decides what a picked or pasted file
+    // *becomes*, and the controls the reader presses are drawn whatever it says.
+    //
+    // The read is made to refuse, so the panel holds `null` — the state `capabilityReports`'s
+    // `catch` exists for — and not a short report, which is the other state and the one the memory
+    // double can answer with.
+    const real = gateway.capabilities.bind(gateway)
+    let asked = 0
+    gateway.capabilities = () => {
+      asked += 1
+      return Promise.reject(new Error('the runtime has no report to give'))
+    }
+    const harness = await mountPanel({ chunks: ['ok. '] })
+    expect(asked).toBe(1)
+
+    expect(harness.el('.agent-composer-field')).not.toBeNull()
+    expect(harness.el('.agent-composer [data-action="send"]')).not.toBeNull()
+    // And the `+`, which is the control the claim was about. It is `AgentComposerContext.vue`'s and
+    // that component takes no report at all — the assertion is that the path from here to it does
+    // not invent one.
+    expect(harness.el('.agent-composer [data-action="context"]')).not.toBeNull()
+    expect(harness.el('.agent-composer [data-action="context"]')?.hasAttribute('disabled')).toBe(false)
+
+    // The other half, and the only thing the refusal changed: a pasted screenshot is refused with a
+    // sentence rather than becoming a chip, because nothing has licensed the block it would carry.
+    const field = harness.el('.agent-composer-field') as HTMLTextAreaElement
+    const image = new File([new Uint8Array(8)], 'shot.png', { type: 'image/png' })
+    field.dispatchEvent(
+      Object.assign(new Event('paste', { bubbles: true, cancelable: true }), {
+        clipboardData: {
+          items: [{ kind: 'file', type: image.type, getAsFile: () => image }],
+          files: [image],
+        },
+      }),
+    )
+    await nextTick()
+    await flush()
+
+    expect(harness.el('[data-test="composer-attachments"]')).toBeNull()
+    gateway.capabilities = real
   })
 })
 

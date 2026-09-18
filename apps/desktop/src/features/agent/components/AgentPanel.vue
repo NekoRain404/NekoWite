@@ -257,8 +257,11 @@ const {
  *
  * `null` is a state of its own and not an empty report — a report this window cannot read is
  * rejected rather than shortened (`tauri-agent.ts`), so no surface may answer a reader with "names
- * no such feature" for a report nobody holds. Both leave every control un-drawn; they part company
- * in one sentence, the one a refused attachment is shown with (`attachmentStanding`).
+ * no such feature" for a report nobody holds. The two part company in a *sentence* and in nothing
+ * else: the controls either withholds are the session-history ones and no others — the composer's
+ * are drawn on neither, as `AgentComposer.vue`'s `capabilities` prop now says — and what a `null`
+ * decides about an attachment is what the reader is *told* (`attachmentStanding`). This paragraph
+ * said "both leave every control un-drawn", which was the same overstatement in a third file.
  *
  * The report belongs to the runtime the session belongs to and is read once, on mount: a panel is
  * mounted per session, and a runtime the host has replaced has no answer left to give.
