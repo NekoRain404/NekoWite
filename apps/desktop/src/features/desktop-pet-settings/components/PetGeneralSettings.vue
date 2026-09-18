@@ -304,6 +304,23 @@ function resetPage(): void {
         :key="restriction.mode"
         class="settings-note"
       >{{ t(ROAM_LABEL_KEYS[restriction.mode]) }} — {{ restriction.text }}</span>
+      <!-- **The row's own statement of what it cannot do yet, which is the half §7.2 does not
+           reach.** §7.2's notes above refuse the two modes this machine was not verified to run;
+           this one is about the value itself. `view.roam` is written here and read by nothing: the
+           engine it was ported for (`features/desktop-pet/motion/`, D11a) is complete, tested, and
+           imported by no page — its own header names what a caller would have to supply — so
+           `off`, `stay` and every gated mode end in the same behaviour today. Stating that is
+           §5.2's 「不显示可点击但无效果的控件」 applied to a control that is *stored* rather than
+           acted on, and the reason the control stays enabled is the same section's other half:
+           §5.3 keeps the choice as a preference that follows the user between machines.
+           The removal is a contract with a mechanism: the day the engine is imported from this
+           window's root, `desktop-pet-entry.test.ts` refuses the new imports until somebody writes
+           down why the pet needs them (its list is the pet window's graph) — and this note and the
+           case that asserts it are what that change deletes. -->
+      <span
+        class="settings-note"
+        data-test="pet-general-roam-not-wired"
+      >{{ t('settings.pet.general.roamNote') }}</span>
 
       <button
         class="btn btn-secondary btn-sm pet-general__reset"

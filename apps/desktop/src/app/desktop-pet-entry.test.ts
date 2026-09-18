@@ -177,6 +177,16 @@ describe('the pet entry is one lightweight window and not a second application',
     // import. That is the only place in this repository where a feature is reached by path, and
     // this list is what keeps it honest: the two deep imports are *here*, in the count, rather
     // than hidden behind a re-export.
+    // **The motion engine is the one thing this window has that is deliberately not in the list,
+    // and the settings row that writes its mode says so on screen.** `features/desktop-pet/motion/`
+    // (D11a) is complete, tested, and imported by nothing: no `PetMotionPlatform` has been written
+    // over the app's window controls, `view.roam` does not reach this window's appearance read,
+    // and `PetRoamMode` has no `wander` — four gaps the ledger
+    // (`docs/architecture/desktop-pet-port-ledger.md` §6.2) records as work for a later task. So
+    // 常规与交互's 漫游 control states that no mode changes what the pet does
+    // (`PetGeneralSettings.vue`, `settings.pet.general.roamNote`), and **the change that wires the
+    // engine adds its files here and deletes that note and the case that asserts it** — which is
+    // why that sentence points at this list.
     expect(reachableFrom(ENTRY)).toEqual([
       'app/desktop-pet-composition.ts',
       'features/desktop-pet/components/DesktopPetRoot.vue',

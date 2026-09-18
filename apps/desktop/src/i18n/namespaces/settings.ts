@@ -189,6 +189,7 @@ export const settings = {
           roamStay: 'Stay in place',
           roamFollowPointer: 'Follow the pointer',
           roamClimb: 'Climb windows',
+          roamNote: 'Roaming does not reach the character window yet, so no mode here changes what the pet does: it stays where it is and moves only when you drag it. The mode is stored either way, so your choice is kept for the build that reads it.',
         },
         character: {
           character: 'Character',
@@ -660,6 +661,7 @@ export const settings = {
           roamStay: '原地停留',
           roamFollowPointer: '跟随指针',
           roamClimb: '攀爬窗口',
+          roamNote: '漫游还没有接到角色窗口上：这里选哪个模式都不会改变桌宠的行为，它会停在原地，只有你拖动它才会移动。选择照常保存，留给真正读取它的版本。',
         },
         character: {
           character: '角色',

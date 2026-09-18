@@ -30,6 +30,31 @@
  *     a mode whose capability is missing is *stated* rather than attempted (§7.2).
  *   - A refused window move ends the step instead of being logged and forgotten
  *     (`engine.ts:130-131`); the reason is on that branch.
+ *
+ * ## No caller yet, and what a caller would have to be
+ *
+ * **Nothing in this build imports this file**, and the character window is what says so: it draws
+ * the sprite, is placed by the host and moved by the user's own drag (`DesktopPetRoot.vue` →
+ * `use-pet-drag.ts` → `startDragging`), and mounts no motion. So this is the port's finished half
+ * of D11a standing beside four gaps D11a reported and could not close from here (the ledger,
+ * `docs/architecture/desktop-pet-port-ledger.md` §6.2, is where they are recorded):
+ *
+ *   - a `PetMotionPlatform` over the app's window controls. The pet's capability grants no
+ *     position, geometry or monitor permission, deliberately (see `capabilities/desktop-pet.json`),
+ *     and `platform/window.ts` has no call to build one on.
+ *   - `view.roam` and the speed reaching this window at all: neither is in the appearance payload
+ *     the window reads (`character_view.rs`), and `PetRoamMode` has no speed field.
+ *   - `wander` in `PetRoamMode`. It is upstream's default mode and the only one needing nothing
+ *     from the desktop; `ROAM_BEHAVIOUR_BY_MODE` in `pet-motion-types.ts` is the one line a fix
+ *     changes, and `pet-mode-gate.test.ts` fails the day the member appears.
+ *   - a home for the sleep row. `enterSleep` takes `SLEEP_ROW_DEFAULT` because D1's character
+ *     settings have no `ap_bind_sleep`, and nothing in `AnimationConfig` names a sleep row.
+ *
+ * Until the first two land, every stored mode ends in `stay`: `follow-pointer` is `unverified` on
+ * Linux and `window-climb` is `unavailable` (both are `linux_capabilities.rs`' reckoning), so
+ * `gateRoamMode` refuses them and `off` and `stay` are what remains — which is why the settings row
+ * that writes the mode tells the user it reaches no window (`PetGeneralSettings.vue`,
+ * `settings.pet.general.roamNote`) instead of looking like a control that works.
  */
 import type { PetCapabilityReport, PetRoamMode } from '../../../platform/gateways/pet-contracts'
 import {

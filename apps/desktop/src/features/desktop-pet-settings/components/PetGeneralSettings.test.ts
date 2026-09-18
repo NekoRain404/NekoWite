@@ -398,6 +398,30 @@ describe('§7.2 decides which window behaviours are offered', () => {
     expect((await storedValues(gateway, 'view')).roam).toBe('climb')
   })
 
+  it('says the mode reaches no window, which is the state the setting is in', async () => {
+    // **The claim this page owes a reader, and the one §7.2's notes cannot make.** Those refuse
+    // the modes a capability was not verified for; this one is about the value itself — the engine
+    // it is written for (`features/desktop-pet/motion/`) is imported by no page, so every mode that
+    // survives the gate above behaves the same today. A control with no effect that looks live is
+    // the defect, and the note is the fix; the case is here so the note cannot be dropped while the
+    // wiring is still missing. It is *not* the instrument that catches the wiring: the day the
+    // engine is imported from the character window's root, `app/desktop-pet-entry.test.ts`'s graph
+    // list refuses the new imports, and this note and this case are what that change deletes.
+    mount(createMemoryPetGateway({ capabilities: ALL_AVAILABLE }))
+    await flush()
+
+    const note = document.querySelector<HTMLElement>('[data-test="pet-general-roam-not-wired"]')
+    expect(note?.textContent?.trim()).toBe(t('settings.pet.general.roamNote'))
+    // Drawn after the control it is about and inside the same section, rather than somewhere else
+    // on the page: a note that drifted away from its row would be a sentence about nothing. The
+    // capability is reported available here, so no restriction note sits between the two and the
+    // order is the control's own.
+    const trigger = document.querySelector<HTMLElement>('#pet-general-roam')
+    expect(trigger).not.toBeNull()
+    expect(trigger!.compareDocumentPosition(note!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(note?.closest('.settings-section')).toBe(trigger?.closest('.settings-section'))
+  })
+
   it('leaves always-on-top alone where the desktop was not verified to keep a window above', async () => {
     const gateway = createMemoryPetGateway()
     mount(gateway)
