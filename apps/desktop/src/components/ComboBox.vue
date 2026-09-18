@@ -73,15 +73,30 @@ const open = ref(false)
 const query = ref('')
 /** The row `Enter` would take, as an index into `rows`. */
 const activeIndex = ref(0)
-/** Where the popup was put, and which way it had to open. `drop` is what tells
- *  the stylesheet which edge of the popup touches the field, so its arrival can
- *  come from there — see `place()`. */
-const pos = ref<{ left: number; top: number; minWidth: number; drop: 'down' | 'up' }>({
+/**
+ * The placement a list is measured *from* rather than to: enough width to exist, and no ceiling —
+ * a box without one is what `measurePlacement` has to read to learn its content's width. `null`
+ * and not `Infinity`, because `max-width: Infinitypx` is not a value.
+ *
+ * **`show()` resets it before every open, and that is not tidiness.** `pos` outlives the popup, so
+ * Vue renders the next list with the *last* placement's `min-width` on its first frame, and
+ * `measurePlacement` is then read off a box this component sized for a different dialog. Measured
+ * on `SelectMenu.vue`, which carries the same recipe: raising its floor above 280 opened the AI
+ * provider's list **87px to the left of its control** on the first open after the dialog was
+ * widened. The same arithmetic runs here, on the same resizable dialog.
+ */
+const unplaced = () => ({
   left: 0,
   top: 0,
   minWidth: 180,
-  drop: 'down',
+  maxWidth: null as number | null,
+  drop: 'down' as 'down' | 'up',
 })
+
+/** Where the popup was put, and which way it had to open. `drop` is what tells
+ *  the stylesheet which edge of the popup touches the field, so its arrival can
+ *  come from there — see `place()`. */
+const pos = ref(unplaced())
 
 const inputEl = ref<HTMLInputElement | null>(null)
 const listEl = ref<InstanceType<typeof ComboBoxList> | null>(null)
@@ -145,11 +160,21 @@ function measurePlacement(): void {
   const box = listEl.value?.measure()
   if (!anchor || !box) return
   const pad = 8
-  // The box, not the rect: the rect is measured through the enter transition.
-  // And the wider of the two: the floor below widens the popup, so clamping
-  // against the old width would let it cross the right edge.
-  const floor = Math.max(180, Math.min(anchor.width, 280))
-  const width = Math.max(box.width, floor)
+  // The room the window gives a list — the window less the same pad it keeps from either edge — and
+  // the field's own width, clamped into it. Those two are the whole of the popup's width rule:
+  // never narrower than the field it belongs to, never wider than the window it is in. The
+  // stylesheet declares neither, and the two that used to be there were both 280px — a
+  // `Math.min(anchor.width, 280)` on this floor and a `max-width: 280px` on the list's own rule
+  // (`ComboBoxList.vue`) — measured by `e2e/combo-popup-width.spec.ts` at 1280x800, where the
+  // model field is 455px and the list opened at **280px inside it**, and stayed 280 while the user
+  // dragged the dialog wider (the field went 455 -> 535). The floor's own inner 180 is for a field
+  // *smaller* than a list can usefully be.
+  const ceiling = Math.max(180, window.innerWidth - pad * 2)
+  const floor = Math.min(Math.max(180, anchor.width), ceiling)
+  // The box, not the rect: the rect is measured through the enter transition. And the clamp below
+  // is against the width the popup will *have* — its content's, once the floor and the ceiling
+  // have had their say — because the content's alone is the number that crosses the right edge.
+  const width = Math.min(Math.max(box.width, floor), ceiling)
   const height = box.height
   const below = anchor.bottom + 4
   const above = anchor.top - height - 4
@@ -163,8 +188,8 @@ function measurePlacement(): void {
     top: dropsDown
       ? Math.min(below, Math.max(pad, window.innerHeight - height - pad))
       : above,
-    // Never narrower than the field it belongs to, never wider than a menu.
     minWidth: floor,
+    maxWidth: ceiling,
     drop: dropsDown ? 'down' : 'up',
   }
 }
@@ -318,6 +343,8 @@ function show(): void {
   // and an empty popup over the fields below it is worse than no popup.
   const list = rows.value
   if (!list.length) return
+  // Forgotten before the open, so the arithmetic below is idempotent: see `unplaced`.
+  pos.value = unplaced()
   open.value = true
   // Only ever opens on a row: the one the field already holds, else the top.
   const chosen = list.indexOf(props.modelValue)
@@ -469,6 +496,7 @@ onBeforeUnmount(() => {
           :left="pos.left"
           :top="pos.top"
           :min-width="pos.minWidth"
+          :max-width="pos.maxWidth"
           :drop="pos.drop"
           @activate="commit"
           @highlight="setActive"

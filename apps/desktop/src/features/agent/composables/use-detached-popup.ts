@@ -45,8 +45,12 @@ export interface DetachedPopup {
 }
 
 export interface DetachedPopupOptions {
-  /** How narrow the box may be, in pixels: never narrower than its control, never wider than
-   *  this. Zed's own picker floors at 20rems (`config_options.rs:343`). */
+  /**
+   * The narrowest box worth opening, in pixels — for a control *smaller* than a list can usefully
+   * be. The popup's floor is the larger of this and the control's own width: a list is never
+   * narrower than the control it belongs to, and this is the option that says so for the controls
+   * that are. Zed's own picker floors at 20rems (`config_options.rs:343`).
+   */
   floor: number
   /** The modal-stack name, so a stack trace says which popup claimed Escape. */
   claim: string
@@ -77,7 +81,15 @@ export function useDetachedPopup(options: DetachedPopupOptions): DetachedPopup {
     if (trigger === null || popup === null) return null
     const pad = 8
     const anchor = trigger.getBoundingClientRect()
-    const floor = Math.max(options.floor, Math.min(anchor.width, 280))
+    // The control's own width, and no ceiling on it. A `Math.min(anchor.width, 280)` sat here and
+    // stated the opposite of what it did: the sentence beside it read "never narrower than its
+    // control", and a control wider than 280px could not have pulled the box out with it. It never
+    // bound — all three call sites' controls are far narrower than 280 (`AgentSessionBar.vue`'s two
+    // are `width: 24px`, `AgentConfigPicker.vue`'s is `max-width: min(180px, 100%)`) — which is the
+    // defect and not the defence: the rule was held up by two CSS rules in other files rather than
+    // by this one. `SelectMenu.vue` carried the same three copies of this arithmetic and the same
+    // comment, and `e2e/select-popup-width.spec.ts` measured where that one was actually wrong.
+    const floor = Math.max(options.floor, anchor.width)
     const width = Math.max(popup.offsetWidth, floor)
     const height = popup.offsetHeight
     const below = anchor.bottom + 4

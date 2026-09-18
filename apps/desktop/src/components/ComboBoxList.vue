@@ -37,6 +37,12 @@ defineProps<{
   left: number
   top: number
   minWidth: number
+  /** The other half of the field's width rule, and *measured* rather than declared: the room the
+   *  window gives a list. `null` while nothing has been placed, so the list is laid out with no
+   *  ceiling at all — which is what lets the field read its content's true width before choosing.
+   *  A `280px` used to sit in the stylesheet below as a second, smaller answer to this same
+   *  question; see `ComboBox.measurePlacement`. */
+  maxWidth: number | null
   /** Which way it had to open, so the arrival comes from the field it belongs
    *  to rather than from the gap on the other side of it. The field measured the
    *  room, so the field decides; this only wears it. */
@@ -83,7 +89,14 @@ defineExpose({ measure, scrollActiveIntoView, contains })
     ref="listEl"
     class="combo-popup"
     :class="{ 'is-above': drop === 'up' }"
-    :style="{ left: `${left}px`, top: `${top}px`, minWidth: `${minWidth}px` }"
+    :style="{
+      left: `${left}px`,
+      top: `${top}px`,
+      minWidth: `${minWidth}px`,
+      // `undefined` and not `null`: Vue removes a style property for either, and only `undefined`
+      // is a `StyleValue`.
+      maxWidth: maxWidth === null ? undefined : `${maxWidth}px`,
+    }"
     role="listbox"
     :aria-label="listLabel"
   >
@@ -114,7 +127,10 @@ defineExpose({ measure, scrollActiveIntoView, contains })
   /* Above the modal layer (10000) — a dropdown opens from inside the settings
      dialog — and below the toast layer (11000). */
   z-index: 10001;
-  max-width: 280px;
+  /* No `max-width`. It is a measurement rather than a declaration (`ComboBox.measurePlacement`'s
+     `floor` and `ceiling`), and a `280px` used to sit here as a second, smaller answer to the same
+     question — one that would have held even once the floor followed the field. `max-height` stays:
+     a list longer than 280px scrolls, which is a different decision and a different number. */
   max-height: 280px;
   overflow-y: auto;
   padding: 5px;
