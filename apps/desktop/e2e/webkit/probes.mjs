@@ -18,6 +18,7 @@ import { agentScrollProbe } from './probe-agent-scroll.mjs'
 import { chatScrollProbe } from './probe-chat-scroll.mjs'
 import { focusRingProbe } from './probe-focus-ring.mjs'
 import { listRoomProbe } from './probe-list-room.mjs'
+import { resizeProbe } from './probe-resize.mjs'
 
 /** Dumps what is actually in the document, so the probes can address it. */
 const inspect = {
@@ -86,11 +87,18 @@ const inspect = {
  * to 1280x800 before it returns, and everything after it (the rail's two probes) measures the window
  * it always did.
  *
+ * `dialog-resize` goes after `list-room` and shares its contract: it opens the settings dialog, and
+ * it closes it again through the dialog's own close control before it returns — the overlay covers
+ * the status button that opened it, so the close is the only control the driver can reach. It does
+ * not move the window (its numbers are the harness's own 1280x800), so the two probes after it
+ * measure the window they always did. Like `list-room` it reads a dialog, not the editor, which is
+ * why neither can go before the probes that need the editor addressable.
+ *
  * `focus-ring` goes last of all because it is the only probe that puts NEW DOM into
  * the page: it mounts four components nothing in the application hosts yet, in fixed
  * overlays over the top-left corner. A probe after it would be measuring a page with
  * four foreign panels on it, so nothing goes after it. The surfaces it reads on the
  * product's own page are read before it mounts anything.
  */
-export const PROBES = [motionProbe, panelProbe, tableProbe, tailProbe, noteSwitchProbe, dialogProbe, listRoomProbe, agentScrollProbe, chatScrollProbe, focusRingProbe]
+export const PROBES = [motionProbe, panelProbe, tableProbe, tailProbe, noteSwitchProbe, dialogProbe, listRoomProbe, resizeProbe, agentScrollProbe, chatScrollProbe, focusRingProbe]
 export const ALL_PROBES = [inspect, ...PROBES]

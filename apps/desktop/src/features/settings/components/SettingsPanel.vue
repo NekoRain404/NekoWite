@@ -50,6 +50,7 @@ import { createDesktopPetConnection } from '../../../app/desktop-pet-composition
 import { createAgentSettingsClients } from '../../../app/agent-settings-composition'
 import { PET_SETTINGS_SECTION, type PetSettingsPage } from '../../../platform/gateways/pet-contracts'
 import { useSettingsDialog } from '../composables/use-settings-dialog'
+import { DIALOG_WIDTH_MIN, useDialogSize } from '../composables/use-dialog-size'
 import { markArrived, markLeaving } from '../../../composables/surface-leave'
 import type { SettingsOpenTarget, SettingsSectionId } from '../types'
 
@@ -104,11 +105,28 @@ const petConnection = createDesktopPetConnection()
 const agentClients = createAgentSettingsClients()
 
 const dialogRef = ref<HTMLElement | null>(null)
+const overlayRef = ref<HTMLElement | null>(null)
 
 const { appVersion, onOverlayPointerDown, focusDialog } = useSettingsDialog({
   dialogRef,
   onClose: () => emit('close'),
 })
+
+/**
+ * The dialog's size, from the corner grip the user can drag.
+ *
+ * The overlay is handed over because the *room* a drag has is the overlay's content box — the same
+ * box the stylesheet's `max-width: 100%` resolves against — and not the dialog's own, which is the
+ * thing being decided. See `use-dialog-size.ts` for why the stylesheet declares no size at all.
+ */
+const {
+  rendered: dialogSize,
+  bounds: sizeBounds,
+  dragging: resizing,
+  onHandlePointerDown,
+  onHandleKeydown,
+  onHandleDoubleClick,
+} = useDialogSize({ overlayRef })
 
 // The keyboard follows the eye: changing section moves focus back to the panel
 // container, so Tab starts from the top of the new section.
@@ -131,16 +149,22 @@ watch(
 
 <template>
   <div
+    ref="overlayRef"
     class="settings-overlay"
     role="presentation"
     @pointerdown="onOverlayPointerDown"
   >
+    <!-- The size is inline state and nothing else: the stylesheet declares no width or height for
+         this element, because a size that is both a drag and a constant is two answers to one
+         question. `max-width`/`max-height: 100%` stay in the stylesheet — that is the *bound*, the
+         overlay's content box, which is the same box `use-dialog-size`'s clamp measures. -->
     <div
       ref="dialogRef"
       class="settings-dialog"
       role="dialog"
       aria-modal="true"
       :aria-label="t('settings.dialogTitle')"
+      :style="{ width: `${dialogSize.width}px`, height: `${dialogSize.height}px` }"
       tabindex="-1"
     >
       <div class="dialog-header">
@@ -232,6 +256,34 @@ watch(
           </Transition>
         </div>
       </div>
+
+      <!-- The corner grip. A real control and not a decoration: `role="separator"` with its value
+           semantics, `tabindex="0"`, arrows for each axis, Home for the floor and End for the
+           window, and a double-click back to the size it opens at — the same vocabulary
+           `ui/LayoutResizeHandle.vue` uses for the three columns, so the app has one resize control
+           rather than two.
+           ARIA's `separator` is one-dimensional and this grip moves two, which is a limit of the
+           role rather than a choice made here: `aria-orientation` describes the width axis the
+           handle is named for and `aria-valuenow` reports, and `aria-valuetext` carries both
+           numbers so a screen reader announces the state rather than half of it. -->
+      <div
+        class="settings-resize"
+        :class="{ 'is-active': resizing }"
+        role="separator"
+        aria-orientation="vertical"
+        :aria-label="t('settings.resize.label')"
+        :title="t('settings.resize.hint')"
+        :aria-valuemin="DIALOG_WIDTH_MIN"
+        :aria-valuemax="Math.round(sizeBounds.width)"
+        :aria-valuenow="dialogSize.width"
+        :aria-valuetext="
+          t('settings.resize.value', { width: dialogSize.width, height: dialogSize.height })
+        "
+        tabindex="0"
+        @pointerdown="onHandlePointerDown"
+        @keydown="onHandleKeydown"
+        @dblclick="onHandleDoubleClick"
+      />
     </div>
   </div>
 </template>
@@ -249,18 +301,21 @@ watch(
   backdrop-filter: blur(2px);
 }
 
-/* The 720 is a **maximum**, not a fixed width — and in the shipped app it is always the width
-   used. The overlay's 24px of padding means the dialog is `min(720, viewport - 48)`, so the clamp
-   only engages below a 768px window, while `tauri.conf.json` gives the main window
-   `minWidth: 860` / `minHeight: 560`. Every window the product can be in therefore lands on 720,
-   which is why a viewport sweep reads the same content width at 1280 and at 860: §12's 860x560 is
-   the narrow case, and a narrower viewport (task-183 measured 700 for one) is narrower than this
-   app can be. The height is the term that does bind at 560 — `min(520, 100%)` is 512 there. */
+/* **No `width` and no `height` here, and that is the point.** Both used to be declared in this
+   rule — `min(720px, 100%)` and `min(520px, 100%)` — which was correct while the size was a
+   constant and became the two-answers defect the moment a drag could change it: the drag would
+   write an inline width that this `min()` still capped, and the corner grip would then sit
+   somewhere the box was not. The value now comes from `use-dialog-size.ts` alone, clean-install
+   default included, and what stays here is the **bound** — the overlay's content box, which is the
+   same box that file's clamp measures. `position: relative` is the grip's containing block and
+   nothing else: it is not a transform, a filter or a `contain`, so it is not a containing block for
+   the `position: fixed` popups — those are teleported to `.shell` besides. */
 .settings-dialog {
+  position: relative;
   display: flex;
   flex-direction: column;
-  width: min(720px, 100%);
-  height: min(520px, 100%);
+  max-width: 100%;
+  max-height: 100%;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--app-border) 86%, transparent);
   border-radius: var(--app-radius-xl);
@@ -372,5 +427,69 @@ watch(
   opacity: 0;
   scale: var(--app-motion-scale-exit);
   translate: 0 calc(var(--app-motion-travel) / 3);
+}
+
+/* ---- The corner grip ----------------------------------------------------
+   The hit area is 16x16 — wider than `LayoutResizeHandle`'s 8px rail, because that one is a full
+   column edge a pointer is already travelling along while this one is a corner the user has to
+   find. The drawn mark inside it is 10px of two hairlines, so the target is generous without the
+   dialog growing a visible block in its corner.
+
+   The mark appears on hover, on focus and while dragging, in the user's own accent — the same rule
+   and the same colour mix as the rail handle, so the two read as one family.
+
+   **No `transition` on the dialog's size, here or anywhere.** §7.3's 正文稳定 is strongest at a
+   resize: an animated `width` re-flows every line of text in the dialog for the length of a curve
+   the user did not ask for and cannot stop. A drag is not an animation — it is one-to-one with the
+   pointer and interruptible at any frame — so the size is written straight from the pointer and
+   nothing interpolates it. `settings-resize.spec.ts` asserts the absence rather than trusting it. */
+.settings-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  touch-action: none;
+  outline: none;
+}
+/* The mark is *drawn* at rest, not only on hover. The complaint this whole change answers is that
+   the dialog could not be resized at all (「现在窗口无法拖拽变大」), so a grip that stays invisible
+   until a pointer happens to find its corner is the wrong default — it makes the fix reachable only
+   by someone who already knew it was there. It reads as furniture instead: a muted corner mark in
+   the border's own colour, brightening to the user's accent under the pointer, which is when it
+   becomes a control. */
+.settings-resize::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 10px;
+  height: 10px;
+  border-right: 2px solid color-mix(in srgb, var(--app-muted) 55%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--app-muted) 55%, transparent);
+  border-bottom-right-radius: 2px;
+  transition: border-color var(--app-motion-fast) var(--app-ease);
+}
+.settings-resize:hover::after,
+.settings-resize:focus-visible::after,
+.settings-resize.is-active::after {
+  border-color: color-mix(in srgb, var(--app-accent) 58%, transparent);
+}
+/* The keyboard's half of the hover mark, at the inset the rest of this dialog uses for
+   `:focus-visible`, so a keyboard user sees the same control a pointer user does. */
+.settings-resize:focus-visible::after {
+  border-color: var(--app-accent);
+}
+</style>
+
+<style>
+/* The pointer keeps the corner cursor for the whole drag, wherever it has travelled to — the same
+   rule and the same shape the rail handle uses for `is-layout-resizing`. Scoped styles cannot
+   reach `body`, which is why this is a second block. */
+body.is-dialog-resizing,
+body.is-dialog-resizing * {
+  cursor: nwse-resize !important;
+  user-select: none !important;
 }
 </style>

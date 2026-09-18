@@ -42,3 +42,22 @@ export interface SettingsOpenTarget {
   section: SettingsSectionId
   page?: PetSettingsPage
 }
+
+/**
+ * The agents tree's own second level, and the same contract one level down.
+ *
+ * `AgentSettingsNavigation.vue` renders a row per member and `AgentSettingsSection.vue` renders the
+ * page per member, so the union is what keeps the two from offering a row that leads nowhere or a
+ * page nobody can reach — the same job `SettingsSectionId` does between the dialog's rail and the
+ * dialog. It is *not* a re-export of `AGENT_SETTINGS_SECTIONS`: that list is the tree as the
+ * feature declares it, nine sections including the two this build has no client for, and this is
+ * the seven a rail may draw.
+ */
+export type AgentPageId =
+  | 'runtime'
+  | 'provider'
+  | 'configuration'
+  | 'skills'
+  | 'permission'
+  | 'registry'
+  | 'catalogue'

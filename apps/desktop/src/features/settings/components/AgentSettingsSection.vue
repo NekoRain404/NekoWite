@@ -45,7 +45,7 @@
  * `can-start-session="false"` for the same reason: this dialog has no gateway, so the engine
  * switch it would otherwise draw is a button that emits to nobody.
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { t } from '../../../i18n'
 import {
   AGENT_SETTINGS_SECTIONS,
@@ -64,7 +64,9 @@ import type { EngineIdentity } from '../../agent-settings/services/agent-registr
 // there would be a name with one caller). The specifier is the component the type belongs to.
 import type { CataloguePrefill } from '../../agent-settings/components/AgentCatalogueBrowser.vue'
 import type { AgentSettingsClients } from '../../../app/agent-settings-composition'
+import type { AgentPageId } from '../types'
 import { useAgentPanel } from '../composables/use-agent-panel'
+import AgentSettingsNavigation from './AgentSettingsNavigation.vue'
 
 const props = defineProps<{
   /** The registry and the profile, chosen at the composition site. */
@@ -100,24 +102,6 @@ const showing = computed(() =>
       }),
 )
 
-/**
- * The sections this file mounts, by their ids in {@link AGENT_SETTINGS_SECTIONS}.
- *
- * One list, in the feature that declares the tree, and this is the half of it that is reachable:
- * a page is in here when its client can be built against a command this build registers. A literal
- * rather than something derived from the imports, because the id and the component are two
- * different facts (`mounts` names the component; a section's id is what a navigation binds), and
- * the test that reads this file's rendering is what keeps the two in step.
- */
-const MOUNTED = new Set([
-  'runtime',
-  'registry',
-  'provider',
-  'permission',
-  'configuration',
-  'catalogue',
-  'skills',
-])
 
 /**
  * The permission page's client, built for the pair the registry answered with.
@@ -198,6 +182,106 @@ const credentialClient = computed(() =>
 const cataloguePrefill = ref<CataloguePrefill | null>(null)
 
 /**
+ * The catalogue's one control: hand the entry to the registry's add form, and open the page it
+ * lands on.
+ *
+ * The second half is not a convenience. The add form is on the registry page, so a click that only
+ * filled it would write into a form the user cannot see — 建好了但够不到 in its exact shape, this
+ * repository's signature failure. A control whose whole effect is invisible is worse than no
+ * control, so the click also goes where its effect is.
+ */
+function onCatalogueUse(entry: CataloguePrefill): void {
+  cataloguePrefill.value = entry
+  active.value = landing('registry')
+}
+
+/**
+ * Each gated page's whole input, in one object, or `null` while its gate is unmet.
+ *
+ * This is what keeps the rail's row and the page it opens from becoming two conditions. The row is
+ * drawn for a page exactly when its model is not `null` and the page is rendered from the same
+ * model, so there is one expression per gate and neither half can drift into offering a row that
+ * leads nowhere or a page with no way back to it. It also removes the non-null assertions the
+ * bindings would otherwise need: the model is narrowed by the `v-if`, exactly as
+ * `DesktopPetSettings.vue` narrows its `context`, rather than the props being asserted non-null
+ * where the guard happens to be true today.
+ */
+const providerPage = computed(() =>
+  identity.value === null || credentialClient.value === null
+    ? null
+    : {
+        client: props.clients.provider,
+        credentialClient: credentialClient.value,
+        agentId: identity.value.agentId,
+        profileId: identity.value.profileId,
+      },
+)
+const configurationPage = computed(() =>
+  configClient.value === null || authoringClient.value === null
+    ? null
+    : { client: configClient.value, authoring: authoringClient.value },
+)
+const skillsPage = computed(() =>
+  skillsClient.value === null ? null : { client: skillsClient.value },
+)
+const permissionPage = computed(() =>
+  permissionClient.value === null ? null : { client: permissionClient.value },
+)
+
+/**
+ * Which of the seven pages are here at all, which is the rail's membership test.
+ *
+ * Its keys are also what tells the tree which sections are *mounted*: a section of
+ * `AGENT_SETTINGS_SECTIONS` whose id is not here is one this build has no client for, and it is
+ * stated as a sentence rather than drawn as a row (see {@link gaps}). That used to be a second
+ * list — a `MOUNTED` set beside this one — and two lists of one fact is one list too many.
+ */
+const mountable = computed<Record<AgentPageId, boolean>>(() => ({
+  // No pair and no gate: its subject is the engine this app starts rather than one profile.
+  runtime: true,
+  // The registry *is* what answers the pair, so it cannot be behind the pair's own gate.
+  registry: true,
+  // About no profile either: what the public registry publishes.
+  catalogue: true,
+  provider: providerPage.value !== null,
+  configuration: configurationPage.value !== null,
+  skills: skillsPage.value !== null,
+  permission: permissionPage.value !== null,
+}))
+
+/**
+ * The rail's rows, in the order the tree declares them.
+ *
+ * The order comes from {@link AGENT_SETTINGS_SECTIONS} — the barrel says that is what the list is
+ * for ("the order a navigation should offer it") and until this rail existed nothing read it for
+ * that, which is why the seven pages were stacked in an order of their own. The *membership* comes
+ * from {@link mountable}, so a page whose client cannot be built is not offered.
+ */
+const available = computed<AgentPageId[]>(() =>
+  AGENT_SETTINGS_SECTIONS.map((section) => section.id)
+    .filter((id): id is AgentPageId => Object.hasOwn(mountable.value, id))
+    .filter((id) => mountable.value[id]),
+)
+
+/**
+ * The page on screen, and the rule for a page that stops being available under it.
+ *
+ * The registry read resolves *after* the first frame, so the four pages behind the pair arrive a
+ * tick into the section's life — and the answer to "where does a request to open a page this build
+ * cannot show land" has to be a page that exists, not a blank content area. That is the same rule,
+ * and the same fallback, `DesktopPetSettings.vue` follows for the pet's pages; it is repeated here
+ * rather than shared because the two containers' page vocabularies have nothing in common but the
+ * shape of the question.
+ */
+const active = ref<AgentPageId>('runtime')
+function landing(id: AgentPageId): AgentPageId {
+  if (mountable.value[id] && available.value.includes(id)) return id
+  return available.value[0] ?? 'runtime'
+}
+watch(mountable, () => { active.value = landing(active.value) }, { immediate: true })
+
+
+/**
  * One sentence per section that is not mounted, keyed by the list's own ids.
  *
  * Keys are resolved by literal `t()` calls and never built from a variable: a key the source
@@ -222,12 +306,12 @@ const SENTENCES: Readonly<Record<string, string>> = {
  * The capability row was here too, and it is gone for the same reason the runtime's sentence is —
  * the join it described as belonging to one running session is what the runtime page now draws.
  */
-const gaps = [
-  ...AGENT_SETTINGS_SECTIONS.filter((section) => !MOUNTED.has(section.id)).map(
+const gaps = computed(() => [
+  ...AGENT_SETTINGS_SECTIONS.filter((section) => !Object.hasOwn(mountable.value, section.id)).map(
     (section) => SENTENCES[section.id] ?? t('agent.settings.agents.gaps.other'),
   ),
   t('agent.settings.agents.gaps.engine'),
-]
+])
 </script>
 
 <template>
@@ -259,8 +343,28 @@ const gaps = [
       {{ showing }}
     </p>
 
+    <!-- The rail, and the reason this section has the shape it does.
+         The seven pages used to be stacked in one column: measured in Chromium at the 1280x800
+         window this programme's numbers are taken at, that column was 2131px inside a 467px
+         viewport — 4.6 screens of scrolling through seven unrelated pages, with nothing on screen
+         saying how many there were or which one you were in. The tree's own list
+         (`AGENT_SETTINGS_SECTIONS`) declares nine sections "in the order a navigation should offer
+         it" and nothing read it for that, which is the shape of a navigation that was specified and
+         never built. This is it built.
+         A row exists exactly when its page does — `available` is `mountable`'s membership — so
+         nothing here leads nowhere, and the sections this build has no client for are still
+         *stated* below rather than drawn as rows. -->
+    <AgentSettingsNavigation
+      :pages="available"
+      :active="active"
+      @update:active="active = $event"
+    />
+
     <!-- The mounted pages, in one box so that "the controls this page draws itself" is a question
-         with an answer: everything inside is a page's own, and the switch above is this file's. -->
+         with an answer: everything inside is a page's own, and the switch above is this file's.
+         One page is on screen at a time, and the others are `v-show`-hidden rather than unmounted —
+         see this file's header for why that is the load-bearing half of the rail. The order is
+         the tree's own, the same list the rail above is built from. -->
     <div
       class="agents-pages"
       data-test="agents-pages"
@@ -272,27 +376,29 @@ const gaps = [
            rather than below them, and why it is the one page here that answers a *live* fact: the
            negotiated protocol version, the engine's own name for itself, the authentication it
            advertises, and the eleven capability rows, all read off the incarnation's handshake. -->
-      <AgentRuntimeSettings :client="props.clients.runtime" />
-      <AgentRegistrySettings
-        :client="props.clients.registry"
-        :profile-id="identity?.profileId ?? ''"
-        :can-start-session="false"
-        :prefill="cataloguePrefill"
+      <AgentRuntimeSettings
+        v-show="active === 'runtime'"
+        :data-page="'runtime'"
+        :client="props.clients.runtime"
       />
       <AgentProviderSettings
-        v-if="identity && credentialClient"
-        :client="props.clients.provider"
-        :credential-client="credentialClient"
-        :agent-id="identity.agentId"
-        :profile-id="identity.profileId"
+        v-if="providerPage"
+        v-show="active === 'provider'"
+        :data-page="'provider'"
+        :client="providerPage.client"
+        :credential-client="providerPage.credentialClient"
+        :agent-id="providerPage.agentId"
+        :profile-id="providerPage.profileId"
       />
       <!-- The engine's own configuration document. Mounted with the pair like the profile page, and
            for the same reason; the page states its own three absences rather than this file
            deciding which of them applies. -->
       <AgentConfigurationSettings
-        v-if="configClient && authoringClient"
-        :client="configClient"
-        :authoring="authoringClient"
+        v-if="configurationPage"
+        v-show="active === 'configuration'"
+        :data-page="'configuration'"
+        :client="configurationPage.client"
+        :authoring="configurationPage.authoring"
       />
       <!-- §8.2's page, in the tree's own order (after the configuration document, before the
            permission table). It had no mount point at all before this: `skills.rs` was complete and
@@ -300,22 +406,38 @@ const gaps = [
            sentence saying so. That sentence is gone — the list of absences is derived, so mounting
            the page is what removed it. -->
       <AgentSkillsSettings
-        v-if="skillsClient"
-        :client="skillsClient"
+        v-if="skillsPage"
+        v-show="active === 'skills'"
+        :data-page="'skills'"
+        :client="skillsPage.client"
       />
       <!-- The pair is the page's own, so it is built from the registry's answer rather than from
            anything this section decides. The grants half of it reads the running engine, which is
            why the page draws "no agent is running" as a state of its own rather than as a gap. -->
       <AgentPermissionSettings
-        v-if="permissionClient"
-        :client="permissionClient"
+        v-if="permissionPage"
+        v-show="active === 'permission'"
+        :data-page="'permission'"
+        :client="permissionPage.client"
+      />
+      <AgentRegistrySettings
+        v-show="active === 'registry'"
+        :data-page="'registry'"
+        :client="props.clients.registry"
+        :profile-id="identity?.profileId ?? ''"
+        :can-start-session="false"
+        :prefill="cataloguePrefill"
       />
       <!-- Last, and about no profile at all: what the public registry publishes. Its one control
            hands an entry to the add form above, which is why it is mounted below the registry page
-           rather than beside the profile pages. -->
+           rather than beside the profile pages — and why the hand-off *opens* that page: a click
+           that filled a form behind a hidden tab would be this repository's signature failure with
+           a new costume. -->
       <AgentCatalogueBrowser
+        v-show="active === 'catalogue'"
+        :data-page="'catalogue'"
         :client="props.clients.catalogue"
-        @use="cataloguePrefill = $event"
+        @use="onCatalogueUse"
       />
     </div>
 
@@ -377,10 +499,21 @@ const gaps = [
   line-height: 1.6;
   color: var(--app-muted);
 }
-/* A divider before each page, so the mounted pages and this file's own sentences read as the two
-   different things they are — the box is one element and draws nothing else. */
+/* The box the seven pages live in.
+   It carries no divider rules of its own any more, and that is the consequence of one page being
+   on screen at a time rather than a tidy-up: the old rule drew a line *before every page* because
+   seven of them were stacked in one scroll and the lines were what told them apart. The rail above
+   delimits the page now, and a rule that tried to draw only above the drawn page would have to ask
+   which sibling is `display: none` — a question with no selector a reader could trust. Six of the
+   seven pages here are `v-show`-hidden in any frame.
+
+   **No swap transition, on purpose.** `<Transition>` takes one child, and the reason the pages are
+   `v-show`-hidden rather than unmounted is that unmounting them loses each page's draft and breaks
+   the catalogue's hand-off to the registry's add form (the page watches `prefill`, not on mount).
+   So there is nothing here to cross-fade, and §7.3's 正文稳定 is served by the absence: the click is
+   the user's own, the page is already in the DOM, and nothing moves the text for a curve nobody
+   asked for. The level above — the dialog's own section swap — carries the arrival vocabulary. */
 .agents-pages { display: flex; flex-direction: column; }
-.agents-pages > :deep(.settings-section) { padding-top: 10px; border-top: 1px solid var(--app-border); }
 .agent-gaps {
   display: flex;
   flex-direction: column;

@@ -1065,6 +1065,10 @@ export const agent = {
             label: 'Show the agent panel in the right rail',
             hint: 'Off, the rail keeps the chat panel it has always had. On, the rail shows the agent panel for the folder this app has open instead — the chat panel is unmounted, so a reply still streaming is cancelled, and switching this off is how you get it back.',
           },
+          /* The sub-navigation's own name, for the `role="tablist"` that carries the seven pages.
+             One page is on screen at a time; a page this build has no client for is not offered
+             here at all, and is stated in the absence list below instead. */
+          pages: 'Agent settings pages',
           /* The pair the mounted pages are about, stated on the page: the registry readout is the
              only thing that pairs a profile with an engine, so when it cannot be read the profile
              page is not drawn — and that absence is said here rather than left as a gap. */
@@ -2122,6 +2126,7 @@ export const agent = {
             label: '在右侧栏显示智能体面板',
             hint: '关闭时，右栏保留原来的聊天面板。打开后，右栏改为显示智能体面板，在本应用已打开的文件夹内工作——聊天面板会被卸载，正在流式返回的回复会被取消；关掉这个开关就能把它找回来。',
           },
+          pages: '智能体设置页',
           profile: {
             showing: '下面各页讲的是 {agent} 及其配置档案 {profile}。',
             unknown: '未能读取引擎注册表，因此本应用所启动引擎的配置档案不在这里显示。上面的注册表页说明了原因。',

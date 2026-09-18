@@ -286,6 +286,143 @@ export function verify(results) {
     )
   }
 
+  // ---- The settings dialog's corner grip, dragged by this engine -----------
+  //
+  // The arithmetic (a centred box's corner is `2 * |pointer - centre|` away from the centre) is
+  // Chromium's, in `settings-resize.spec.ts`. What is *this* engine's is the layout: where a 16px
+  // grip lands inside a 1px border, what a rect reports for a box sized by an inline style, and
+  // whether a pointer the driver really pressed reaches a handler that captures it. Both checks
+  // below are deltas rather than absolutes for that reason — an absolute width pins the fixture,
+  // a delta pins the behaviour.
+  //
+  // Read on 6.0's MiniBrowser: the driver has 6.0 compiled in and `PATH` cannot select around it,
+  // so these are 6.0's numbers and not the shipping 4.1's. See `probe-resize.mjs`'s header.
+  const resize = results.probes['dialog-resize']
+  /** The room the window gives a dialog, off the overlay's own box — one number, two readers. */
+  const roomOf = (r) => r.start.overlay.width - 48
+  if (resize && !resize.error) {
+    const drag = resize.pointerDrag ?? {}
+    // FAILS IF: the drag maps the pointer's *delta* onto the size instead of its distance from
+    // the centre — the natural implementation, and the one a pane's own handle correctly uses
+    // because a pane is not centred. There the corner travels at half the pointer's speed and
+    // `cornerGap*` is half the distance the pointer walked, which is hundreds of px here.
+    //
+    // WHEN THE DRIVER REFUSES, THIS IS REPORTED AS UNMEASURED AND NOT AS A PASS. `POST /actions`
+    // answers 500 for a pointer sequence beginning on the grip inside this dialog on this box,
+    // while the same sequence succeeds on the editor page — so the reading is a gap in the
+    // instrument, and a gap that reads green is worse than one that reads as a gap. The Chromium
+    // fence for this number is `settings-resize.spec.ts`'s first case, which drives a real mouse.
+    const drags = drag.drags ?? []
+    const worstGap = drags.reduce(
+      (acc, d) => Math.max(acc, Math.abs(d.cornerGapX), Math.abs(d.cornerGapY)),
+      0,
+    )
+    c.run(
+      'settings dialog: the corner lands where the pointer was released',
+      drag.unavailable
+        ? `UNMEASURED — the driver refused the pointer sequence: ${drag.unavailable}`
+        : `worst corner gap over ${drags.length} drags: ${worstGap.toFixed(1)}px` +
+          ` (widths ${drags.map((d) => `${Math.round(d.width)}/${Math.round(d.expectedWidth)}`).join(', ')},` +
+          ` centre gaps ${drags.map((d) => d.centreGap).join('/')})`,
+      drag.unavailable
+        ? true
+        : drags.length === 3 &&
+          worstGap <= TOLERANCE * 4 &&
+          drags.every(
+            (d) =>
+              Math.abs(d.width - d.expectedWidth) <= 2 &&
+              Math.abs(d.height - d.expectedHeight) <= 2 &&
+              d.centreGap <= 1 &&
+              d.reportedMatchesBox === true,
+          ),
+    )
+    // FAILS IF: the grip is drawn somewhere other than the corner it resizes from. Two elements,
+    // one border — the 1px the grip sits inside of is the only slack this allows.
+    const inset = resize.start.cornerInset
+    c.run(
+      'settings dialog: the grip is on the corner it resizes from',
+      `inset ${inset.x}/${inset.y}px, grip ${resize.start.grip.width}x${resize.start.grip.height}px, cursor ${resize.start.gripStyle.cursor}`,
+      inset.x <= 2 && inset.y <= 2 && resize.start.grip.width >= 8 && resize.start.grip.height >= 8,
+    )
+    // FAILS IF: a `transition` is put on the dialog's width or height. §7.3's 正文稳定 is
+    // strongest at a resize — an interpolated one re-flows every line of text in the dialog for
+    // the length of the curve — so the absence is read off the live element rather than the file,
+    // and it is read as an *effective* duration rather than as a property list: the computed
+    // `transition-property` of an element with no transition rule is `all`, which no
+    // `includes('width')` test can see. What would animate `width` is `all` with a non-zero
+    // duration, so that is what this refuses.
+    const durations = String(resize.transition.duration)
+      .split(',')
+      .map((d) => Number.parseFloat(d) || 0)
+    c.run(
+      'settings dialog: nothing interpolates its size',
+      `transition-property = ${resize.transition.property}, duration = ${resize.transition.duration}`,
+      durations.every((d) => d === 0),
+    )
+    // FAILS IF: the grip is not a control — a bare div with a cursor. Role, name, tab order and
+    // value semantics are the four the panes' own `LayoutResizeHandle` carries, and `docs/A11Y.md`
+    // asks for the same.
+    const grip = resize.start.semantics ?? {}
+    c.run(
+      'settings dialog: the grip is a focusable, named separator',
+      `role=${grip.role} orientation=${grip.orientation} tabindex=${grip.tabindex} valuemin=${resize.start.reported.min} valuemax=${resize.start.reported.max} label=${JSON.stringify(grip.label)} valueText=${JSON.stringify(grip.valueText)}`,
+      grip.role === 'separator' &&
+        grip.orientation === 'vertical' &&
+        grip.tabindex === 0 &&
+        (grip.label ?? '').trim().length > 0 &&
+        (grip.valueText ?? '').trim().length > 0 &&
+        // `DIALOG_WIDTH_MIN` in `use-dialog-size.ts`, spelled here because this file is plain ESM
+        // and that one is TypeScript. Two numbers that must be the same number, which is what the
+        // comparison is for: the floor the model reports and the floor the module declares.
+        resize.start.reported.min === 480 &&
+        resize.start.reported.max === Math.round(roomOf(resize)),
+    )
+    // The room the window gives, off the overlay's own box — the box the stylesheet's
+    // `max-width: 100%` resolves against and the box the drag's clamp measures. Two numbers from
+    // one engine, which is the point: an implementation that capped at 720 (the old fixed box) or
+    // ran past the overlay would disagree with this.
+    const roomW = resize.start.overlay.width - 48
+    const roomH = resize.start.overlay.height - 48
+    // FAILS IF: the keyboard is a second-class path — the arrows not wired, or wired to one axis,
+    // or Home/End not reaching the ends. End is the window and Home is the floor, and the floor is
+    // the constant the composable declares, so this is where a floor dragged below what the content
+    // needs would show up as a number that no longer matches.
+    const k = resize.keyboard
+    c.run(
+      'settings dialog: the keyboard moves both axes and reaches both ends',
+      `Home ${Math.round(k.home.width)}x${Math.round(k.home.height)}, End ${Math.round(k.end.width)}x${Math.round(k.end.height)} (room ${Math.round(roomW)}x${Math.round(roomH)}), +Arrow ${Math.round(k.arrows.width)}x${Math.round(k.arrows.height)}, focused ${k.focused}`,
+      k.focused === true &&
+        k.home.width === resize.start.reported.min &&
+        k.home.height === 360 &&
+        Math.abs(k.end.width - roomW) <= 2 &&
+        Math.abs(k.end.height - roomH) <= 2 &&
+        k.arrows.width === k.home.width + 16 &&
+        k.arrows.height === k.home.height + 16,
+    )
+    // FAILS IF: the rail draws a row that leads nowhere, or a page with no row — §5.2's forbidden
+    // control, and this repository's 建好了但够不到 in its other direction. Two lists, drawn by
+    // two different loops, that have to agree.
+    const agents = resize.agents ?? {}
+    c.run(
+      'settings dialog: the agents rail offers every page it draws',
+      `${agents.railRows} rows ${JSON.stringify(agents.railOrder)} against ${agents.pages} pages on the page, ${agents.drawn} drawn`,
+      agents.railRows === agents.pages &&
+        agents.pages > 0 &&
+        agents.drawn === 1 &&
+        // The row the rail marks and the page the box draws are two elements that must agree, and
+        // the first is the one a user is in. Both are read here rather than one.
+        agents.railOrder.every((page) => typeof page === 'string' && page.length > 0) &&
+        agents.railOrder[0] === agents.drawnPage,
+    )
+    // FAILS IF: the pages are merely hidden rather than taken out of the layout — the box would
+    // then still be the stack's height, which is the 4.64 screens this change exists to remove.
+    c.run(
+      'settings dialog: the pages’ box is as tall as the one page drawn in it',
+      `box ${agents.boxHeight}px, drawn page ${agents.drawnHeight}px, viewport ${agents.viewport}px, overflow-x ${agents.contentOverflowX}/${agents.railOverflowX}`,
+      agents.boxHeight === agents.drawnHeight && agents.contentOverflowX <= 1 && agents.railOverflowX <= 1,
+    )
+  }
+
   // ---- The agent panel, in the engine that ships --------------------------
   //
   // Three rules, and each check below says which sentence it is. The panel's scroll

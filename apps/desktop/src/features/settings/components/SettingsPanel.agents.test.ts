@@ -365,6 +365,11 @@ function section(): HTMLElement {
   return found
 }
 
+/** The sub-navigation's rows, in the order they are drawn. */
+function railRows(): HTMLElement[] {
+  return [...section().querySelectorAll<HTMLElement>('.agents-rail [role="tab"]')]
+}
+
 function switchInput(): HTMLInputElement {
   const input = document.querySelector<HTMLInputElement>('[data-agent-panel-switch]')
   if (!input) throw new Error('the rail switch is not on the page')
@@ -620,15 +625,54 @@ describe('the agents section in the settings dialog', () => {
     await untilDom(() => el('skill-row-demo') !== null, 'the skills page')
     expect(el('skills-project-scope')?.textContent).toContain('.opencode/skills')
 
-    // Everything a mounted page draws itself is inside `agents-pages`; outside it, this file
-    // draws one control and it is the switch. A disabled control or a greyed pill below would be
-    // a claim that the capability exists and is temporarily off.
+    // Everything a mounted page draws itself is inside `agents-pages`; outside it, this file draws
+    // the switch and the rail, and nothing else. A disabled control or a greyed pill below would
+    // be a claim that the capability exists and is temporarily off.
     const own = [
       ...section().querySelectorAll<HTMLElement>(
         'input, button, select, textarea, [role="switch"]',
       ),
     ].filter((control) => control.closest('[data-test="agents-pages"]') === null)
-    expect(own).toEqual([switchInput()])
+    expect(own).toEqual([switchInput(), ...railRows()])
+  })
+
+  it('draws a row per mounted page and a page per row, in the tree’s order', async () => {
+    await openAgents()
+    await untilDom(() => el('skill-row-demo') !== null, 'the pages behind the registry read')
+    // Order and membership both come from `AGENT_SETTINGS_SECTIONS`, so a page added to the tree and
+    // mounted appears below unedited. The two lists are compared *in order*, off two loops that
+    // render independently, because either direction alone can hold while the other is broken: a row
+    // with no page is §5.2's forbidden control, a page with no row is one nobody can reach.
+    const rows = railRows().map((row) => row.dataset.page)
+    expect(rows).toEqual(['runtime', 'provider', 'configuration', 'skills', 'permission', 'registry', 'catalogue'])
+    expect(
+      [...section().querySelectorAll<HTMLElement>('[data-test="agents-pages"] > [data-page]')].map(
+        (page) => page.dataset.page,
+      ),
+    ).toEqual(rows)
+    for (const absent of ['commands', 'mcp']) expect(rows).not.toContain(absent)
+    for (const row of railRows()) expect(row.getAttribute('role')).toBe('tab')
+  })
+
+  it('shows one page at a time, and keeps the other six mounted', async () => {
+    await openAgents()
+    await untilDom(() => el('skill-row-demo') !== null, 'the pages behind the registry read')
+    const pages = [...section().querySelectorAll<HTMLElement>('[data-test="agents-pages"] > [data-page]')]
+    expect(pages).toHaveLength(7)
+    // Exactly one drawn. `display` is what `v-show` writes and the whole of what switching does:
+    // the pages stay in the tree so a half-written form survives a glance at another tab, and so
+    // the catalogue's hand-off to the registry's add form still lands.
+    expect(pages.filter((page) => page.style.display !== 'none')).toHaveLength(1)
+    const selected = railRows().find((row) => row.getAttribute('aria-selected') === 'true')
+    expect(selected?.dataset.page).toBe('runtime')
+
+    railRows().find((row) => row.dataset.page === 'catalogue')?.click()
+    await nextTick()
+    // Both halves moved together, read off two elements rather than off one variable.
+    const drawnNow = pages.filter((page) => page.style.display !== 'none')
+    expect(drawnNow).toHaveLength(1)
+    expect(railRows().find((row) => row.getAttribute('aria-selected') === 'true')?.dataset.page).toBe('catalogue')
+    expect(drawnNow[0].contains(el('catalogue-freshness'))).toBe(true)
   })
 
   it('sends a save at the revision the form read, and the next one at the revision it wrote', async () => {
