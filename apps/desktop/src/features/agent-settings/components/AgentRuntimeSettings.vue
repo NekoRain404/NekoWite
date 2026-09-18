@@ -104,6 +104,16 @@ export interface AgentRuntimeLabels {
      * (`vue-i18n` owns the `{…}` syntax) the same way the profile sentence's does.
      */
     declaredDisagrees: (claims: { declared: string; finding: string }) => string
+    /**
+     * The sentence for a row the engine reports and this app has no way to act on.
+     *
+     * Its own sentence rather than a fourth {@link AgentRuntimeLabels.capabilities.findingClaim},
+     * because it is about a different subject: the clause beside the standing says what *the
+     * engine* did, and this one says what *this app* cannot do about it. A reader who saw them in
+     * one vocabulary would take the second for the first, which is the collapse the whole row is
+     * shaped to prevent.
+     */
+    hostNothing: string
     /** What stands in for the list when the backend answered with no rows at all. */
     empty: string
   }
@@ -173,6 +183,7 @@ export function runtimeLabels(): AgentRuntimeLabels {
       },
       declaredDisagrees: (claims) =>
         t('agent.settings.runtime.capabilities.declared.disagrees', claims),
+      hostNothing: t('agent.settings.runtime.capabilities.hostNothing'),
       empty: t('agent.settings.runtime.capabilities.empty'),
     },
     update: {
@@ -258,7 +269,7 @@ export type CapabilityStanding = 'advertised' | 'not-advertised' | 'unverified'
  */
 export type DeclaredCapability = 'advertised' | 'not-advertised' | 'unverified'
 
-/** One feature, its two claims, and what has been measured about it. */
+/** One feature, its three claims, and what has been measured about it. */
 export interface RuntimeCapabilityRow {
   /** The backend's own name for the feature. Data, shown as written. */
   feature: string
@@ -271,7 +282,30 @@ export interface RuntimeCapabilityRow {
   standing: CapabilityStanding
   /** The engine's or the runtime's own words, when there are any. */
   detail: string | null
+  /**
+   * What this app does about the feature — the wire's third subject, arm for arm.
+   *
+   * Neither of the two above is a statement about the program the reader is holding, and that gap
+   * is what this member closes: `standing: 'advertised'` on `session-fork` is true of the engine
+   * and reads as 「you can fork」, which nothing in this build can. Drawn only where that reading
+   * would be wrong — see {@link hostNote}.
+   */
+  host: RuntimeCapabilityOffer
 }
+
+/**
+ * What this app offers for one feature — `capabilities::HostOffer`, arm for arm.
+ *
+ * Three arms rather than a boolean, because "this app can do it" is worth saying *how*, and the two
+ * ways are not the same: a `command` is a call the window makes, a `control` is an affordance the
+ * agent panel draws from this same report. What the page does with them is narrower than what the
+ * wire carries — only `nothing` draws a sentence — and the distinction is kept anyway, because the
+ * arm a reader checks (`command`) is the one that has to name something.
+ */
+export type RuntimeCapabilityOffer =
+  | { readonly status: 'command'; readonly command: string }
+  | { readonly status: 'control' }
+  | { readonly status: 'nothing' }
 
 /**
  * One authentication method the engine advertised.
@@ -400,14 +434,41 @@ const readout = ref<AgentRuntimeReadout | null>(null)
 const state = ref<'loading' | 'ready' | 'unreadable'>('loading')
 
 /**
- * The rows as drawn: each with the finding's own line, and the file's `note` where the two disagree.
+ * This app's own half, drawn only where the row would otherwise mislead — the rule
+ * {@link declarationNote} follows, for the same reason.
+ *
+ * `null` on every row where the app can act, which is nine of the eleven. The two it is drawn on
+ * are the case the member exists for: the engine reported the feature and nothing in this build can
+ * ask it for the thing it just said it can do. Both conditions are required, and the pair is the
+ * whole point — 「advertised」 alone is a fact about the engine and belongs to
+ * {@link standingText}, while 「nothing here」 alone is the ordinary state of a feature the engine
+ * said no to (`audio-attachments` today), where the finding is already the whole answer and a
+ * second sentence would read as a qualification of it.
+ *
+ * Nothing is derived: `host` is the backend's, and this function chooses *where* to draw it, the
+ * way `declarationNote` chooses where to draw the file's line.
+ */
+function hostNote(row: RuntimeCapabilityRow): string | null {
+  if (row.standing !== 'advertised' || row.host.status !== 'nothing') return null
+  return labels.value.capabilities.hostNothing
+}
+
+/**
+ * The rows as drawn: each with the finding's own line, this app's line where it has one, and the
+ * file's `note` where the two other halves disagree.
  *
  * `note` rather than `declared`, because it holds the *sentence* while `row.declared` holds the arm
  * — two names one letter apart, on one line of the template, is the kind of pair a reader would
  * take for the same value.
  */
-const capabilityRows = computed<readonly { row: RuntimeCapabilityRow; note: string | null }[]>(
-  () => (readout.value?.capabilities ?? []).map((row) => ({ row, note: declarationNote(row) })),
+const capabilityRows = computed<
+  readonly { row: RuntimeCapabilityRow; note: string | null; host: string | null }[]
+>(() =>
+  (readout.value?.capabilities ?? []).map((row) => ({
+    row,
+    note: declarationNote(row),
+    host: hostNote(row),
+  })),
 )
 
 async function load(): Promise<void> {
@@ -553,6 +614,17 @@ onMounted(load)
                 {{ standingText(entry.row.standing) }}
               </span>
               <span v-if="entry.row.detail" class="settings-note runtime-detail">{{ entry.row.detail }}</span>
+              <!-- This app's own half, and drawn as what it is: not a fourth finding. It is only
+                   here on the rows the engine reported and this build cannot act on — see
+                   `hostNote` — so its presence is the disclosure that the standing above it is
+                   about the engine rather than about anything the reader can reach. -->
+              <span
+                v-if="entry.host !== null"
+                class="settings-note is-warn runtime-host"
+                :data-host="entry.row.host.status"
+              >
+                {{ entry.host }}
+              </span>
               <!-- The report's other half, and drawn as what it is: what this build has *on file*
                    rather than what this engine reported. It is only here on the rows where the two
                    disagree — see `declarationNote` — so its presence is itself the disclosure

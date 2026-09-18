@@ -98,6 +98,39 @@ export const AGENT_CAPABILITY_FEATURES = [
 export type AgentCapabilityFeature = (typeof AGENT_CAPABILITY_FEATURES)[number]
 
 /**
+ * What this app offers for each feature, feature for feature.
+ *
+ * **The Rust `host_offer` (`agent_runtime/capabilities.rs`) is the source, and this is a copy held
+ * to it by a test** — the same arrangement `AGENT_CAPABILITY_FEATURES` has with `HostFeature::ALL`,
+ * and for the same reason: one side is a program and the other is a window, and the only thing that
+ * keeps them the same is a test that reads both.
+ *
+ * It exists because a report needs a value on every row and this half has no "not known" arm: a
+ * host always knows what it offers, which is the whole point of {@link AgentCapabilityOffer}. A
+ * double that answered one arm for everything would be teaching a page that this app's half moves
+ * with a test's script, so the double reads this table instead.
+ */
+export const AGENT_CAPABILITY_HOST_OFFERS: Readonly<
+  Record<AgentCapabilityFeature, AgentCapabilityOffer>
+> = {
+  'session-resume': { status: 'command', command: 'agent_load_session' },
+  'session-list': { status: 'command', command: 'agent_list_sessions' },
+  // The engine advertises `session/resume` and this app calls `session/load` — two methods the
+  // schema separates, and only one of them has a caller here.
+  'session-resume-without-history': { status: 'nothing' },
+  'session-close': { status: 'command', command: 'agent_close_session' },
+  // The row this table's `nothing` arm exists for: measured served by the engine, advertised in its
+  // handshake, and reached by nothing in this build.
+  'session-fork': { status: 'nothing' },
+  'slash-commands': { status: 'control' },
+  'model-selection': { status: 'command', command: 'agent_set_config_option' },
+  'image-attachments': { status: 'control' },
+  'audio-attachments': { status: 'nothing' },
+  'session-config-options': { status: 'command', command: 'agent_set_config_option' },
+  'embedded-context': { status: 'control' },
+}
+
+/**
  * What the installation claims about a feature — `adapters::Capability`, arm for arm.
  *
  * A **claim**, not an answer: §3.4 makes the install declaration a start-time hint, and the
@@ -126,17 +159,37 @@ export type AgentCapabilityFinding =
   | { readonly status: 'unavailable' | 'unverified'; readonly detail: string }
 
 /**
- * One feature, with both halves of §3.4's capability row kept apart.
+ * What **this app** offers for one feature — `capabilities::HostOffer`, arm for arm.
  *
- * Two fields rather than one optimistic one: a page that merged them would be showing the
- * installation's claim as the engine's answer, which is exactly what the row's 「安装声明仅用于启动提示」
- * forbids. The finding is nested rather than intersected into this type so a consumer reads
- * `report.finding.status` and narrows a plain union.
+ * The third subject of §3.4's row, and the one neither of the other two is about: the declaration
+ * is what the pinned version was measured to do and the finding is what the engine reported, so a
+ * row carrying only those two says 「the engine can do this」 in words a reader takes for 「you can
+ * do this」. On the pinned engine that reading is wrong — `session/fork` and `session/resume` are
+ * advertised and this app calls neither — and the arms here are how that is said without the
+ * finding having to lie about the engine or the row having to be dropped.
+ *
+ * `command` is a name in `build.rs`'s manifest rather than a `true`, so 「this app can do it」 is a
+ * claim about the shipped command surface that a reader can go and check.
+ */
+export type AgentCapabilityOffer =
+  | { readonly status: 'command'; readonly command: string }
+  | { readonly status: 'control' }
+  | { readonly status: 'nothing' }
+
+/**
+ * One feature, with all three of §3.4's row's subjects kept apart.
+ *
+ * Three fields rather than one optimistic one: a page that merged any two of them would be showing
+ * one claim as another — the installation's start-time hint as the engine's answer, or either of
+ * those as this app's own ability. The finding is nested rather than intersected into this type so
+ * a consumer reads `report.finding.status` and narrows a plain union.
  */
 export interface AgentCapabilityReport {
   readonly feature: AgentCapabilityFeature
   readonly declared: AgentCapabilityDeclaration
   readonly finding: AgentCapabilityFinding
+  /** What this build does about it, whether or not a negotiation happened. */
+  readonly host: AgentCapabilityOffer
 }
 
 declare const sessionOwnership: unique symbol

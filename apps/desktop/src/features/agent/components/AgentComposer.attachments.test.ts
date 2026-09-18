@@ -27,6 +27,7 @@ import {
 } from '../../../platform/gateways/memory-agent'
 import {
   AGENT_CAPABILITY_FEATURES,
+  AGENT_CAPABILITY_HOST_OFFERS,
   type AgentCapabilityReport,
   type AgentSession,
 } from '../../../platform/gateways/agent-contracts'
@@ -86,6 +87,7 @@ function report(available: string[], refused: Record<string, string> = {}): Agen
   return AGENT_CAPABILITY_FEATURES.map((feature) => ({
     feature,
     declared: 'advertised' as const,
+    host: AGENT_CAPABILITY_HOST_OFFERS[feature],
     finding: available.includes(feature)
       ? ({ status: 'available' } as const)
       : feature in refused

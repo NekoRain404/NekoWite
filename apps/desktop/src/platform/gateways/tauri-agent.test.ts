@@ -27,6 +27,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
   AGENT_CAPABILITY_FEATURES,
+  AGENT_CAPABILITY_HOST_OFFERS,
   AGENT_PROMPT_ATTACHMENT_KINDS,
   AgentFailure,
   readAgentEvent,
@@ -716,6 +717,9 @@ function capabilityAnswer(
     feature,
     declared: 'unverified',
     finding: finding(feature),
+    // The host's third subject, from the contract's table — which is itself held to the Rust source
+    // by the `host_offer` case below, so a fixture that read it here cannot drift from the host.
+    host: AGENT_CAPABILITY_HOST_OFFERS[feature],
   }))
 }
 
@@ -1295,13 +1299,16 @@ describe('the capability report', () => {
       feature: 'image-attachments',
       declared: 'unverified',
       finding: { status: 'available' },
+      host: { status: 'control' },
     })
-    // The two halves stay two fields: a report that merged them could not show the case this row
-    // exists for — a declaration the engine's own answer contradicts.
+    // The three halves stay three fields: a report that merged the finding with the host's own half
+    // could not show the case the third one exists for — an engine that advertises something
+    // nothing in this build can ask it for.
     expect(reports.find((report) => report.feature === 'slash-commands')).toEqual({
       feature: 'slash-commands',
       declared: 'unverified',
       finding: { status: 'unverified', detail: 'slash-commands has not been negotiated' },
+      host: { status: 'control' },
     })
   })
 
@@ -1366,5 +1373,56 @@ describe('the capability report', () => {
       variants.map((variant) => spelling.get(variant)),
       'the contract’s feature list no longer matches the host’s',
     ).toEqual([...AGENT_CAPABILITY_FEATURES])
+  })
+
+  it('offers what the host offers, read off both sides', () => {
+    // `AGENT_CAPABILITY_HOST_OFFERS` is a copy of `host_offer` in `agent_runtime/capabilities.rs`,
+    // and this is what keeps it one: the host decides what this app offers, the window only renders
+    // it, and the arm that matters — `nothing` — is the one a stale copy would quietly get wrong,
+    // telling a reader that a feature the engine advertises is reachable here.
+    //
+    // The variant-to-feature spelling comes from `adapters/mod.rs`, the same authority the case
+    // above reads, because `capabilities.rs` matches on the Rust enum rather than on the wire name.
+    const directory = resolve(__dirname, '../../../src-tauri/src/agent_runtime')
+    const adapters = readFileSync(resolve(directory, 'adapters/mod.rs'), 'utf8')
+    const asStr = adapters.slice(adapters.indexOf('pub fn as_str(&self)'))
+    const spelling = new Map(
+      [...asStr.matchAll(/HostFeature::(\w+) => "([a-z-]+)"/g)].map(([, variant, name]) => [
+        variant,
+        name,
+      ]),
+    )
+
+    const source = readFileSync(resolve(directory, 'capabilities.rs'), 'utf8')
+    const start = source.indexOf('fn host_offer(')
+    expect(start, 'host_offer is not declared in capabilities.rs').toBeGreaterThan(-1)
+    const body = source.slice(start, source.indexOf('\n}', start))
+    // One arm per line group: `HostFeature::A | HostFeature::B => HostOffer::Control,`, and the
+    // `Command` arm carries its name in a braced field on the lines after the arrow.
+    const arms = [
+      ...body.matchAll(
+        /((?:HostFeature::\w+\s*(?:\|\s*)?)+)=>\s*HostOffer::(\w+)\s*,?\s*(?:\{\s*command:\s*"([^"]+)",?\s*\})?/g,
+      ),
+    ]
+    expect(arms.length, 'host_offer matched no arms').toBeGreaterThan(0)
+    const offered = new Map<string, unknown>()
+    for (const [, variants, arm, command] of arms) {
+      for (const [, variant] of variants!.matchAll(/HostFeature::(\w+)/g)) {
+        const feature = spelling.get(variant!)
+        expect(feature, `${variant} has no wire spelling`).toBeDefined()
+        expect(offered.has(feature!), `${feature} is matched twice`).toBe(false)
+        offered.set(
+          feature!,
+          arm === 'Command'
+            ? { status: 'command', command }
+            : { status: arm === 'Control' ? 'control' : 'nothing' },
+        )
+      }
+    }
+    // Every feature, or the parse quietly matched fewer arms than the function has and the
+    // equality below would be comparing a short table against a full one.
+    expect([...offered.keys()].sort()).toEqual([...AGENT_CAPABILITY_FEATURES].sort())
+
+    expect(Object.fromEntries(offered)).toEqual({ ...AGENT_CAPABILITY_HOST_OFFERS })
   })
 })

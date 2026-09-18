@@ -34,6 +34,12 @@
 //! `linux_capabilities::Finding` uses, for its reason (§7.2 「不宣称…」: a host may not report a
 //! capability as missing and leave the user to guess, nor report one as present while quietly
 //! substituting something).
+//!
+//! The fifth is the same rule seen from the other side, and it is [`HostOffer`]'s whole reason: two
+//! of those rules are about the engine, and neither is about the program the reader is holding. A
+//! row may therefore be honest about the engine and still mislead about this app — 「the engine can
+//! fork」 is true of the pinned engine and reads as 「you can fork」, which is false here. The third
+//! subject is carried beside the other two rather than folded into either.
 
 use agent_client_protocol::schema::v1::{
     AuthMethod, Implementation, InitializeResponse, LoadSessionResponse, NewSessionResponse,
@@ -342,7 +348,101 @@ pub enum Finding {
     Unverified { detail: String },
 }
 
-/// One feature, with both halves of §3.4's row kept apart.
+/// What **this app** offers for one feature — the third subject §3.4's row needs and neither of the
+/// other two is about.
+///
+/// [`Finding`] answers *what the engine reported* and [`Capability`] answers *what the pinned
+/// version was measured to do*. Neither is a statement about the program the user is holding, and a
+/// page that drew only those two is a page on which `available` reads as 「you can do this」. On the
+/// pinned engine that reading is wrong twice: the handshake advertises `session/fork` and
+/// `session/resume` (P0 §2.1), both come out [`Finding::Available`], and neither has a call in this
+/// crate (`grep -rn '"session/fork"' src/` → nothing; `acp_transport/calls.rs` names `session/load`
+/// and not `session/resume`). A user reading those two rows is reading the engine's ability and
+/// being told about this app's.
+///
+/// **So this is a third field rather than a fourth arm of [`Finding`].** Folding it in would make
+/// the report lie about the engine in the one direction the module exists to prevent — the engine
+/// *did* report it, and `Unavailable` would be this host answering for a process it just heard from
+/// — and a report that simply dropped the row instead is what [`HostFeature::ALL`] forbids. The
+/// three arrive side by side, and a page that shows all three can show the disagreement between
+/// them.
+///
+/// The arms are ids, not sentences: the page's copy tree owns the words a user reads, the same
+/// split [`super::commands`]' `HandshakeAbsent` makes and for the same reason — a prose field would
+/// put an English sentence in the middle of a Chinese page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "status",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum HostOffer {
+    /// **This app has a call**: `command`, a name in `build.rs`'s manifest, is the `agent_*` command
+    /// a window invokes to do it. The name is carried rather than a `true`, so the claim is
+    /// checkable against the surface it names instead of being an adjective — the test below holds
+    /// every one of these to `build.rs`'s list, which is what makes "this app can do it" a fact
+    /// about the shipped command surface rather than about this file.
+    Command { command: &'static str },
+    /// **The agent panel's own controls reach it** and no command of this app's is involved: the
+    /// composer's attachment intakes, the configuration row, the command menu. These are drawn from
+    /// this same report — `use-agent-composer-attachments` gates its intakes on the rows — so the
+    /// control and the row are the same fact seen twice rather than two claims that could drift.
+    Control,
+    /// **Nothing in this build acts on the feature.** Whatever the engine advertised, there is no
+    /// button, no command and no call: the row is a statement about the engine and there is nothing
+    /// on this side of the window to press. This is the arm the field exists for.
+    Nothing,
+}
+
+/// Which of the three things this app does about one feature.
+///
+/// A pure function of the feature, and that is a claim in itself: what this build offers is a fact
+/// about this build's source, so unlike the engine's answer it does not have to arrive from
+/// anywhere. Nothing here reads the negotiation, and a feature whose engine said no can still come
+/// out [`HostOffer::Command`] — the two are different questions and the arms must not be made to
+/// look like one.
+fn host_offer(feature: HostFeature) -> HostOffer {
+    match feature {
+        // `session/load` — reopening a session *with* its conversation — has a command of its own
+        // (`commands/agent_sessions.rs`), which is why this row and
+        // `SessionResumeWithoutHistory` below it do not share an answer: they are two wire methods
+        // and this build calls one of them.
+        HostFeature::SessionResume => HostOffer::Command {
+            command: "agent_load_session",
+        },
+        HostFeature::SessionList => HostOffer::Command {
+            command: "agent_list_sessions",
+        },
+        HostFeature::SessionClose => HostOffer::Command {
+            command: "agent_close_session",
+        },
+        // `session/resume` is **not** `session/load` despite the handshake advertising both in one
+        // group: the schema documents resume as the one that returns no previous messages, and no
+        // call in this crate names it. The app reopens sessions through `load`, which is the method
+        // whose answer a window can draw a conversation from.
+        HostFeature::SessionResumeWithoutHistory => HostOffer::Nothing,
+        // `session/fork`, and the row this field was added for: the pinned engine serves it (the
+        // lifecycle probe measures a fork being handed back and then served), the handshake
+        // advertises it, and this build has no call, no command and no control for it.
+        HostFeature::SessionFork => HostOffer::Nothing,
+        // The engine's own option list, set through `session/set_config_option` — one command, and
+        // it is what both of these rows are about: a session that offers options, and the model one
+        // among them.
+        HostFeature::SessionConfigOptions | HostFeature::ModelSelection => HostOffer::Command {
+            command: "agent_set_config_option",
+        },
+        HostFeature::SlashCommands
+        | HostFeature::ImageAttachments
+        | HostFeature::EmbeddedContext => HostOffer::Control,
+        // The engine said no to `promptCapabilities.audio` (P0 §2.1, and this build's own fixture
+        // reproduces it), and this app's composer has no audio intake either — `intake` handles two
+        // kinds, neither of them this one. Both halves are absent, which is not the row's defect
+        // but is worth the arm being explicit about.
+        HostFeature::AudioAttachments => HostOffer::Nothing,
+    }
+}
+
+/// One feature, with all three of §3.4's row's subjects kept apart.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CapabilityReport {
@@ -355,6 +455,11 @@ pub struct CapabilityReport {
     pub declared: Capability,
     /// What the negotiation established.
     pub finding: Finding,
+    /// What this app does about it — see [`HostOffer`]. **Not** folded into either of the two
+    /// above, and the one member of this struct that does not depend on the engine at all: it is
+    /// reported for every row whether or not a handshake happened, because the reader of a row that
+    /// says the engine can fork is owed the fact that nothing here can ask it to.
+    pub host: HostOffer,
 }
 
 /// Why a feature nothing reported is not available.
@@ -393,6 +498,10 @@ pub fn report(
                     detail: NO_NEGOTIATION.to_string(),
                 },
             },
+            // Outside the `match` above on purpose: the host's own half does not depend on the
+            // negotiation, and a caller that has no facts is the caller that most needs it.
+            // `readout_of` is that caller — the settings page before the first session.
+            host: host_offer(feature),
         })
         .collect()
 }
@@ -773,6 +882,124 @@ mod tests {
         );
         facts.commands_published(2);
         assert_eq!(facts.has_slash_completions(), Some(true));
+    }
+
+    /// Every command name `build.rs`'s manifest declares.
+    ///
+    /// Read out of the source rather than restated, for the reason `tests/command_surface_test.rs`
+    /// gives about the same list: a second copy would compare the manifest with itself. What this
+    /// file needs from it is not the whole surface but the *names*, so that a row claiming this app
+    /// can do something can be held to the list of things a window can actually reach.
+    fn declared_commands() -> Vec<String> {
+        let manifest = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("build.rs"),
+        )
+        .expect("build.rs declares the surface");
+        manifest
+            .split("const COMMANDS: &[&str] = &[")
+            .nth(1)
+            .and_then(|rest| rest.split("];").next())
+            .expect("build.rs's command list")
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                let name = line.strip_prefix('"')?.split('"').next()?;
+                (!name.is_empty()).then(|| name.to_string())
+            })
+            .collect()
+    }
+
+    /// The three rows where the engine and this app disagree, and the only test that fails when
+    /// [`HostOffer`] is not carried.
+    ///
+    /// These are the case the field exists for: the pinned engine's handshake advertises
+    /// `sessionCapabilities.fork` and `sessionCapabilities.resume` (P0 §2.1 measured both present),
+    /// so both rows come out [`Finding::Available`] — correctly, because that arm is about the
+    /// engine — and this build cannot fork a session or resume one without its messages. A report
+    /// that stopped at the finding would tell a user those two things work.
+    ///
+    /// The assertion is deliberately `== Finding::Available` **and** `== HostOffer::Nothing` on one
+    /// row: either half alone is defensible and the pair is the lie, so a test that checked the arm
+    /// without checking the finding would keep passing on the day the engine stopped advertising it
+    /// — at which point the row would be honest and this field would be saying nothing.
+    #[test]
+    fn the_rows_the_engine_offers_and_this_app_does_not_say_both() {
+        let facts = negotiated(&["model"], Some(2));
+        let rows = report(|_| Capability::Advertised, Some(&facts), Some("model"));
+        for feature in [
+            HostFeature::SessionFork,
+            HostFeature::SessionResumeWithoutHistory,
+        ] {
+            let row = row(&rows, feature);
+            assert_eq!(
+                row.finding,
+                Finding::Available,
+                "{} is no longer a row the engine advertises, so this test has stopped being the \
+                 case it was written for",
+                feature.as_str()
+            );
+            assert_eq!(
+                row.host,
+                HostOffer::Nothing,
+                "{}: the engine advertises it and nothing in this build acts on it, which is what \
+                 a reader of this row has to be told",
+                feature.as_str()
+            );
+        }
+        // And the other side of the same rule: a row this app *does* have a call for says so, so
+        // the arms above are a reading of the feature rather than an arm nothing can leave.
+        assert_eq!(
+            row(&rows, HostFeature::SessionClose).host,
+            HostOffer::Command {
+                command: "agent_close_session"
+            }
+        );
+        // The host's half does not depend on the negotiation, and the caller with no facts —
+        // `readout_of`, the settings page before the first session — is the one that most needs it.
+        let unnegotiated = report(|_| Capability::Advertised, None, None);
+        assert_eq!(
+            row(&unnegotiated, HostFeature::SessionFork).host,
+            HostOffer::Nothing
+        );
+    }
+
+    /// Every command a row claims is one the manifest declares, so 「this app can do it」 is a fact
+    /// about the shipped command surface rather than an adjective in this file.
+    ///
+    /// This is the direction the project has been bitten in five times — a thing built with no
+    /// caller — read from the report's side: a row that named a command nobody can reach would be
+    /// the same defect with a user in front of it, because the row is what tells them so. Renaming
+    /// or removing `agent_close_session` therefore fails here rather than leaving a claim the
+    /// window cannot satisfy.
+    #[test]
+    fn every_command_a_row_claims_is_one_the_manifest_declares() {
+        let declared = declared_commands();
+        assert!(
+            declared.iter().any(|name| name == "agent_list_sessions"),
+            "the manifest was read as {declared:?}, which does not look like the command list — \
+             a parse that found nothing would make every assertion below vacuous"
+        );
+        let rows = report(|_| Capability::Unverified, None, None);
+        let mut claimed = Vec::new();
+        for row in &rows {
+            if let HostOffer::Command { command } = row.host {
+                assert!(
+                    declared.iter().any(|name| name == command),
+                    "{} claims this build calls `{command}`, which the manifest does not declare — \
+                     a window cannot reach it",
+                    row.feature
+                );
+                claimed.push(command);
+            }
+        }
+        // The list is not empty, which is the other way this test could pass without saying
+        // anything: a `host_offer` that answered `Nothing` everywhere would satisfy the loop above.
+        assert_eq!(
+            claimed.len(),
+            5,
+            "five rows name a command; the arm they are on is what the loop above checks, so a \
+             sixth has to be added here deliberately: {claimed:?}"
+        );
     }
 
     #[test]

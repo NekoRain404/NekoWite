@@ -681,6 +681,11 @@ export const agent = {
                heading over an empty list reads as an answer — and the answer it reads as is "this
                engine can do nothing", which nobody gave. */
             empty: 'The backend answered with no capability rows. That is not the same answer as an engine that can do nothing: it is nothing having been reported for any feature.',
+            /* This app's own half, on the rows where the standing above it would otherwise be read
+               as this app's ability. The subject is spelled out for the reason `disagrees` spells
+               its own: the sentence above says what the *engine* reported, and a reader who took
+               this one for a qualification of it would be reading it backwards. */
+            hostNothing: 'This engine reports that it can do this, and nothing in this build can ask it to. There is no button, no command and no call for it here: the line above is about the engine, not about what you can do in this window.',
           },
           update: {
             label: 'Updates',
@@ -1762,6 +1767,10 @@ export const agent = {
             /* 一行都没有的报告。画在列表的位置上，因为一个标题配一张空列表会被读成一个答复——而它
                被读成的那句是「这个引擎什么都做不了」，这句话没有人说过。 */
             empty: '后端返回的报告里一行都没有。这和「这个引擎什么都做不了」不是同一个答复：它只是任何一项都还没有被报告过。',
+            /* 本应用自己这一半，画在那些不写出来就会被读成「你能用」的行上。句子里把主语写全，理由
+               和上面那句 disagrees 一样：上一行说的是引擎报告了什么，把它读成对上一行的补充说明就
+               正好读反了。 */
+            hostNothing: '该引擎报告它能做这件事，而本构建没有任何办法请它做。这里没有按钮、没有命令、也没有调用：上面那一行说的是引擎，不是你在本窗口里能做的事。',
           },
           update: {
             label: '更新',

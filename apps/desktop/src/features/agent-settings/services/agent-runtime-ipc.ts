@@ -43,6 +43,7 @@ import type {
   CapabilityStanding,
   DeclaredCapability,
   RuntimeAuthMethod,
+  RuntimeCapabilityOffer,
   RuntimeCapabilityRow,
   RuntimeHandshakeAbsent,
   RuntimeHandshakeState,
@@ -85,6 +86,16 @@ const ABSENCES: readonly RuntimeHandshakeAbsent[] = ['no-engine', 'not-yet']
  * `unverified` there would put a claim in the pinned version's file that nothing had written.
  */
 const DECLARED: readonly DeclaredCapability[] = ['advertised', 'not-advertised', 'unverified']
+
+/**
+ * The three arms of this app's own half — `capabilities::HostOffer`, listed once.
+ *
+ * Read as a closed set like the two above it, and it is the one that would otherwise fail *open*:
+ * an unrecognised status falling back to a "the app cannot do it" arm would put a sentence about
+ * this build under rows where it can, and falling back the other way would leave the row this
+ * member exists for drawing the engine's ability as the reader's.
+ */
+const OFFERS: readonly RuntimeCapabilityOffer['status'][] = ['command', 'control', 'nothing']
 
 /** The port, implemented over the window's IPC. */
 export function createAgentRuntimeClient(wire: AgentRuntimeWire): AgentRuntimeClient {
@@ -163,7 +174,26 @@ function row(value: unknown, index: number): RuntimeCapabilityRow {
     // A finding that answers has nothing to add; the two that refuse carry the engine's or the
     // runtime's own words, and a page that rendered neither would be refusing without saying why.
     detail: status === 'available' ? null : asString(finding['detail'], at('finding.detail')),
+    host: offer(record['host'], at('host')),
   }
+}
+
+/**
+ * This app's own half of the row, per arm.
+ *
+ * Per arm for the reason `handshake` is: `command` is only meaningful on the arm that carries it, so
+ * a `nothing` row arriving with one is a backend this build does not match rather than a row to
+ * repair. And **a row with no `host` at all is a rejection**, not a row whose member is missing —
+ * the field exists because a page that draws the finding without it tells the reader the engine's
+ * ability is this app's, and defaulting it here would be this window choosing which of the two to
+ * say.
+ */
+function offer(value: unknown, what: string): RuntimeCapabilityOffer {
+  const record = asRecord(value, what)
+  const status = oneOf(record['status'], OFFERS, `${what}.status`)
+  return status === 'command'
+    ? { status, command: asString(record['command'], `${what}.command`) }
+    : { status }
 }
 
 /**

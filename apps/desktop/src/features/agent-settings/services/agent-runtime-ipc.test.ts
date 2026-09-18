@@ -47,7 +47,12 @@ function readout(overrides: Record<string, unknown> = {}): Record<string, unknow
       authMethods: [{ id: 'fake-login', name: 'Fake login' }],
     },
     capabilities: [
-      { feature: 'session-list', declared: 'advertised', finding: { status: 'available' } },
+      {
+        feature: 'session-list',
+        declared: 'advertised',
+        finding: { status: 'available' },
+        host: { status: 'command', command: 'agent_list_sessions' },
+      },
       {
         feature: 'audio-attachments',
         declared: 'not-advertised',
@@ -55,11 +60,13 @@ function readout(overrides: Record<string, unknown> = {}): Record<string, unknow
           status: 'unavailable',
           detail: "the engine's handshake does not advertise `promptCapabilities.audio`",
         },
+        host: { status: 'nothing' },
       },
       {
         feature: 'model-selection',
         declared: 'advertised',
         finding: { status: 'unverified', detail: 'no session response has been read' },
+        host: { status: 'command', command: 'agent_set_config_option' },
       },
     ],
     ...overrides,
@@ -101,22 +108,31 @@ describe('the runtime read', () => {
         authMethods: [{ id: 'fake-login', name: 'Fake login' }],
       },
       // The backend's `Finding` arms, as the page's three standings — and the declaration beside
-      // them, read into its own member rather than folded into the standing. The two halves are
-      // two claims: `declared` is what this build has on file about the version it was measured
-      // against, and the page draws it as such wherever the two disagree.
+      // them, read into its own member rather than folded into the standing. The three are three
+      // claims: `declared` is what this build has on file about the version it was measured
+      // against, `standing` is what this runtime reported, and `host` is what this app does about
+      // it — which no engine's answer can move.
       capabilities: [
-        { feature: 'session-list', declared: 'advertised', standing: 'advertised', detail: null },
+        {
+          feature: 'session-list',
+          declared: 'advertised',
+          standing: 'advertised',
+          detail: null,
+          host: { status: 'command', command: 'agent_list_sessions' },
+        },
         {
           feature: 'audio-attachments',
           declared: 'not-advertised',
           standing: 'not-advertised',
           detail: "the engine's handshake does not advertise `promptCapabilities.audio`",
+          host: { status: 'nothing' },
         },
         {
           feature: 'model-selection',
           declared: 'advertised',
           standing: 'unverified',
           detail: 'no session response has been read',
+          host: { status: 'command', command: 'agent_set_config_option' },
         },
       ],
     })
@@ -197,6 +213,37 @@ describe('the runtime read', () => {
       readout({ capabilities: [{ feature: 'x', finding: { status: 'available' } }] }),
     )
     await expect(port.read()).rejects.toThrow(/declared/)
+  })
+
+  it('refuses a row that carries no host offer at all', async () => {
+    // The third subject, and the one a default here would be worst on: this member exists so a row
+    // the engine advertises is not read as one this app can use, and a row read without it would
+    // leave the page drawing the engine's ability as the reader's — the exact reading §7.2
+    // 「不能让按钮看起来可用」 forbids. `unverified` is the file's arm, and this member has none:
+    // a host always knows what it offers.
+    const { port } = client(
+      readout({ capabilities: [{ feature: 'x', declared: 'advertised', finding: { status: 'available' } }] }),
+    )
+    await expect(port.read()).rejects.toThrow(/host/)
+  })
+
+  it('refuses a host offer whose status is not one of the three', async () => {
+    // Read as a closed set for the reason `finding` is, and the failure is worse here: an
+    // unrecognised arm falling back to 「this app cannot do it」 would put a sentence about this
+    // build under rows where it can.
+    const { port } = client(
+      readout({
+        capabilities: [
+          {
+            feature: 'x',
+            declared: 'advertised',
+            finding: { status: 'available' },
+            host: { status: 'maybe' },
+          },
+        ],
+      }),
+    )
+    await expect(port.read()).rejects.toThrow(/host/)
   })
 
   it('refuses a nullable field sent as an absent member rather than as null', async () => {

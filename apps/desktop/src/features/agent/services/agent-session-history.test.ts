@@ -9,7 +9,10 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import { setLocale } from '../../../i18n'
-import { AGENT_CAPABILITY_FEATURES } from '../../../platform/gateways/agent-contracts'
+import {
+  AGENT_CAPABILITY_FEATURES,
+  AGENT_CAPABILITY_HOST_OFFERS,
+} from '../../../platform/gateways/agent-contracts'
 import type {
   AgentCapabilityFinding,
   AgentCapabilityReport,
@@ -30,6 +33,7 @@ function report(finding: AgentCapabilityFinding): AgentCapabilityReport[] {
   return AGENT_CAPABILITY_FEATURES.map((feature) => ({
     feature,
     declared: 'unverified' as const,
+    host: AGENT_CAPABILITY_HOST_OFFERS[feature],
     finding:
       feature === 'session-list'
         ? finding
@@ -43,6 +47,7 @@ function reportForClose(finding: AgentCapabilityFinding): AgentCapabilityReport[
   return AGENT_CAPABILITY_FEATURES.map((feature) => ({
     feature,
     declared: 'unverified' as const,
+    host: AGENT_CAPABILITY_HOST_OFFERS[feature],
     finding:
       feature === 'session-close'
         ? finding

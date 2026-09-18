@@ -57,7 +57,13 @@ function readout(overrides: Partial<AgentRuntimeReadout> = {}): AgentRuntimeRead
       authMethods: [{ id: 'opencode-login', name: 'Sign in to OpenCode' }],
     },
     capabilities: [
-      { feature: 'session-list', declared: 'advertised', standing: 'advertised', detail: null },
+      {
+        feature: 'session-list',
+        declared: 'advertised',
+        standing: 'advertised',
+        detail: null,
+        host: { status: 'command', command: 'agent_list_sessions' },
+      },
     ],
     ...overrides,
   }
@@ -229,6 +235,7 @@ describe('the two halves of a capability report', () => {
             declared: 'advertised',
             standing: 'unverified',
             detail: 'no session response has been read',
+            host: { status: 'command', command: 'agent_set_config_option' },
           },
         ],
       }),
@@ -249,18 +256,26 @@ describe('the two halves of a capability report', () => {
     await render(
       readout({
         capabilities: [
-          { feature: 'session-list', declared: 'advertised', standing: 'advertised', detail: null },
+          {
+            feature: 'session-list',
+            declared: 'advertised',
+            standing: 'advertised',
+            detail: null,
+            host: { status: 'command', command: 'agent_list_sessions' },
+          },
           {
             feature: 'audio-attachments',
             declared: 'not-advertised',
             standing: 'not-advertised',
             detail: 'the engine said no',
+            host: { status: 'nothing' },
           },
           {
             feature: 'slash-commands',
             declared: 'unverified',
             standing: 'unverified',
             detail: 'nothing has been negotiated',
+            host: { status: 'control' },
           },
         ],
       }),
@@ -285,5 +300,94 @@ describe('a report that arrives with no rows', () => {
     expect(el('runtime-capabilities-empty')).not.toBeNull()
     expect(el('runtime-capabilities-empty')?.textContent).toContain('no capability rows')
     expect(document.querySelector('.runtime-capabilities ul.runtime-rows')).toBeNull()
+  })
+})
+
+/**
+ * This app's own half of a row — and the case the field was added for.
+ *
+ * `standing: 'advertised'` is a true statement about the engine and reads as a true statement about
+ * *this window*. On the pinned engine the two part company twice: the handshake advertises
+ * `session/fork` and `session/resume`, and this build calls neither (`agent_runtime/capabilities.rs`
+ * `host_offer` is where that is written down). A page that drew the standing alone told a reader
+ * those two things worked.
+ *
+ * The rule the cases below hold is the one `declarationNote` already follows, one subject over:
+ * draw it where it says something the line above it does not, and nowhere else.
+ */
+describe('what this app offers, drawn beside what the engine reported', () => {
+  const forked = readout({
+    capabilities: [
+      {
+        feature: 'session-fork',
+        declared: 'advertised',
+        standing: 'advertised',
+        detail: null,
+        host: { status: 'nothing' },
+      },
+    ],
+  })
+
+  it('says so on a row the engine reported and this build cannot act on', async () => {
+    await render(forked)
+
+    const note = el('runtime-capability-session-fork')?.querySelector('[data-host]')
+    expect(note?.getAttribute('data-host')).toBe('nothing')
+    // The sentence names both subjects, because the failure it prevents is a reader taking it for a
+    // qualification of the standing above it — or taking the standing for this app's ability.
+    expect(note?.textContent).toContain('This engine reports that it can do this')
+    expect(note?.textContent).toContain('nothing in this build can ask it to')
+  })
+
+  it('draws nothing at all on a row this app can do', async () => {
+    // The nine of eleven. `command` and `control` are what the wire carries, and what the page does
+    // with them is nothing: a row that drew "this app has a call for this" would be a second line
+    // under every row, which is the noise `declarationNote` refuses one subject over.
+    await render(
+      readout({
+        capabilities: [
+          {
+            feature: 'session-close',
+            declared: 'advertised',
+            standing: 'advertised',
+            detail: null,
+            host: { status: 'command', command: 'agent_close_session' },
+          },
+          {
+            feature: 'slash-commands',
+            declared: 'advertised',
+            standing: 'advertised',
+            detail: null,
+            host: { status: 'control' },
+          },
+        ],
+      }),
+    )
+
+    for (const feature of ['session-close', 'slash-commands']) {
+      expect(el(`runtime-capability-${feature}`)?.querySelector('[data-host]'), feature).toBeNull()
+    }
+  })
+
+  it('draws nothing on a row where the engine already said no', async () => {
+    // `audio-attachments` today: the engine declined it and this app has no intake for it, so the
+    // row has two absences and neither is news. Both conditions are required, and this is the arm
+    // that says so — a page that drew the app's half whenever it was `nothing` would put a sentence
+    // under a row whose standing is already the whole answer, where it reads as a qualification.
+    await render(
+      readout({
+        capabilities: [
+          {
+            feature: 'audio-attachments',
+            declared: 'not-advertised',
+            standing: 'not-advertised',
+            detail: 'the engine said no',
+            host: { status: 'nothing' },
+          },
+        ],
+      }),
+    )
+
+    expect(el('runtime-capability-audio-attachments')?.querySelector('[data-host]')).toBeNull()
   })
 })

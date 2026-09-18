@@ -63,6 +63,7 @@ export {
 
 export {
   AGENT_CAPABILITY_FEATURES,
+  AGENT_CAPABILITY_HOST_OFFERS,
   AGENT_RECOVERY_REFUSALS,
   AGENT_SESSION_STATES,
   isAgentSessionState,
@@ -71,6 +72,7 @@ export type {
   AgentCapabilityDeclaration,
   AgentCapabilityFeature,
   AgentCapabilityFinding,
+  AgentCapabilityOffer,
   AgentCapabilityReport,
   AgentChangeRecovery,
   AgentGateway,

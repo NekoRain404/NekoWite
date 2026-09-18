@@ -22,6 +22,7 @@
 
 import {
   AGENT_CAPABILITY_FEATURES,
+  AGENT_CAPABILITY_HOST_OFFERS,
   AgentFailure,
   type AgentCapabilityReport,
   type AgentChangeRecovery,
@@ -612,6 +613,10 @@ export function createMemoryAgentGateway(options: MemoryAgentOptions): MemoryAge
         feature,
         declared: 'unverified',
         finding: declared[feature] ?? unverifiedCapability(feature),
+        // From the contract's table rather than from an option: what this app offers is a fact
+        // about this build's own command surface, and a row whose `host` moved with a test's script
+        // would be teaching a page that this app's half is the engine's to report.
+        host: AGENT_CAPABILITY_HOST_OFFERS[feature],
       }))
     },
 

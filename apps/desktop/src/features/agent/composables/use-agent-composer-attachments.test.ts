@@ -11,9 +11,10 @@
  * So the assertion here is the attachment itself, deep-equal, and specifically its `kind`.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type {
-  AgentCapabilityFeature,
-  AgentCapabilityReport,
+import {
+  AGENT_CAPABILITY_HOST_OFFERS,
+  type AgentCapabilityFeature,
+  type AgentCapabilityReport,
 } from '../../../platform/gateways/agent-contracts'
 import { setLocale } from '../../../i18n'
 import { onNotify } from '../../../services/errors'
@@ -40,6 +41,7 @@ function report(...features: AgentCapabilityFeature[]): AgentCapabilityReport[] 
     feature,
     declared: 'advertised' as const,
     finding: { status: 'available' } as const,
+    host: AGENT_CAPABILITY_HOST_OFFERS[feature],
   }))
 }
 

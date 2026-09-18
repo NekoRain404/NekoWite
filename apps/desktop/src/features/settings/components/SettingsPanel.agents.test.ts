@@ -228,7 +228,12 @@ function runtimeReadout(): unknown {
       authMethods: [{ id: 'opencode-login', name: 'Sign in to OpenCode' }],
     },
     capabilities: [
-      { feature: 'session-list', declared: 'advertised', finding: { status: 'available' } },
+      {
+        feature: 'session-list',
+        declared: 'advertised',
+        finding: { status: 'available' },
+        host: { status: 'command', command: 'agent_list_sessions' },
+      },
       {
         feature: 'model-selection',
         declared: 'advertised',
@@ -236,6 +241,7 @@ function runtimeReadout(): unknown {
           status: 'unverified',
           detail: 'no session response has been read: the engine has not yet been asked what it offers here',
         },
+        host: { status: 'command', command: 'agent_set_config_option' },
       },
     ],
   }

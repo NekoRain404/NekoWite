@@ -284,7 +284,12 @@ describe('what a paste or a drop carries', () => {
 describe('what the engine’s report licenses', () => {
   /** One row of a report, about images unless the case says otherwise. */
   function row(finding: AgentCapabilityReport['finding']): AgentCapabilityReport {
-    return { feature: 'image-attachments', declared: 'advertised', finding }
+    return {
+      feature: 'image-attachments',
+      declared: 'advertised',
+      finding,
+      host: { status: 'control' },
+    }
   }
 
   /** The other feature's row, which is not this feature's. */

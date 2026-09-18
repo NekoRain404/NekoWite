@@ -26,6 +26,7 @@ import type {
   AgentCapabilityDeclaration,
   AgentCapabilityFeature,
   AgentCapabilityFinding,
+  AgentCapabilityOffer,
   AgentCapabilityReport,
   AgentChangeRecovery,
   AgentSessionHistory,
@@ -253,18 +254,46 @@ export function readCapabilityReports(raw: unknown): AgentCapabilityReport[] | n
       record.declared,
     )
     const finding = readCapabilityFinding(record.finding)
-    if (!feature || !declared || !finding) return null
+    const host = readCapabilityOffer(record.host)
+    if (!feature || !declared || !finding || !host) return null
     // Twice for one feature is two answers to one question, and there is no rule here for which
     // one a page should believe.
     if (seen.has(feature)) return null
     seen.add(feature)
-    reports.push({ feature, declared, finding })
+    reports.push({ feature, declared, finding, host })
   }
   // The report is one row per feature the contract knows, or it is not a report this window can
   // read. A short one would reach a page as "these are the features", which is the omission §3.4's
   // row and §7.2 forbid — and a rejection is the one outcome a page can render as "unreadable"
   // instead of as a fact about the engine.
   return AGENT_CAPABILITY_FEATURES.every((feature) => seen.has(feature)) ? reports : null
+}
+
+/**
+ * What this app offers for one feature — the row's third subject, read per arm.
+ *
+ * Per arm for the reason {@link readCapabilityReports} is strict: `command` is only meaningful on
+ * the arm that carries it, so a `nothing` row arriving with one is a host this build does not
+ * match rather than a row to repair. **A row with no `host` at all is a rejection**, not a row
+ * with the member missing — the whole point of the field is that a page which draws the finding
+ * without it tells the reader the engine's ability is this app's, and defaulting it here would be
+ * this window choosing which of the two to say.
+ */
+function readCapabilityOffer(raw: unknown): AgentCapabilityOffer | null {
+  const record = asRecord(raw)
+  if (!record) return null
+  switch (record.status) {
+    case 'command': {
+      const command = nonEmpty(record.command)
+      return command ? { status: 'command', command } : null
+    }
+    case 'control':
+      return { status: 'control' }
+    case 'nothing':
+      return { status: 'nothing' }
+    default:
+      return null
+  }
 }
 
 /**
