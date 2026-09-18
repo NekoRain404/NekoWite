@@ -34,7 +34,7 @@ let instances = 0
  * popup follows the recipe `ui/ContextMenu.vue` established — same surface,
  * radius, shadow, placement, dismissal and motion rungs. (Not the same code:
  * ContextMenu sits in the frozen `ui/` surface, so its placement and dismissal
- * are ported below.)
+ * are ported beside this file, in `use-select-placement.ts`.)
  *
  * **Where the popup goes, and why it does not simply render here.** It is teleported out of the
  * host's subtree: `popupHostOf` (`popup-host.ts`, which seven surfaces ask) is where it lands, and
@@ -53,6 +53,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ChevronDown } from 'lucide-vue-next'
 import { modalStack } from '../services/modal-stack'
 import { popupHostOf } from './popup-host'
+import { useSelectPlacement } from './use-select-placement'
 
 const props = defineProps<{
   /** The chosen value. Picking a row emits the new one. */
@@ -66,34 +67,28 @@ const emit = defineEmits<{
   (e: 'update:modelValue', value: string | number): void
 }>()
 
-/** What a popup is placed *from* rather than to: enough width to exist, and no ceiling — a box
- *  without one is what {@link measurePlacement} has to read to learn its content's width. `null`
- *  and not `Infinity`, because `max-width: Infinitypx` is not a value. */
-const unplaced = () => ({
-  left: 0,
-  top: 0,
-  minWidth: 180,
-  maxWidth: null as number | null,
-  drop: 'down' as 'down' | 'up',
-})
-
 /** Whether the list is up. The travel itself is the stylesheet's: `<Transition>`
  *  stages the two class sets below, and the global prefers-reduced-motion rule
  *  in `styles/motion.css` is what shortens them for a user who asked for less. */
 const open = ref(false)
 /** The row `Enter` would take, as an index into `options`. */
 const activeIndex = ref(0)
-/** Where the popup was put, and which way it had to open. `drop` is not
- *  geometry the component uses — it is what tells the stylesheet which edge of
- *  the popup is the one touching the trigger, so the arrival can come from there
- *  and the scale can grow out of it.
- *
- *  `minWidth`/`maxWidth` are the popup's own bounds, *measured* rather than declared — see
- *  {@link measurePlacement} for the two numbers and for why the stylesheet holds neither. */
-const pos = ref(unplaced())
 
 const triggerEl = ref<HTMLButtonElement | null>(null)
 const popupEl = ref<HTMLElement | null>(null)
+
+/**
+ * Where the popup goes and what keeps it there — the measurement, the follow loop, the listeners
+ * that re-place it, and the dismissal a press outside both boxes is. `use-select-placement.ts` says
+ * why that is a subject of its own, and what it does *not* own: `open` is read out to it, and a
+ * press outside comes back as this component's own `hide()`.
+ */
+const placement = useSelectPlacement({
+  trigger: triggerEl,
+  popup: popupEl,
+  open,
+  close: hide,
+})
 
 /**
  * What the popup's `<Teleport>` is aimed at: the trigger's nearest `.shell`, or
@@ -124,200 +119,11 @@ const selectedLabel = computed(() => {
 const enabledIndexes = (): number[] =>
   props.options.flatMap((option, index) => (option.disabled ? [] : [index]))
 
-/**
- * Put the popup against its trigger, inside the viewport: below the control,
- * flipped above when that overflows, nudged sideways to fit.
- *
- * Synchronous, and that is what {@link followTrigger} needs — one loop, one placement in flight —
- * so the measuring half is separated from the `nextTick` that waits for the popup to exist, which
- * {@link place} keeps.
- */
-function measurePlacement(): void {
-  const trigger = triggerEl.value
-  const popup = popupEl.value
-  if (!trigger || !popup) return
-  const pad = 8
-  const anchor = trigger.getBoundingClientRect()
-  // The room the window gives a list — the window less the same pad it keeps from either edge — and
-  // the control's own width, clamped into it. Those two are the whole of the popup's width rule:
-  // never narrower than the control it belongs to, never wider than the window it is in. The
-  // stylesheet declares neither, and the one that used to be there (`max-width: 280px`) was not a
-  // ceiling but a second, smaller width — measured in Chromium at 1280x800 through
-  // `e2e/select-popup-width.spec.ts`, every select in the settings dialog opened its list at
-  // **280px inside a 526px control**, with the labels it exists to show ellipsised at the same
-  // character the closed control had already ellipsised them at, and it stayed 280 while the user
-  // dragged the dialog wider (the control went 526 -> 606). The floor's own inner 180 is for a
-  // control *smaller* than a list can usefully be.
-  const ceiling = Math.max(180, window.innerWidth - pad * 2)
-  const floor = Math.min(Math.max(180, anchor.width), ceiling)
-  // The box, not the rect: the rect is measured through the enter transition. And the clamp below
-  // is against the width the popup will *have* — its content's, once the floor and the ceiling have
-  // had their say — because the content's alone is the number that crosses the right edge.
-  const width = Math.min(Math.max(popup.offsetWidth, floor), ceiling)
-  const height = popup.offsetHeight
-  const below = anchor.bottom + 4
-  const above = anchor.top - height - 4
-  // Which way it opened, decided once and carried through to the stylesheet: the
-  // popup tells the user where it came from with the pixels it travels, and near
-  // the bottom of the window that direction is *up*. A popup that flipped to sit
-  // above its trigger while still rising into place from below would be
-  // arriving from a gap it does not occupy — the same defect the heading menu
-  // and the context menu were both moved off.
-  const dropsDown = below + height <= window.innerHeight - pad || above < pad
-  pos.value = {
-    left: Math.min(Math.max(pad, anchor.left), Math.max(pad, window.innerWidth - width - pad)),
-    top: dropsDown
-      ? Math.min(below, Math.max(pad, window.innerHeight - height - pad))
-      : above,
-    minWidth: floor,
-    maxWidth: ceiling,
-    drop: dropsDown ? 'down' : 'up',
-  }
-}
-
-async function place(): Promise<void> {
-  await nextTick()
-  measurePlacement()
-}
-
-/**
- * The trigger, followed while it moves — `ComboBox.vue`'s shape, where it was measured first, and
- * the same blind spot this file and `use-detached-popup.ts` both had.
- *
- * The trigger can move *without* either of the two things this component watched — the window
- * resizing, anything scrolling — and a `ResizeObserver` cannot see it either, because `scale` and
- * `translate` leave every number of a box unchanged. The settings pages arrive through exactly that
- * spring (`SettingsPanel.vue`'s page swap), so a press landing while the page is still on its way
- * in is placed against a trigger that goes on moving. `e2e/select-popup-scope.spec.ts` is where
- * that was measured and where the numbers live.
- *
- * So the rectangle is read once a frame, and the loop stops as soon as two frames agree — three
- * reads for an open with nothing moving, and nothing once the trigger has arrived. The stop is the
- * rectangle rather than a timeout, so no duration of the design system is repeated here; two
- * agreeing frames rather than one, because a spring has a frame of near-zero movement at its peak.
- *
- * Re-armed by {@link watchMotion}, and that half is not a refinement: a press made *before* the
- * spring has begun leaves the rectangle still for the two frames this loop allows, so the loop has
- * stopped by the time the movement starts. A movement beginning later announces itself, and the
- * loop is re-armed from there rather than kept alive by a timer guessing an engine's delay.
- */
-let follow = 0
-/** The rectangle as the last frame read it, and how many frames in a row have agreed. */
-let watched = ''
-let still = 0
-
-/** The trigger's placement-relevant geometry as a string: only the numbers {@link measurePlacement}
- *  reads, so a change in a field nothing is placed from cannot keep the loop alive. */
-function rectKey(): string {
-  const rect = triggerEl.value?.getBoundingClientRect()
-  return rect === undefined ? '' : `${rect.top}:${rect.left}:${rect.width}:${rect.height}`
-}
-
-function stopFollowing(): void {
-  if (follow !== 0) cancelAnimationFrame(follow)
-  follow = 0
-  watched = ''
-  still = 0
-}
-
-function followTrigger(): void {
-  if (follow !== 0) return
-  watched = rectKey()
-  still = 0
-  const step = (): void => {
-    follow = 0
-    // The list may have closed inside the frame (Escape, a commit, a press outside), and a frame
-    // spent placing a popup that is gone is a write to the *next* one's position.
-    if (!open.value) return
-    const now = rectKey()
-    if (now !== watched) {
-      watched = now
-      still = 0
-      measurePlacement()
-    } else {
-      // Two agreeing frames, not one: a spring has a frame of near-zero movement at its peak, and a
-      // loop that stopped there would leave the list at the wrong end of the overshoot.
-      still += 1
-      if (still >= 2) return
-    }
-    follow = requestAnimationFrame(step)
-  }
-  follow = requestAnimationFrame(step)
-}
-
-/**
- * A movement starting under an open list, taken from the DOM rather than waited for.
- *
- * `transitionrun` and `animationstart` bubble, so one listener on the document hears every arrival
- * in it, and the filter is what keeps that from being a re-place per hover colour: only a target
- * that is the trigger itself or a box *above* it can move the trigger. `transitionrun` rather than
- * `transitionstart`: it fires when the transition is created, before any delay.
- */
-function onMotionStart(event: Event): void {
-  if (!open.value) return
-  const target = event.target
-  const trigger = triggerEl.value
-  if (!(target instanceof Element) || trigger === null) return
-  if (target !== trigger && !target.contains(trigger)) return
-  followTrigger()
-}
-
-function watchMotion(watching: boolean): void {
-  if (watching) {
-    document.addEventListener('transitionrun', onMotionStart)
-    document.addEventListener('animationstart', onMotionStart)
-  } else {
-    document.removeEventListener('transitionrun', onMotionStart)
-    document.removeEventListener('animationstart', onMotionStart)
-  }
-}
-
-function onPointerDown(e: PointerEvent): void {
-  const target = e.target as Node
-  // The trigger is not "outside": its own click handler owns the toggle, and
-  // dismissing here as well would close and immediately reopen the list.
-  if (triggerEl.value?.contains(target)) return
-  if (popupEl.value?.contains(target)) return
-  hide()
-}
-
-function onViewportChange(): void {
-  // Repositioned rather than dismissed, unlike ContextMenu: that one is anchored
-  // to a point the user clicked and scrolling means it has moved on, while a
-  // select belongs to a control still on screen — closing it as a pane scrolled
-  // under it would lose the list the user was reading.
-  if (open.value) void place()
-}
-
-function watchViewport(watching: boolean): void {
-  // Written out rather than dispatched through `document[watching ? 'add' :
-  // 'remove'](...)`: the computed method defeats overload resolution, and
-  // `onPointerDown` takes a `PointerEvent`, which is not assignable to the
-  // generic `EventListener` its sibling handlers satisfy. Explicit branches
-  // typecheck without a cast and say the same thing.
-  if (watching) {
-    document.addEventListener('pointerdown', onPointerDown, true)
-    window.addEventListener('resize', onViewportChange)
-    window.addEventListener('scroll', onViewportChange, true)
-  } else {
-    document.removeEventListener('pointerdown', onPointerDown, true)
-    window.removeEventListener('resize', onViewportChange)
-    window.removeEventListener('scroll', onViewportChange, true)
-  }
-}
-
 function show(): void {
   if (open.value) return
-  // The placement is forgotten before the list is drawn again, and that is not a tidy-up: `pos`
-  // outlives the popup, Vue renders the next one with the *last* `min-width` on its first frame,
-  // and the first `measurePlacement` is usually the only one (the follow loop re-places a *moving*
-  // trigger, and a list opened at rest has none). So the loop used to read a box the component had
-  // sized for a previous, different trigger — invisible while the stylesheet pinned the width at
-  // 280px, and a visible misplacement the moment the floor followed the control: measured through
-  // `e2e/settings-resize.spec.ts`, the AI provider's list opened **87px to the left of its
-  // control**, a `min-width: 908px` from a wider dialog entering the left clamp. Forgetting it
-  // makes the placement idempotent, which is the property that was missing.
-  pos.value = unplaced()
+  // Not a tidy-up — `forget()` records what happens without it, and it is a placement that outlives
+  // the popup rather than a stale style.
+  placement.forget()
   open.value = true
   // Only ever opens on a selectable row: a value that is (or has become) a
   // disabled option must not be what Enter would commit.
@@ -330,12 +136,7 @@ function show(): void {
   // window-level handler (useModalEscape, capture phase, ahead of this trigger)
   // closes the whole dialog out from under the open list.
   escapeToken = modalStack.claimModal('select-menu')
-  watchViewport(true)
-  watchMotion(true)
-  void place()
-  // And the trigger is followed from here, because a movement that began before the press is one no
-  // event of ours will announce — see `followTrigger()`.
-  followTrigger()
+  placement.start()
 }
 
 function hide(): void {
@@ -343,9 +144,7 @@ function hide(): void {
   open.value = false
   modalStack.releaseModal(escapeToken)
   escapeToken = null
-  watchViewport(false)
-  watchMotion(false)
-  stopFollowing()
+  placement.stop()
 }
 
 function commit(index: number): void {
@@ -432,9 +231,7 @@ watch(activeIndex, () => {
 onBeforeUnmount(() => {
   modalStack.releaseModal(escapeToken)
   escapeToken = null
-  watchViewport(false)
-  watchMotion(false)
-  stopFollowing()
+  placement.stop()
 })
 </script>
 
@@ -464,14 +261,16 @@ onBeforeUnmount(() => {
           :id="listId"
           ref="popupEl"
           class="select-popup"
-          :class="{ 'is-above': pos.drop === 'up' }"
+          :class="{ 'is-above': placement.pos.value.drop === 'up' }"
           :style="{
-            left: `${pos.left}px`,
-            top: `${pos.top}px`,
-            minWidth: `${pos.minWidth}px`,
+            left: `${placement.pos.value.left}px`,
+            top: `${placement.pos.value.top}px`,
+            minWidth: `${placement.pos.value.minWidth}px`,
             // `undefined` and not `null`: Vue removes a style property for either, and only
             // `undefined` is a `StyleValue`.
-            maxWidth: pos.maxWidth === null ? undefined : `${pos.maxWidth}px`,
+            maxWidth: placement.pos.value.maxWidth === null
+              ? undefined
+              : `${placement.pos.value.maxWidth}px`,
           }"
           role="listbox"
         >
@@ -535,10 +334,11 @@ onBeforeUnmount(() => {
   /* Above the modal layer (10000) — a dropdown opens from inside the settings
      dialog — and below the toast layer (11000). */
   z-index: 10001;
-  /* No `max-width`. It is a measurement rather than a declaration (`measurePlacement`'s `floor` and
-     `ceiling`), and a `280px` used to sit here as a second, smaller answer to the same question —
-     see that function for what it cost. `max-height` stays, and it is a *different* decision: a
-     list longer than 280px scrolls, which is the number `e2e/popup-list-room.spec.ts` reads. */
+  /* No `max-width`. It is a measurement rather than a declaration (`use-select-placement.ts`'s
+     `floor` and `ceiling`, i.e. `measurePlacement`), and a `280px` used to sit here as a second,
+     smaller answer to the same question — see that function for what it cost. `max-height` stays,
+     and it is a *different* decision: a list longer than 280px scrolls, which is the number
+     `e2e/popup-list-room.spec.ts` reads. */
   max-height: 280px;
   overflow-y: auto;
   padding: 5px;
@@ -547,7 +347,7 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--app-elevated) 96%, var(--app-panel));
   box-shadow: var(--app-shadow-menu);
   /* The edge the trigger is on is the edge it grows out of, and which edge that
-     is comes from `pos.drop` — the placement the component measured. Set on the
+     is comes from `placement.pos.value.drop` — the placement the component measured. Set on the
      base rule rather than on the transition classes, which Vue removes a frame
      into the transition, where the origin would snap to the centre mid-flight. */
   transform-origin: top center;

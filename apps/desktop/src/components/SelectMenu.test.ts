@@ -273,6 +273,27 @@ describe('SelectMenu', () => {
     expect(popup()?.parentElement).toBe(document.body)
   })
 
+  it('writes the measured placement onto the popup as inline coordinates', async () => {
+    mount({ value: 'a' })
+    await press('Enter')
+
+    // The placement is measured in `use-select-placement.ts` and comes back as a ref *nested* in
+    // that composable's return value, which a template does not unwrap: reading
+    // `placement.pos.left` rather than `placement.pos.value.left` binds the string `undefinedpx`,
+    // which is not a value, so the property is dropped and the list draws wherever the teleport
+    // left it — at no trigger's edge, and with the whole of the placement code still exercised.
+    // This is the case that ties the two files together, and nothing else in this suite sees it.
+    const style = popup()!.style
+    // The pad from the left edge, and the four pixels below the control: happy-dom lays nothing
+    // out, so the control is at the origin and these are the placement's own two numbers.
+    expect(style.left).toBe('8px')
+    expect(style.top).toBe('4px')
+    // Its floor, for a control narrower than a list can usefully be — and its ceiling, which is the
+    // window's room and is what a `max-width` in the stylesheet used to answer instead.
+    expect(style.minWidth).toBe('180px')
+    expect(style.maxWidth).toBe(`${window.innerWidth - 16}px`)
+  })
+
   it('carries the host attributes onto the trigger', () => {
     // class / title / aria-label / disabled are not props: the trigger is a
     // real button, so they fall through to it and behave as they always did.
