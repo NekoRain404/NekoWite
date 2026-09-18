@@ -113,13 +113,68 @@ mkdir -p release
 # below are this run's own outputs and are written a few lines further down, and clearing them here
 # would leave the portable executable engine-less for the length of the copy — the one artifact whose
 # missing engine this project has already shipped once and been told about by a user.
-rm -f release/*.deb release/*.rpm release/*.AppImage
+#
+# **A package the user is running is moved aside, never deleted.** `rm` on a file Linux is running
+# does not stop the process — the inode outlives the name — but it leaves that process with no path
+# to itself: the AppImage the maintainer had open was deleted by this line during a packaging run,
+# and his window was then both invisible (the main window had been closed, the pet was holding the
+# process alive) and *unrestartable* (the file it was running from no longer existed). Moving it
+# into `release/superseded/` keeps `release/` holding one build's artifacts, which is what the
+# step below relies on, while leaving a running copy's own path intact; the note at the end of this
+# script says when that folder can be emptied.
+in_use() { # in_use <file> — is some process running from exactly this file?
+  local target exe
+  target="$(realpath -- "$1")"
+  # `/proc/<pid>/exe` and not the mount table: an AppImage's runtime *is* the file, so the process
+  # it started points at it however the payload was mounted — through FUSE, or extracted to a
+  # temporary directory first, which is the arm that leaves nothing in `/proc/mounts`.
+  for exe in /proc/[0-9]*/exe; do
+    [ "$(readlink -- "$exe" 2>/dev/null)" = "$target" ] && return 0
+  done
+  return 1
+}
+
+move_aside() { # move_aside <in-use file>
+  local file="$1" name destination n=1
+  name="$(basename "$file")"
+  destination="release/superseded/$name"
+  # Never over another in-use copy of the same name: that one belongs to a second running
+  # instance, and renaming over it would take its path away exactly as `rm` did.
+  while [ -e "$destination" ] && in_use "$destination"; do
+    destination="release/superseded/$name.$n"
+    n=$((n + 1))
+  done
+  mkdir -p release/superseded
+  mv -f "$file" "$destination"
+  echo "  Moved aside, because a process is running it: $destination"
+  echo "  (That process keeps running; delete the file once it has quit.)"
+}
+
+for stale in release/*.deb release/*.rpm release/*.AppImage; do
+  [ -e "$stale" ] || continue
+  if in_use "$stale"; then
+    move_aside "$stale"
+  else
+    rm -f "$stale"
+  fi
+done
 
 # `-p`, or the mtimes below are the copy's and the closing note is a lie: plain
 # `cp` stamps every artifact with the moment it was copied, which is always
 # minutes after the build, so four artifacts from four different builds would
 # look perfectly uniform. That is the whole signal, destroyed by a missing flag.
-cp -pf "$TARGET/nekowite" "release/${BIN_NAME}"
+#
+# Written through a sibling and renamed onto the name, and that is the second half of the same
+# hazard `move_aside` handles: `cp` onto a file Linux is *executing* fails with `Text file busy`
+# — the kernel refuses to open a busy text file for writing — and `set -e` then stops the run
+# before any bundle is copied. Which is exactly the state this script is usually run from: the
+# portable executable is the artifact a developer keeps open while building the next one. A rename
+# has no such rule, and it leaves the running process with the inode it started on.
+stage_into() { # stage_into <source file> <destination path>
+  cp -p "$1" "$2.new"
+  mv -f "$2.new" "$2"
+}
+stage_into "$TARGET/nekowite" "release/${BIN_NAME}"
 
 # The engine goes beside it, and this is not a convenience — it is the layout the app searches.
 # `bundled_program(exe_dir)` (`src/agent_runtime/binary_registry.rs`) looks for `opencode` and
@@ -134,7 +189,7 @@ cp -pf "$TARGET/nekowite" "release/${BIN_NAME}"
   echo "      Tauri's copy_binaries writes it from bundle.externalBin; check the build output." >&2
   exit 1
 }
-cp -pf "$TARGET/opencode" "release/opencode"
+stage_into "$TARGET/opencode" "release/opencode"
 echo
 echo "Portable executable: $(pwd)/release/${BIN_NAME}"
 echo "  ...and it needs $(pwd)/release/opencode beside it. Ship them together: the executable"
@@ -144,7 +199,7 @@ sha256sum "release/opencode"
 
 shopt -s nullglob
 for f in "$TARGET/bundle/deb/"*.deb "$TARGET/bundle/rpm/"*.rpm "$TARGET/bundle/appimage/"*.AppImage; do
-  cp -pf "$f" "release/$(basename "$f")"
+  stage_into "$f" "release/$(basename "$f")"
   echo
   echo "Bundle: $(pwd)/release/$(basename "$f")"
   sha256sum "release/$(basename "$f")"
@@ -247,6 +302,14 @@ echo "executable should be seconds apart, and the AppImage may be minutes"
 echo "later if the recovery above ran. If one is much older than the rest it"
 echo "is stale; git HEAD should be older than all four."
 echo
+if [ -d release/superseded ]; then
+  echo "release/superseded/ holds packages that were still running when this"
+  echo "run started. They are not this build; delete them once the instances"
+  echo "running them have quit. Nothing here reads that folder — the copy and"
+  echo "verification steps above name release/ only, so a stale file there"
+  echo "cannot be mistaken for this run's work."
+  echo
+fi
 echo "For whoever tests this build: the app takes a single-instance lock, so"
 echo "launching it while an older copy is still open only raises that older"
 echo "window. Quit the running copy first, or you will be looking at the"
