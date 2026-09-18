@@ -37,6 +37,7 @@ import { failureSentence } from './agent-rail'
 import { attachPetHostAppearanceLink } from './pet-host-appearance-link'
 import { attachPetSettingsLink } from './pet-settings-link'
 import { attachPetTaskLink } from './pet-task-link'
+import type { PetTaskKey } from '../platform/gateways/pet-contracts'
 import AgentRailBody from './AgentRailBody.vue'
 import type { SettingsOpenTarget } from '../features/settings'
 
@@ -257,12 +258,42 @@ const settingsTarget = computed<SettingsOpenTarget | null>(
 // ---- The pet's click on a task (§6.2's 点击返回任务) -------------------------
 //
 // The other half of the same flow: the pet's row calls `desktop_pet_open_task`, the host raises
-// this window and emits D1's key, and the link asks for the rail and for the session it names —
-// which may be collapsed, since the flow this exists for is 收起面板 → 完成提醒 → 返回. The
-// listener, the rule about which sessions a click may address and the release are
-// `pet-task-link.ts`'s; the shell supplies the three readings only it has — whether the rail is
-// open, which session the rail is showing, and the rail's own way between sessions — plus the
-// panel it wants shown.
+// this window and emits D1's key, and the link puts the session it names on screen — which may be
+// collapsed, since the flow this exists for is 收起面板 → 完成提醒 → 返回. The listener, the rule
+// about which sessions a click may address, the refusal and the release are
+// `pet-task-link.ts`'s; the shell supplies the readings only it has — whether the rail is open,
+// which session the rail is showing, the rail's own way between sessions — plus the panel it wants
+// shown and the sentence for a click it cannot serve.
+//
+// The sentence lands in the toast rather than in the rail's own refused block, and that is a
+// decision with two reasons. The rail's `refused` arm is reachable only by opening the rail, and
+// opening the rail is what *starts an engine* for the folder that happens to be open
+// (`agent-rail-attachment.ts`'s watch) — the side effect the refusal exists to avoid — while its
+// title names a start failure that did not happen. And the case this is for is the one the rail
+// already reports through `notifyError` above: a gesture that could not be honoured, whose session
+// is not the one at fault and for which the rail has no arm. The pet window's bubble cannot carry
+// it either: the fact is this window's, and no channel carries it back to the pet.
+function taskUnavailableSentence(key: PetTaskKey): string {
+  const live = agentState.value
+  // A runtime is up (or coming up) for a folder other than the one this task came from. Named,
+  // because "which folder is this window working in" is the whole of the answer.
+  if ((live.kind === 'live' || live.kind === 'starting') && live.vaultId !== key.vaultId) {
+    return t('agent.rail.taskUnavailable.elsewhere', { showing: live.vaultId })
+  }
+  // Up, for this task's own folder, but not the engine the task ran on: the app can be running one
+  // engine where the task belonged to another (§3.4's multi-agent boundary).
+  if (live.kind === 'live') {
+    return t('agent.rail.taskUnavailable.otherEngine', { engine: live.engineName })
+  }
+  // Coming up for this folder: a moment away, and the second click is the way in — once the runtime
+  // is live the key *is* one of its sessions, so the click is then a move rather than a refusal.
+  if (live.kind === 'starting') return t('agent.rail.taskUnavailable.starting')
+  // Nothing is running here, and nothing is on its way: the state a fresh window is in before the
+  // rail is opened, and the one a refused start leaves behind. The task's own folder is named
+  // because the surface this was clicked on never showed it.
+  return t('agent.rail.taskUnavailable.noRuntime', { vault: key.vaultId })
+}
+
 attachPetTaskLink({
   railOpen: () => props.railOpen,
   onOpenRail: () => {
@@ -279,6 +310,9 @@ attachPetTaskLink({
   // back from the handle the window holds — the run in it untouched — and one it does not is
   // loaded. Refusals are the rail's to report (`onResumeFailed`, wired above).
   onShow: (sessionId) => void resumeAgentSession(sessionId),
+  // And the click this window cannot serve: refused out loud rather than answered with a session
+  // nobody asked for. No engine is started for it, and the rail is not opened — see the doc above.
+  onUnavailable: (key) => notifyError(taskUnavailableSentence(key)),
 })
 
 const shellStyle = computed<Record<string, string>>(() => ({

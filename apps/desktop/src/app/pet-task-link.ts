@@ -6,7 +6,9 @@
  * it calls `desktop_pet_open_task`, the host raises this window and emits D1's `PetTaskKey` on
  * `pet-open-task`, and what arrives is six strings and nothing else. What *this* file decides is the
  * three things the payload does not carry: which session the key names, whether this window is
- * showing it, and what has to change for the user to be back in front of it.
+ * showing it, and what has to change for the user to be back in front of it — or, when the answer is
+ * that this window cannot show it at all, that the click is refused rather than answered with
+ * something else.
  *
  * It is a file rather than a handful of lines in the shell for the reason `pet-settings-link.ts`
  * gives one file over: it is a *policy* — when the listener is registered, what a click is allowed
@@ -35,12 +37,19 @@
  *  - **A click addresses a session of *this window's* runtime, and nothing else.** The key carries
  *    the engine, the profile and the vault an identity is bound to, and the rail can only serve the
  *    vault it was started for (`agent_load_session` refuses another before the engine is asked).
- *    For a key from another vault or another engine the window is still raised and the rail still
- *    shows what it has, which is the honest answer and the one the host's own
- *    `PET_TASK_OPEN_CHANNEL` doc already promises ("the main window re-validates it against the
- *    sessions it holds"). The epoch is deliberately *not* one of the fields compared: it names a
- *    runtime instance, and a session id outlives one — an engine that was restarted still holds the
- *    session on its disk, which is what lets a task from before the restart be reopened at all.
+ *    The epoch is deliberately *not* one of the fields compared: it names a runtime instance, and a
+ *    session id outlives one — an engine that was restarted still holds the session on its disk,
+ *    which is what lets a task from before the restart be reopened at all.
+ *  - **A click this window cannot serve is refused, and a refusal is not a substitution.** Until
+ *    this rule existed, a click with no runtime up was answered by asking for the rail — which
+ *    starts an engine for the folder that happens to be open and puts a *new* session on screen, a
+ *    process spawned and a subscription spent by a click on a decoration, with the reader looking
+ *    at a conversation nobody asked for. Starting a runtime is not a side effect a click may have,
+ *    so the click is answered with {@link PetTaskLinkInputs.onUnavailable} instead, and the shell —
+ *    the layer that knows *why* (its own rail state) — says which of the four facts it is. The same
+ *    goes for a key from another vault or another engine: the window is still raised (the host does
+ *    that before it emits), and what it shows is the refusal rather than the session it happens to
+ *    hold, which a reader cannot tell apart from the return they asked for.
  *  - **Released on unmount, including a registration that is still in flight.** `listen` resolves
  *    after an await and the window can be gone by then; a registration nobody released is a listener
  *    on a channel whose other end is still emitting.
@@ -74,6 +83,22 @@ export interface PetTaskLinkInputs {
    * and is the only layer that can be asked; this file decides *when* to ask.
    */
   onShow: (sessionId: string) => void
+  /**
+   * A click this window cannot put on screen, with the key that was clicked.
+   *
+   * The other outcome, and the only other one: a key from another runtime, or one clicked while no
+   * runtime is up at all. The rail's `resume` is a move *within* a runtime, so there is nothing to
+   * ask it for — and what the window must not do is the thing it used to (ask for the rail, which
+   * starts an engine for whatever folder is open and shows a session the reader did not click).
+   *
+   * The *sentence* is the shell's, because the reason is a fact about the shell's own rail state —
+   * no runtime at all, one still starting, one running for another folder, or one running for this
+   * folder under another engine — and this file holds only whether the key names a session of the
+   * runtime that is up. That is the same division `AttachedAgentRail` draws for a failed load: the
+   * rail reports, the shell words it. The key travels with the refusal so the sentence can name the
+   * folder the task came from, which is otherwise invisible on the surface the click was made on.
+   */
+  onUnavailable: (key: PetTaskKey) => void
 }
 
 /**
@@ -108,13 +133,18 @@ export function attachPetTaskLink(inputs: PetTaskLinkInputs): void {
       // contains field for field. Nothing here reads the store — the key is compared against the
       // rail's own session, which is what decides whether the click can be honoured.
       const shown = inputs.session()
-      // A click on a session that is not this window's to show still raises the window and shows
-      // the rail; it does not ask for a session the runtime cannot serve, and it does not pretend
-      // to have moved.
-      if (shown !== null && sameRuntime(shown, key) && shown.sessionId !== key.sessionId) {
-        inputs.onShow(key.sessionId)
+      // Two outcomes and no third. A key of this window's runtime is a move *within* it: the rail
+      // puts the session it names on screen, and the rail is opened only when the click has
+      // somewhere to take the reader — the session it names, which is exactly what the collapsed
+      // panel this flow runs behind is hiding (§3.1.3 keeps the run going while it is away).
+      if (shown !== null && sameRuntime(shown, key)) {
+        if (shown.sessionId !== key.sessionId) inputs.onShow(key.sessionId)
+        if (!inputs.railOpen()) inputs.onOpenRail()
+        return
       }
-      if (!inputs.railOpen()) inputs.onOpenRail()
+      // Anything else — another vault, another engine, no runtime up at all — is refused. Not
+      // opened, and not substituted: see `onUnavailable`, and the same rule in the module header.
+      inputs.onUnavailable(key)
     })
     if (stopped) off()
     else release = off

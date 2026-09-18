@@ -4,15 +4,23 @@
  * The flow this exists for is 收起面板 → 完成提醒 → 返回对应会话, so the things that can be wrong are
  * the ones the module's header names: a listener that lives as long as the rail (and so never hears
  * the click it exists for), a click that does not put the session it names on screen, a click that
- * asks the rail for a session the runtime cannot serve, and a registration nobody releases. The
- * platform adapter is mocked rather than the Tauri API: `onPetTaskRequest` has its own suite, and
- * this one is about what the shell's policy does with a key.
+ * asks the rail for a session the runtime cannot serve, a click that *starts* a runtime as a side
+ * effect, and a registration nobody releases. The platform adapter is mocked rather than the Tauri
+ * API: `onPetTaskRequest` has its own suite, and this one is about what the shell's policy does
+ * with a key.
  *
  * **No store is mounted here, and that is the state under test.** The link used to move the agent
  * store's pointer (`focus`) to the session the key named while the rail kept the session it was on,
  * so the store and the screen could name two different sessions and nothing said so. The pointer is
  * gone (`features/agent/stores/agent-session.ts`) and this file no longer imports the store: what a
- * click changes is the rail, through the two readings the shell hands in.
+ * click changes is the rail, through the readings the shell hands in.
+ *
+ * **The two outcomes are "shown" and "said", and there is no third.** A click either puts the named
+ * session on screen — `onShow`, plus `onOpenRail` when the rail is away, because §3.1.3 keeps the
+ * run going while the panel is collapsed — or it is refused through `onUnavailable`, which is what
+ * the window that knows why (the shell, reading its own rail state) turns into a sentence. What it
+ * must never do is what it did until this suite was rewritten: ask for the rail with no runtime up,
+ * which starts an engine for whatever folder is open and shows a session the user did not click.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick, type App as VueApp } from 'vue'
@@ -87,11 +95,13 @@ interface LinkState {
   session: AgentIdentity | null
   shown: string[]
   opened: number
+  /** Every click this window could not put on screen, as the key it was refused with. */
+  unavailable: PetTaskKey[]
 }
 
-/** The shell's three readings, as one mutable state a case can move between clicks. */
+/** The shell's readings, as one mutable state a case can move between clicks. */
 function linkState(session: AgentIdentity | null, railOpen = true): LinkState {
-  return { railOpen, session, shown: [], opened: 0 }
+  return { railOpen, session, shown: [], opened: 0, unavailable: [] }
 }
 
 function mount(state: LinkState): void {
@@ -107,6 +117,7 @@ function mount(state: LinkState): void {
         },
         session: () => state.session,
         onShow: (sessionId) => state.shown.push(sessionId),
+        onUnavailable: (key) => state.unavailable.push(key),
       })
       return () => null
     },
@@ -164,7 +175,7 @@ describe('the pet’s task link', () => {
     expect(state.shown).toEqual([])
   })
 
-  it('does not ask the rail for a session of another runtime', async () => {
+  it('says the task is not available instead of asking for a session of another runtime', async () => {
     const host = registration()
     const shown = session({ sessionId: 'ses-a', vaultId: '/tmp/vault' })
     const state = linkState(shown, false)
@@ -174,13 +185,19 @@ describe('the pet’s task link', () => {
 
     // Another vault, and another engine: `agent_load_session` refuses the first before the engine
     // is asked, and a session of the second is not this runtime's to serve. The window is still
-    // raised and the rail still shows what it has — the honest answer, and the one the host's own
-    // channel doc promises.
-    host.deliver(keyOf(session({ sessionId: 'ses-b', vaultId: '/tmp/other' })))
-    host.deliver(keyOf(session({ sessionId: 'ses-c', agentId: 'another-engine' })))
+    // raised by the host, and what it shows is the refusal — *not* a rail opened on the session it
+    // happens to hold, which is what this case used to assert and what a reader could not tell
+    // apart from the return they asked for.
+    const otherVault = keyOf(session({ sessionId: 'ses-b', vaultId: '/tmp/other' }))
+    const otherEngine = keyOf(session({ sessionId: 'ses-c', agentId: 'another-engine' }))
+    host.deliver(otherVault)
+    host.deliver(otherEngine)
 
     expect(state.shown).toEqual([])
-    expect(state.opened).toBe(1)
+    expect(state.unavailable).toEqual([otherVault, otherEngine])
+    // Nothing is asked of the shell's own toggle either: opening the rail is what starts an engine
+    // for the folder that happens to be open, and the click did not ask for that.
+    expect(state.opened).toBe(0)
   })
 
   it('takes a task from before the runtime was restarted, which is the same engine and vault', async () => {
@@ -214,18 +231,41 @@ describe('the pet’s task link', () => {
     expect(state.shown).toEqual([])
   })
 
-  it('does nothing at all when no runtime is up', async () => {
+  it('says the task is not available when no runtime is up, and starts nothing', async () => {
+    const host = registration()
+    const state = linkState(null, false)
+    mount(state)
+    await nextTick()
+    await host.settle()
+
+    const key = keyOf(session({ sessionId: 'ses-b' }))
+    host.deliver(key)
+
+    // The case this file was fixed for, and the reason it raises the window and stops there: with
+    // no runtime up, asking for the rail would start an engine for the folder that happens to be
+    // open and then show a *new* session on it — a process spawned and a subscription spent by a
+    // click on a decoration, and the reader looking at a conversation they never asked for. The
+    // click is answered with the refusal instead, and the key travels with it so the window can
+    // say which task and which folder it could not show.
+    expect(state.unavailable).toEqual([key])
+    expect(state.shown).toEqual([])
+    expect(state.opened).toBe(0)
+  })
+
+  it('says the task is not available when the rail is already on screen with no runtime', async () => {
     const host = registration()
     const state = linkState(null, true)
     mount(state)
     await nextTick()
     await host.settle()
 
-    host.deliver(keyOf(session({ sessionId: 'ses-b' })))
+    const key = keyOf(session({ sessionId: 'ses-b' }))
+    host.deliver(key)
 
-    // No engine, no session to move to and nothing to ask for: the rail will start its own runtime
-    // for the vault the app has open when the panel mounts, which is `agent-rail.ts`'s business
-    // and not a session this click can name.
+    // The rail being up changes nothing about whether this window can serve the key — and the
+    // refusal is the answer in both states, which is what keeps the two from drifting: an open
+    // rail with no runtime is a window whose panel may be mid-start, refused, or switched off.
+    expect(state.unavailable).toEqual([key])
     expect(state.shown).toEqual([])
     expect(state.opened).toBe(0)
   })

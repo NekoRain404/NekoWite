@@ -414,6 +414,21 @@ export const agent = {
            reader was in is still open and still on screen — so this sentence is the only place
            the refusal can be read. */
         newSessionFailed: 'A new session could not be opened: {reason}',
+        /* The pet's click on a task, when this window cannot put that session on screen
+           (`app/pet-task-link.ts` decides that; `AppShell.vue`'s `taskUnavailableSentence` words
+           these). Four sentences rather than one, because each names a different fact and a reason
+           that is only sometimes true is not a reason: the engine is not running at all, it is
+           still coming up, it is running for another folder, or it is running for this task's own
+           folder under another engine. A click may not *start* one — that is the decision these
+           sentences exist to state — so the refusal is what the reader gets instead of a session
+           they did not ask for. The first and the last name the folder, which the pet's row never
+           showed. */
+        taskUnavailable: {
+          noRuntime: 'The session this task belongs to is not open in this window: no agent engine is running here for {vault}.',
+          starting: 'The session this task belongs to is not open in this window yet: the agent engine is still starting. Click the task again in a moment.',
+          elsewhere: 'The session this task belongs to is not open in this window: this window is running its agent for {showing} instead.',
+          otherEngine: 'The session this task belongs to is not open in this window: the agent running here for that folder is {engine}.',
+        },
       },
       permission: {
         argumentsPending: 'The engine has not sent the arguments yet',
@@ -1521,6 +1536,12 @@ export const agent = {
         stopFailed: '智能体引擎未能停止：{reason}',
         resumeFailed: '未能重新打开该会话：{reason}',
         newSessionFailed: '未能打开新会话：{reason}',
+        taskUnavailable: {
+          noRuntime: '这条任务所属的会话没有在这个窗口中打开：本窗口没有为该文件夹（{vault}）运行智能体引擎。',
+          starting: '这条任务所属的会话还没有在这个窗口中打开：智能体引擎仍在启动。请稍后再点一次这条任务。',
+          elsewhere: '这条任务所属的会话没有在这个窗口中打开：本窗口正在为 {showing} 运行智能体。',
+          otherEngine: '这条任务所属的会话没有在这个窗口中打开：本窗口为该文件夹运行的是 {engine}。',
+        },
       },
       permission: {
         argumentsPending: '引擎还没有发送参数',
