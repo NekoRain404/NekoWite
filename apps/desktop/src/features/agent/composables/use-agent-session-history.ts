@@ -42,13 +42,9 @@ export interface UseAgentSessionHistoryOptions {
   gateway: AgentGateway
   /** The session on screen, so the list can mark it as the one already open. */
   sessionId: string
-  /**
-   * The directory this runtime works in — `AgentRailState`'s own `cwd`, the vault root on disk.
-   *
-   * It is here for one comparison: a session the engine recorded in a *different* folder is a
-   * different thing to reopen, and the history rows say so. Never assumed equal to the vault's id:
-   * that the two are the same string today is a fact about the composition site.
-   */
+  /** The directory this runtime works in, handed to `agentSessionHistoryRows` unchanged. What the
+   *  one comparison it feeds means — and why it is not the vault's id — is stated once, where it is
+   *  made: `agent-session-history.ts`'s `AgentSessionHistoryInput`. */
   cwd: string
   /**
    * The engine's whole report for this session's runtime, as it arrived — `null` means nothing
@@ -60,14 +56,6 @@ export interface UseAgentSessionHistoryOptions {
    * composer's, and they do not fold the two (`use-agent-composer-attachments.ts`).
    */
   capabilities: Ref<readonly AgentCapabilityReport[] | null>
-  /**
-   * Whether the caller can open a new session on that runtime — a capability of the *rail*, which
-   * is what owns the runtime a session is opened on. Absent means no: the list offers the entry
-   * only when its caller says it can act, so a panel mounted anywhere else (`AgentPanel.test.ts`
-   * mounts one over a gateway with no rail at all) has no control that could be pressed and do
-   * nothing.
-   */
-  openable: boolean
   /** The control the list hangs from: the history button in the session bar. */
   trigger: Ref<HTMLElement | null>
   /**

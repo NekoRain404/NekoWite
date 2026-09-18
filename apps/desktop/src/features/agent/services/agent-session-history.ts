@@ -116,9 +116,14 @@ export interface AgentSessionHistoryInput {
   readonly currentSessionId: string
   /**
    * The directory this runtime works in — `AgentRailState`'s own `cwd`, which is the vault root
-   * on disk. Compared against each row's, and deliberately not against the *vault id*: the id is
-   * an identity, and two of them being equal to a path is a fact about the composition site
-   * rather than about the contract.
+   * on disk. **This docblock is the rule's one home**: `AgentPanel.vue`'s `cwd` prop and
+   * `use-agent-session-history.ts`'s option carry the value down to here and point back at it,
+   * rather than restating it a second and third time.
+   *
+   * It is here for one comparison: a session the engine recorded in a *different* folder is a
+   * different thing to reopen, and each row carries the answer (`elsewhere` below). Deliberately
+   * not against the *vault id*: the id is an identity, and two of them being equal to a path is a
+   * fact about the composition site rather than about the contract.
    */
   readonly cwd: string
 }

@@ -104,39 +104,31 @@ const props = defineProps<{
   gateway: AgentGateway
   /** The session to show. Read once — see the note above about mounting per session. */
   session: AgentSession
-  /**
-   * The directory this runtime works in — `AgentRailState`'s own `cwd`, the vault root on disk.
-   *
-   * It is here for one comparison: a session the engine recorded in a *different* folder is a
-   * different thing to reopen, and the history rows say so. Never assumed equal to `vaultId`:
-   * that the two are the same string today is a fact about the composition site.
-   */
+  /** The directory this runtime works in — the vault root on disk — handed to the history list
+   *  unchanged. What the one comparison it feeds means is stated once, where it is made:
+   *  `agent-session-history.ts`'s `AgentSessionHistoryInput`. */
   cwd: string
   /**
    * Whether the rail behind this panel can open a new session — a capability of the *rail*,
    * which is what owns the runtime a session is opened on, and therefore not something this
-   * component can answer for itself. Absent means no: the panel draws the entry only when its
-   * caller says it can act, so a panel mounted anywhere else (`AgentPanel.test.ts` mounts one
-   * over a gateway with no rail at all) has no control that could be pressed and do nothing.
+   * component can answer for itself. Absent means no: the history list offers its new-session
+   * entry only when its caller says it can act, so a panel mounted anywhere else
+   * (`AgentPanel.test.ts` mounts one over a gateway with no rail at all) has no control that
+   * could be pressed and do nothing. That offer travels by the template below, and there is no
+   * option of `use-agent-session-history` carrying it: the one that was there was never read —
+   * the entry's own `v-if` (`AgentSessionHistoryHead.vue`) is where the gate is drawn.
    */
   openable?: boolean
   /**
-   * Whether the caller can open the settings dialog on the agents tree — the options menu's door,
-   * and the same rule as {@link openable}.
+   * Whether the caller can open the settings dialog on the agents tree — the options menu's door.
    *
-   * The dialog is not this component's and never becomes it: `showSettings` is the window root's
-   * and the landing section travels with the request (`features/settings/types.ts`,
-   * `SettingsOpenTarget`). A panel whose caller says no here draws no such row, rather than one
-   * that emits into nothing.
+   * Read where the door is built: the row exists only while this says so, which makes
+   * `use-agent-panel-menu.ts`'s `settingsOpenable` the gate's one statement, and this prop the
+   * value the app hands it.
    */
   settingsOpenable?: boolean
-  /**
-   * Whether the caller can put the rail back on the chat panel — the same rule again.
-   *
-   * The rail already offers this way out from its refused state (`AgentRailBody.vue`'s 用对话面板
-   * action), and the live panel had no equivalent: a reader who wanted the chat back had to find
-   * the switch in the settings dialog, or close and reopen the rail on the other tab.
-   */
+  /** Whether the caller can put the rail back on the chat panel — the options menu's other door.
+   *  Same shape as {@link settingsOpenable}: built, and explained, in `use-agent-panel-menu.ts`. */
   chatOpenable?: boolean
   labels: AgentPanelLabels
 }>()
@@ -351,7 +343,6 @@ const {
   sessionId: props.session.sessionId,
   cwd: props.cwd,
   capabilities: capabilityReports,
-  openable: props.openable === true,
   trigger: computed(() => barEl.value?.triggerElement() ?? null),
   popup: historyEl,
   onResume: (sessionId) => emit('resume', sessionId),
