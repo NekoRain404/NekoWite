@@ -1501,17 +1501,30 @@ const wrote = arguments[0], done = arguments[arguments.length - 1];
    * and the provider's cached model list is empty on a page that has never refreshed — so the
    * field holds exactly one suggestion, the model id it already carries. Read before the guide
    * below, which is the step that closes this dialog.
+   *
+   * **The field is pressed the moment it exists**, with no settling delay, and that is the reading
+   * this step is for. The AI page arrives through a scale/translate spring (SettingsPanel.vue,
+   * the page-swap transition), so a press made while it is still moving is placed against a field
+   * that goes on moving — which is what a reader's press does, and what the Chromium case in
+   * popup-host-scope.spec.ts measures with a forced click. This step used to wait 300ms after the
+   * AI row first; that delay put the press at the end of the spring, where the residual movement is
+   * half a pixel, and the defect is 20px wide at the start of it. The poll exists only so the
+   * element the press needs is in the document; it settles for nothing.
    */
   const aiRow = document.querySelectorAll('.dialog-nav .nav-row')[4];
   if (aiRow) {
     aiRow.click();
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    for (let i = 0; i < 100 && document.querySelector('#settings-ai-model') === null; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
   }
   const comboTrigger = document.querySelector('#settings-ai-model');
   let comboBox = null;
   if (comboTrigger) {
     comboTrigger.click();
-    await new Promise((resolve) => setTimeout(resolve, 450));
+    // Long enough for the spring to have finished and the list's own arrival to settle, so what is
+    // read is where the two boxes came to rest rather than where they were mid-flight.
+    await new Promise((resolve) => setTimeout(resolve, 1200));
     const list = document.querySelector('.combo-popup');
     const field = comboTrigger.getBoundingClientRect();
     if (list) {

@@ -636,7 +636,16 @@ test('the AI model combobox’s list resolves the shell’s appearance', async (
   const content = page.locator('.dialog-content')
   // `AiSettings.vue:90-97` — the model field, the app's only `ComboBox`. Its own press opens the
   // list (`ComboBox.vue:302`), which is the `Teleport` this case is about.
-  await content.locator('#settings-ai-model').click()
+  //
+  // **The press is forced, and that is the fix's own instrument.** `click()` runs actionability
+  // checks, one of which waits for the element to hold still for two frames — and the AI page
+  // arrives through a `scale`/`translate` spring (`SettingsPanel.vue:347-355`), so a waited-for
+  // press lands either before or after the field has come to rest depending on the frame it
+  // catches. Measured here: the forced press reproduced the drift on three runs out of three, while
+  // the waited-for press read the settled 4px on one run and the drifted 20.719px on another. A
+  // reader's press is neither — it lands the moment the field is visible, which is during the
+  // arrival, which is what this now measures.
+  await content.locator('#settings-ai-model').click({ force: true })
   await page.locator('.combo-popup').waitFor({ state: 'visible', timeout: 5000 })
   // The list travels on a transform; a rect read mid-flight is a reading of the animation.
   await page.waitForTimeout(400)
@@ -665,20 +674,18 @@ test('the AI model combobox’s list resolves the shell’s appearance', async (
   expect(read.reference.color, 'the field beside the list draws the dark palette’s text')
     .toBe(DARK_TEXT)
 
-  // And the retarget did not move it: the list is still placed against its field by the recipe,
-  // four pixels off the edge it opened from, inside the window it had to fit in.
+  // And the list is still placed against its field by the recipe — four pixels off the edge it
+  // opened from, inside the window it had to fit in.
   //
-  // Read after the component's own re-place (`ComboBox.vue`'s `onViewportChange`, wired to the
-  // window's `resize` and `scroll`), and that is an instrument decision worth stating. Measured:
-  // the AI section grows under the field while it settles, so the field's own bottom moves 17px
-  // between the `place()` the open made and the frame this reads — and the list is only re-placed
-  // when the window resizes or scrolls, which a section growing is neither. The stale number is
-  // **19.59px** and it is *identical with and without this pass's change* (measured by restoring
-  // `to="body"` and running this same case), so it is a defect of the control's own and not of the
-  // retarget — reported rather than fixed here, because pinning the list to a box that moved needs
-  // a `ResizeObserver` on the field and that is a behaviour change this file is not about.
-  await page.evaluate(() => window.dispatchEvent(new Event('resize')))
-  await page.waitForTimeout(200)
+  // **Read at rest, with nothing synthetic.** This half used to dispatch a `resize` event first,
+  // because the list only re-placed when the window resized or something scrolled, and the press
+  // above had been measured against a field that went on moving: the stale number was 20.719px off
+  // a field it was supposed to hang 4px from, and it was reported rather than fixed because the
+  // instrument that looked necessary — a `ResizeObserver` on the field — cannot see a transform.
+  // It could not: `ComboBox.vue`'s `followField()` carries the measurement and the fix, and the
+  // `resize` dispatch this used to need is what that fix made unnecessary. A popup that has to be
+  // poked into place is a control that lies about what it is attached to, and the assertion below
+  // is where that lie would show.
   const placement = await page.evaluate(() => {
     const list = document.querySelector('.combo-popup')
     const field = document.querySelector('#settings-ai-model')
