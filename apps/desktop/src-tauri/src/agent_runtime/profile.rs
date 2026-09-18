@@ -308,11 +308,16 @@ pub enum DiscoverySurface {
     /// Nothing narrower is worth naming: this profile *is* the user's own installation, so the
     /// engine reads what it always reads and this host enumerates none of it.
     Reused,
-    /// The configuration of the folder a session runs in and of every folder above it — a vault's
-    /// own providers and permission rules, merged into this profile (measured). The engine honours
+    /// The configuration of the folder a session runs in and of every folder above it, merged into
+    /// this profile (measured). **Every folder above it means every one of them**, which is not
+    /// what "a vault's own configuration" would suggest: on a plain tree with no checkout to stop
+    /// it, the walk reads a vault's `.opencode` and `opencode.json`, its parent's, and the user's
+    /// home directory's, so what reaches this profile is the developer's own configuration as well
+    /// as the folder's — providers and permission rules both. The engine honours
     /// `OPENCODE_DISABLE_PROJECT_CONFIG` for exactly this merge and this host does not set it:
     /// which project configuration an engine reads is a fact about that engine (§3.4), and reading
-    /// the vault's own configuration may be wanted. Reported, not decided here.
+    /// the vault's own configuration may be wanted. Reported, not decided here, and the sentence a
+    /// user reads (`agent.ts`'s `project`, "and in every folder above it") says the same thing.
     Project,
     /// Linux's managed configuration root, `/etc/opencode`, merged at global precedence: a system
     /// administrator's providers and permission rules reach every profile, and no supported switch

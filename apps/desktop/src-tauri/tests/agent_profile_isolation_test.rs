@@ -46,6 +46,25 @@
 //! in the engine-agnostic function that builds these roots. The assertions below are what will
 //! notice the day that decision is made.
 //!
+//! **The environment this launch *inherits* is a surface of its own, and it is the one the roots
+//! cannot reach.** Everything above is about what the launch *sets*; the launch is added to an
+//! environment rather than substituted for one. The ACP SDK spawns the engine with
+//! `Command::envs` on a command that never calls `env_clear`, so the engine is handed whatever
+//! this app was started with, and the roots move the engine's own home without touching the
+//! variables that name a configuration somewhere else. Measured: a decoy provider delivered as
+//! an inherited `OPENCODE_CONFIG_DIR`, `OPENCODE_CONFIG` or `OPENCODE_CONFIG_CONTENT` reached
+//! `session/new`'s model list, and an inherited `OPENCODE_DB` put the engine's database at the
+//! developer's own path. The second test below is that measurement in both directions, and the
+//! launch now carries the value that closes each one. It is a deny-list and cannot be complete —
+//! what it does not cover is named in `process::isolated_profile_env`'s own doc comment rather
+//! than left to be assumed.
+//!
+//! The walk-up is *not* one of those: it reads `.opencode` and `opencode.json` from every directory
+//! above a vault — the vault's own, its parent's, and the user's home directory's, measured on a
+//! plain tree with no checkout to stop it — so what it merges is not only "a vault's own
+//! configuration". That merge is one this app documents to the user and leaves on, deliberately,
+//! and it is asserted below so the day it changes is a red test rather than a silent one.
+//!
 //! `/etc/opencode` is the one surface no supported switch closes: the engine resolves it as
 //! Linux's managed configuration root and merges `opencode.json`/`opencode.jsonc` from it at
 //! global precedence. It does not exist on this machine, so what the control launch proves is
@@ -96,6 +115,14 @@ const PROJECT_SKILL: &str = "nwk-decoy-project-skill";
 const PROJECT_CLAUDE_SKILL: &str = "nwk-decoy-project-claude";
 const PROJECT_AGENTS_SKILL: &str = "nwk-decoy-project-agents";
 const PARENT_CLAUDE_SKILL: &str = "nwk-decoy-parent-claude";
+
+/// The decoys for the environment this launch *inherits*, one per variable the engine reads from
+/// it to decide where its configuration comes from or where it writes. They are not planted
+/// somewhere a root could point: they stand in for what the developer's own shell exported, and
+/// they are delivered to the engine exactly as an inherited variable is.
+const INHERITED_DIR: &str = "nwk-decoy-inherited-dir";
+const INHERITED_FILE: &str = "nwk-decoy-inherited-file";
+const INHERITED_CONTENT: &str = "nwk-decoy-inherited-content";
 
 /// A decoy tree, rooted inside the repository.
 ///
@@ -214,6 +241,55 @@ impl DecoyTree {
             case.join(".opencode/opencode.json"),
             json(GRANDPARENT_DOT_OPENCODE),
         );
+
+        // The inherited environment's own decoys. Planted here because they need a path and a
+        // provider, not because a root reaches them — nothing in the launch points at either.
+        at(
+            self.inherited_dir().join("opencode.json"),
+            json(INHERITED_DIR),
+        );
+        at(self.inherited_file(), json(INHERITED_FILE));
+    }
+
+    /// The directory an inherited `OPENCODE_CONFIG_DIR` would name.
+    fn inherited_dir(&self) -> PathBuf {
+        self.root.join("inherited-dir")
+    }
+
+    /// The file an inherited `OPENCODE_CONFIG` would name.
+    fn inherited_file(&self) -> PathBuf {
+        self.root.join("inherited.json")
+    }
+
+    /// Where an inherited `OPENCODE_DB` would put the engine's database.
+    fn inherited_db(&self) -> PathBuf {
+        self.root.join("inherited-db")
+    }
+
+    /// Where the database lands when the launch has its way: the profile's own data root, which
+    /// is the directory `$XDG_DATA_HOME` points into.
+    fn profile_db(&self) -> PathBuf {
+        self.root.join("XDG_DATA_HOME/opencode/opencode.db")
+    }
+
+    /// The variables a developer's own shell would have exported, as the engine receives them
+    /// from an inherited environment. `OPENCODE_CONFIG_DIR`, `OPENCODE_CONFIG` and
+    /// `OPENCODE_CONFIG_CONTENT` name where configuration is read from; `OPENCODE_DB` names
+    /// where the engine writes. All four were measured to be honoured from here.
+    fn inherited(&self) -> Vec<(String, String)> {
+        let path = |value: PathBuf| value.to_string_lossy().into_owned();
+        vec![
+            (
+                "OPENCODE_CONFIG_DIR".to_string(),
+                path(self.inherited_dir()),
+            ),
+            ("OPENCODE_CONFIG".to_string(), path(self.inherited_file())),
+            (
+                "OPENCODE_CONFIG_CONTENT".to_string(),
+                decoy_config(INHERITED_CONTENT),
+            ),
+            ("OPENCODE_DB".to_string(), path(self.inherited_db())),
+        ]
     }
 
     /// The launch the app performs today, as `EnvPolicy::ProfileIsolated` builds it: the roots
@@ -228,6 +304,20 @@ impl DecoyTree {
             env: env_pairs(isolated_profile_env(&self.root)),
             ca_bundle: None,
         }
+    }
+
+    /// The same launch with the inherited values put back on top of it — which is the environment
+    /// this app produced before the launch neutralised them, and the control for the second test.
+    ///
+    /// Appending rather than replacing is what makes it that: `agent_config` collects the env
+    /// into a map, so the last entry a name appears in is the one `execve` carries. Putting the
+    /// inherited value after the launch's own is therefore the same final environment as a launch
+    /// that never neutralised anything, which is the state being reproduced — not a second
+    /// mechanism invented to reach it.
+    fn inherited_wins(&self) -> EngineLaunch {
+        let mut launch = self.launch();
+        launch.env.extend(env_pairs(self.inherited()));
+        launch
     }
 
     /// The launch that makes every negative in the production launch a statement about
@@ -360,6 +450,9 @@ impl Readout {
             PROJECT_CLAUDE_SKILL,
             PROJECT_AGENTS_SKILL,
             PARENT_CLAUDE_SKILL,
+            INHERITED_DIR,
+            INHERITED_FILE,
+            INHERITED_CONTENT,
         ]
         .into_iter()
         .filter(|marker| text.contains(marker))
@@ -374,7 +467,18 @@ impl Readout {
 /// The environment is not assembled here: it is read back out of
 /// [`EngineLaunch::agent_config`], which is the description the runtime hands `execve`. A test
 /// that spelled the variables out again would be measuring its own copy of them.
-async fn converse(tree: &DecoyTree, engine: &Path, launch: &EngineLaunch) -> Readout {
+///
+/// `inherited` is set on the command *before* that description, and the order is the measurement
+/// rather than a convenience: the SDK spawns with `Command::envs` on an environment the app was
+/// started with, so an entry the launch carries is what `execve` ends up with where both name the
+/// same variable. Setting these first is what an inherited variable is; setting them second would
+/// be a launch that could not exist.
+async fn converse(
+    tree: &DecoyTree,
+    engine: &Path,
+    launch: &EngineLaunch,
+    inherited: &[(String, String)],
+) -> Readout {
     let described = serde_json::to_value(launch.agent_config()).expect("the launch serializes");
     let env = described["env"]
         .as_object()
@@ -391,6 +495,9 @@ async fn converse(tree: &DecoyTree, engine: &Path, launch: &EngineLaunch) -> Rea
         // here, the diagnostics above are built from it, and a pipe nobody reads would block
         // the engine on its own logging — which would be a hang invented by the test.
         .stderr(Stdio::piped());
+    for (name, value) in inherited {
+        command.env(name, value);
+    }
     for (name, value) in &env {
         command.env(name, value.as_str().expect("a string value"));
     }
@@ -508,16 +615,26 @@ async fn the_roots_close_the_engine_home_and_the_walk_up_stays_open() {
     let tree = DecoyTree::plant(&format!("profile-isolation-{}", std::process::id()));
 
     // ---- What the app launches today -------------------------------------------------
-    let readout = converse(&tree, &engine, &tree.launch()).await;
+    let readout = converse(&tree, &engine, &tree.launch(), &[]).await;
     // Every failure below carries what was seen, what the engine said about itself, and
     // whether there was a session at all — so a failure that came from the transport cannot
     // be mistaken for one that came from the isolation.
     let seen = readout.diagnostics();
 
     // Closed: the engine's own home and configuration are read from inside the profile root.
-    // These decoys are found *because* `HOME` and `XDG_CONFIG_HOME` point at them, which is
-    // also the positive control for the redirect — the same files under the developer's real
-    // home are not reachable from this launch.
+    // Two of these are found *because* a root points at them, which is also the positive control
+    // for the redirect — the same files under the developer's real home are not reachable from
+    // this launch.
+    //
+    // `GLOBAL_CONFIG` is reachable by two names now and this assertion no longer separates them:
+    // `$XDG_CONFIG_HOME` leads to that directory, and so does `OPENCODE_CONFIG_DIR`, which the
+    // launch pins to it because the profile's document lives there (measured: the variable *adds*
+    // to the engine's global root rather than replacing it, so both routes are live and both read
+    // the same file). What that costs is precision about *which* of the two delivered the
+    // document; what it does not cost is the property underneath — the configuration in force is
+    // the profile's own, and `HOME_DOT_OPENCODE` is still the decoy that isolates the `HOME`
+    // redirect on its own. The same files at the same relative paths under the developer's real
+    // home are not reachable from this launch, which is what the first test's control measures.)
     for marker in [GLOBAL_CONFIG, HOME_DOT_OPENCODE] {
         assert!(
             readout.saw(marker),
@@ -580,7 +697,7 @@ async fn the_roots_close_the_engine_home_and_the_walk_up_stays_open() {
     // One launch, three negatives undone: the two directories this host never points the
     // engine at, and the scan this host switches off. Without it, "not discovered" and "never
     // looked for" would be the same observation, which is the distinction §8.1 is about.
-    let control = converse(&tree, &engine, &tree.control_launch()).await;
+    let control = converse(&tree, &engine, &tree.control_launch(), &[]).await;
     let control_seen = control.diagnostics();
     for marker in [CONFIG_DIR, MANAGED] {
         assert!(
@@ -599,4 +716,84 @@ async fn the_roots_close_the_engine_home_and_the_walk_up_stays_open() {
              leak it closes was never actually closed by it. Seen: {control_seen}"
         );
     }
+}
+
+/// The environment the launch is *added to*: what the developer's own shell exported.
+///
+/// The roots above are additions to an environment, not a replacement for one, and the engine
+/// reads four variables from that environment in preference to what a root decides. Each of the
+/// four was measured to be honoured — three put a provider into `session/new`'s model list and
+/// one put the engine's database at the developer's own path — so each is closed in the launch,
+/// and this test fails if any of them stops being.
+///
+/// Both directions, and neither is optional. The control launch reproduces the environment this
+/// app produced before the four entries existed: the same inherited values, on a launch that does
+/// not neutralise them. If the control stops finding the decoys, the production launch's silence
+/// below is a statement about where the decoys sit rather than about the launch, and the test says
+/// so instead of passing for the wrong reason.
+#[tokio::test]
+async fn the_launch_closes_what_the_environment_it_inherits_points_at() {
+    let engine = Path::new(env!("CARGO_MANIFEST_DIR")).join(ENGINE);
+    if !engine.is_file() {
+        eprintln!(
+            "SKIP: {} is absent; run scripts/fetch-opencode-linux.sh",
+            engine.display()
+        );
+        return;
+    }
+
+    let tree = DecoyTree::plant(&format!("inherited-environment-{}", std::process::id()));
+    let inherited = tree.inherited();
+    let _ = fs::remove_file(tree.inherited_db());
+
+    // ---- Undone: what the four variables reach when nothing closes them ---------------
+    let before = converse(&tree, &engine, &tree.inherited_wins(), &inherited).await;
+    let before_seen = before.diagnostics();
+    for marker in [INHERITED_DIR, INHERITED_FILE, INHERITED_CONTENT] {
+        assert!(
+            before.saw(marker),
+            "{marker} was delivered as an inherited variable and the engine has to read it, or \
+             the launch below is being credited with closing something that was never open. \
+             Seen: {before_seen}"
+        );
+    }
+    assert!(
+        tree.inherited_db().exists(),
+        "an inherited OPENCODE_DB has to be where the engine writes, or the launch below is \
+         credited with closing a variable the engine ignores. Profile database written: {}. \
+         Seen: {before_seen}",
+        tree.profile_db().exists()
+    );
+
+    // ---- As it ships: the same variables, on the launch this app performs -------------
+    let _ = fs::remove_file(tree.inherited_db());
+    let after = converse(&tree, &engine, &tree.launch(), &inherited).await;
+    let seen = after.diagnostics();
+    for marker in [INHERITED_DIR, INHERITED_FILE, INHERITED_CONTENT] {
+        assert!(
+            !after.saw(marker),
+            "{marker} came from a variable the developer's own environment named, and it \
+             reached the engine: this profile is reading the configuration of an installation \
+             that is not its own. Seen: {seen}"
+        );
+    }
+    assert!(
+        !tree.inherited_db().exists(),
+        "the engine wrote its database at the path an inherited OPENCODE_DB named, so this \
+         profile is sharing the developer's own session database. Seen: {seen}"
+    );
+
+    // The two positives, without which every assertion above would also hold for a launch that
+    // had simply stopped reading configuration at all.
+    assert!(
+        after.saw(GLOBAL_CONFIG),
+        "the profile's own configuration document must still be discovered — otherwise the \
+         variables above were not neutralised but the whole global root was closed with them. \
+         Seen: {seen}"
+    );
+    assert!(
+        tree.profile_db().exists(),
+        "with no inherited database path reaching it, the engine's database belongs inside the \
+         profile root. Seen: {seen}"
+    );
 }

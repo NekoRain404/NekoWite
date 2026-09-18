@@ -225,6 +225,40 @@ pub fn env_pairs(pairs: impl IntoIterator<Item = (String, String)>) -> Vec<(Stri
 /// profile, and a machine with no `/etc/opencode` has nothing to close. So this
 /// surface is left where the engine put it and named here instead of being
 /// implied shut.
+///
+/// **Closed: the environment this launch *inherits*.** The roots above are
+/// added to an environment, not substituted for one. The SDK spawns the engine
+/// with `Command::envs` on a `Command` that never calls `env_clear`
+/// (`agent-client-protocol` 2.1.0, `acp_agent.rs`'s `spawn_process`), so the
+/// engine receives everything this app was itself started with, and the
+/// launch's own entry is what `execve` carries where the two name the same
+/// variable. Nothing here could *remove* a variable — the SDK's launch
+/// description has no way to say so — but setting one is enough, and the
+/// difference between that and nothing is what the four entries below are.
+///
+/// The four are the variables the engine reads from its environment to decide
+/// **where its configuration comes from and where it writes**, and they are
+/// named by measurement against the pinned engine rather than by reading its
+/// documentation. A decoy provider planted in each, delivered exactly as an
+/// inherited variable is, reached `session/new`'s model list through three of
+/// them and put the engine's database at the developer's own path through the
+/// fourth — a database this profile would then read and write for as long as
+/// the app ran. Setting each to the value below removes it, leaves the
+/// profile's own configuration document discovered, and leaves the database
+/// inside the profile root. `tests/agent_profile_isolation_test.rs`'s
+/// `the_launch_closes_what_the_environment_it_inherits_points_at` is that
+/// measurement, and it fails if any of the four is dropped or stops being
+/// honoured.
+///
+/// **What this does not cover, said rather than implied.** It is a deny-list,
+/// and a deny-list cannot be complete: the pinned engine's string table names
+/// 79 distinct `OPENCODE_*` variables, this launch neutralises the four that
+/// were measured to redirect configuration or storage, and the other 75 were
+/// not measured. `OPENCODE_PERMISSION`, `OPENCODE_AUTH_CONTENT` and
+/// `OPENCODE_API_KEY` are the three worth measuring next, and the reason is
+/// only that each reaches the engine exactly the way the four above did — a
+/// variable this host does not set, in an environment it does not clear. What
+/// the first of them would do here is not known.
 pub fn isolated_profile_env(root: &std::path::Path) -> Vec<(String, String)> {
     let at = |name: &str| {
         (
@@ -254,6 +288,57 @@ pub fn isolated_profile_env(root: &std::path::Path) -> Vec<(String, String)> {
             "OPENCODE_DISABLE_EXTERNAL_SKILLS".to_string(),
             "1".to_string(),
         ),
+        // **The inherited environment, closed.** Each of these names somewhere
+        // the engine would read configuration from, or write to, other than the
+        // roots above — and each is read from the environment *in preference*
+        // to what a root decides, so a developer who exported one reached this
+        // profile through it.
+        //
+        // They come last, so nothing above can outrank them and
+        // `AgentRegistration::env_extra` can still put one back deliberately —
+        // `registry.rs` appends that vector after this one for exactly this
+        // reason.
+        //
+        // **`OPENCODE_CONFIG_DIR` is a path here and not `""`, and that is the
+        // one value arrived at by breaking something.** `""` closes the
+        // inherited directory exactly as well, and it also costs the profile
+        // its own permission rules: measured, the engine stops applying the
+        // block this app ships in its configuration document, so
+        // `agent_permission_grants_live_test`'s
+        // `the_engines_own_evaluation_stops_silencing_after_the_revoke` goes
+        // from `ask` to `allow` — the app's whole permission gate, off, with
+        // the rest of the suite green. The document itself is *not* what is
+        // lost: its provider is still discovered with `""` in place, measured
+        // the same way every other discovery in this module was. So the effect
+        // is on how the engine resolves permissions and the mechanism behind it
+        // was not established — said that way because a guess would read as a
+        // measurement, which is the failure this whole doc comment exists to
+        // avoid.
+        //
+        // Pointing the variable at the directory the document already lives in
+        // closes the inherited value *and* keeps the permission block, because
+        // it names the root discovery would have chosen anyway. The path is
+        // `profile::ENGINE_CONFIG_DOCUMENT`'s parent, spelled here rather than
+        // imported so this module keeps knowing nothing about profiles — the
+        // unit test at the foot of this file is what stops the two drifting
+        // apart.
+        (
+            "OPENCODE_CONFIG_DIR".to_string(),
+            root.join("XDG_CONFIG_HOME/opencode")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        // A file this host does not designate, and inline content it does not
+        // carry: `""` is this engine's spelling for "not set" and `"{}"` is the
+        // same statement where the value has to keep being valid JSON. Both
+        // measured to close the inherited value without disturbing the
+        // document.
+        ("OPENCODE_CONFIG".to_string(), String::new()),
+        ("OPENCODE_CONFIG_CONTENT".to_string(), "{}".to_string()),
+        // The engine's session database. An inherited value put it at the
+        // developer's own path, where this profile then read and wrote a
+        // database that is not its own.
+        ("OPENCODE_DB".to_string(), String::new()),
     ]
 }
 
@@ -481,5 +566,36 @@ impl<R: AsyncRead + Unpin> AsyncRead for BoundedFrameReader<R> {
             )));
         }
         Poll::Ready(Ok(read))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The one thing two modules have to agree about.
+    ///
+    /// `isolated_profile_env` names `OPENCODE_CONFIG_DIR` by spelling the path, because this module
+    /// knows nothing about profiles and importing the constant would be the wrong direction. That
+    /// leaves one way for the two to drift, and the drift is not cosmetic: point the variable at a
+    /// directory the document does not live in and the engine stops applying the permission block
+    /// this app ships — the engine goes back to allowing an edit without asking anything. This test
+    /// is the agreement, and it is the only place that says the two names are the same directory.
+    #[test]
+    fn the_configuration_directory_is_the_one_the_document_lives_in() {
+        let root = Path::new("/tmp/nwk-profile");
+        let configured = isolated_profile_env(root)
+            .into_iter()
+            .find(|(name, _)| name == "OPENCODE_CONFIG_DIR")
+            .expect("an app-managed launch pins the engine's configuration directory")
+            .1;
+        let document = root.join(crate::agent_runtime::profile::ENGINE_CONFIG_DOCUMENT);
+        assert_eq!(
+            Path::new(&configured),
+            document.parent().expect("the document has a parent"),
+            "OPENCODE_CONFIG_DIR must name the directory the profile's configuration document \
+             lives in, or the engine reads a different configuration and the permission block \
+             this app ships stops being applied"
+        );
     }
 }
