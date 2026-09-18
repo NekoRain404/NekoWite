@@ -268,7 +268,11 @@ fn a_restored_ledger_does_not_replay_what_it_already_announced() {
     let Decoded::Restored(restored) = TaskHistory::decode(&stored, 200, 64) else {
         panic!("a ledger this build wrote has to be one it can read");
     };
-    assert_eq!(restored.dropped, 0);
+    assert_eq!(
+        (restored.dropped_records, restored.dropped_marks),
+        (0, 0),
+        "a ledger this build wrote fits inside this build's bounds"
+    );
 
     let second_channel = RecordingChannel::new();
     let mut restarted = crate::support::restored(
@@ -397,7 +401,11 @@ fn a_stored_ledger_longer_than_the_bound_is_truncated_from_the_old_end() {
 
     // A size difference between builds is not amnesia: the newest rows are the ones kept, and how
     // many did not fit is reported rather than guessed at.
-    assert_eq!(restored.dropped, 3);
+    assert_eq!(
+        (restored.dropped_records, restored.dropped_marks),
+        (3, 0),
+        "the three rows beyond the bound are the ones dropped, and no mark was"
+    );
     assert_eq!(restored.history.len(), 2);
     assert!(restored.history.get(&key("run-4")).is_some());
     assert!(restored.history.get(&key("run-0")).is_none());

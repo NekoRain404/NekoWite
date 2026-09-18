@@ -63,9 +63,20 @@ pub const UNREAD_MAX_AGE_MS: i64 = 24 * 60 * 60 * 1000;
 pub struct Loaded {
     /// The rows this build will use: the file's, minus the marks and minus what aged out.
     pub history: TaskHistory,
-    /// How much of the file did not survive — rows and marks beyond this build's bounds, and unread
-    /// rows too old to be reminders. Never silent: the caller reports a non-zero count.
-    pub dropped: usize,
+    /// Rows that did not survive: the file's own beyond this build's record bound, plus unread rows
+    /// that had aged past the reminder bound. Never silent: the caller reports a non-zero count,
+    /// because a bound that quietly forgets a reminder is the 漏提示 this path is graded against.
+    pub dropped_rows: usize,
+    /// Stream marks forgotten — every mark the file held, plus any beyond the mark bound.
+    ///
+    /// **Not rows, and not a loss**, which is why they are counted apart from the above: a mark is a
+    /// position in one runtime's stream (`super::super::history`'s header), it is keyed by an epoch
+    /// that carries the process id, and one from a previous run cannot match this run's frames — it
+    /// can only make them look like replays, which is the reminder swallowed. They are therefore
+    /// forgotten on *every* load, and a line about them would be a line on every healthy restart.
+    /// The count is here so the fact stays observable to a test rather than being a promise in a
+    /// comment; no caller prints it.
+    pub forgotten_marks: usize,
     /// Why nothing was restored, when nothing was: a file this build cannot read, or one a newer
     /// build wrote. `None` covers both "the ledger was read" and "there is no file yet", which are
     /// the same thing to a caller that has an empty history either way.
@@ -97,7 +108,8 @@ impl Default for Loaded {
     fn default() -> Self {
         Self {
             history: TaskHistory::new(),
-            dropped: 0,
+            dropped_rows: 0,
+            forgotten_marks: 0,
             detail: None,
         }
     }
@@ -180,7 +192,12 @@ impl HistoryStore {
         match TaskHistory::decode(&raw, DEFAULT_RECORD_CAPACITY, DEFAULT_MARK_CAPACITY) {
             Decoded::Restored(restored) => {
                 self.lock_writable(true);
-                self.restorable(restored.history, restored.dropped, now_ms)
+                self.restorable(
+                    restored.history,
+                    restored.dropped_records,
+                    restored.dropped_marks,
+                    now_ms,
+                )
             }
             // Garbled bytes are this build's own file gone wrong, not a format from the future, and
             // `Decoded::Unreadable`'s rule is that the caller must not write over it *as if it had
@@ -210,13 +227,20 @@ impl HistoryStore {
         }
     }
 
-    /// Apply the two restore rules and say how much they cost.
-    fn restorable(&self, mut history: TaskHistory, dropped: usize, now_ms: i64) -> Loaded {
+    /// Apply the two restore rules and say how much they cost — rows and marks counted apart.
+    fn restorable(
+        &self,
+        mut history: TaskHistory,
+        dropped_records: usize,
+        dropped_marks: usize,
+        now_ms: i64,
+    ) -> Loaded {
         let marks = history.forget_marks();
         let stale = history.drop_unread_before(now_ms - UNREAD_MAX_AGE_MS);
         Loaded {
             history,
-            dropped: dropped + marks + stale,
+            dropped_rows: dropped_records + stale,
+            forgotten_marks: marks + dropped_marks,
             detail: None,
         }
     }

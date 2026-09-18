@@ -794,6 +794,83 @@ fn a_reminder_older_than_the_bound_does_not_come_back() {
     );
 }
 
+/// The sentence about a lost reminder counts rows and only rows, and says one row as one row.
+///
+/// The app prints this line at startup, so it is the one place a user is told that something they
+/// were going to be shown is gone — which makes it the worst place in this feature to be wrong. It
+/// was wrong twice: the count was rows + aged-out rows + *stream marks*, and a ledger whose only
+/// missing entries were marks was announced as 「2 rows … did not survive the restart」 on this
+/// machine (the marks were the two sessions the previous instance had watched); and a single row
+/// was announced as 「1 rows」, which a log from the real-window harness shows. Both arms are
+/// asserted here, from the store's own read rather than from a number handed to the formatter.
+#[test]
+fn the_loss_sentence_counts_rows_and_spells_one_row_as_one_row() {
+    let row = |run: &str, at_ms: i64| TaskRecord {
+        key: nekowite_lib::desktop_pet::PetTaskKey {
+            agent_id: AGENT.to_string(),
+            profile_id: PROFILE.to_string(),
+            runtime_epoch: "epoch-1".to_string(),
+            vault_id: VAULT.to_string(),
+            session_id: SESSION.to_string(),
+            run_id: run.to_string(),
+        },
+        state: PetTaskState::TurnFinished,
+        permission_request_id: None,
+        at_ms,
+        delivery: DeliveryState::Failed,
+        unread: true,
+    };
+    let now = 10 * UNREAD_MAX_AGE_MS;
+    let write = |data: &Path, history: &TaskHistory| {
+        std::fs::create_dir_all(ledger_path(data).parent().expect("a parent directory"))
+            .expect("the ledger's directory");
+        std::fs::write(ledger_path(data), history.encode()).expect("the ledger is written");
+        HistoryStore::new(data)
+            .expect("an absolute data directory is in scope")
+            .load(now)
+    };
+
+    // A ledger whose only missing entry is a stream mark: nothing the user was going to see was
+    // lost, so the app owes them no sentence about rows at all.
+    let data = data_dir("report-marks-only");
+    let mut marks_only = TaskHistory::new();
+    assert_eq!(
+        marks_only.observe_stream(&session(), 3, 1_000),
+        MarkOutcome::Fresh
+    );
+    let loaded = write(&data, &marks_only);
+    assert_eq!(loaded.forgotten_marks, 1, "the mark was forgotten");
+    assert_eq!(
+        nekowite_lib::desktop_pet::task_feed::loss_report(&loaded),
+        None,
+        "a forgotten mark is not a lost reminder, and the app must not say it is"
+    );
+
+    // One row too old to be a reminder: a real loss, reported, and reported in the singular.
+    let data = data_dir("report-one-row");
+    let mut one_stale = TaskHistory::new();
+    let _ = one_stale.record(row("run-old", now - UNREAD_MAX_AGE_MS - 1));
+    let loaded = write(&data, &one_stale);
+    assert_eq!(loaded.dropped_rows, 1);
+    assert_eq!(
+        nekowite_lib::desktop_pet::task_feed::loss_report(&loaded).as_deref(),
+        Some("nekowite: 1 row of the pet's reminder ledger did not survive the restart"),
+        "one row is one row — the line this replaced read `1 rows`"
+    );
+
+    // And two, so the plural arm is measured rather than assumed from a suffix rule.
+    let data = data_dir("report-two-rows");
+    let mut two_stale = TaskHistory::new();
+    let _ = two_stale.record(row("run-old-a", now - UNREAD_MAX_AGE_MS - 1));
+    let _ = two_stale.record(row("run-old-b", now - UNREAD_MAX_AGE_MS - 2));
+    let loaded = write(&data, &two_stale);
+    assert_eq!(loaded.dropped_rows, 2);
+    assert_eq!(
+        nekowite_lib::desktop_pet::task_feed::loss_report(&loaded).as_deref(),
+        Some("nekowite: 2 rows of the pet's reminder ledger did not survive the restart")
+    );
+}
+
 /// A mark written by a previous run is not a mark.
 ///
 /// The failure this refuses is the one that would be invisible: `runtime_epoch` carries the process
@@ -826,9 +903,18 @@ fn a_mark_from_a_previous_run_does_not_swallow_this_runs_ending() {
         MarkOutcome::Fresh,
         "a mark from another process is not a mark"
     );
-    assert!(
-        loaded.dropped >= 1,
-        "the drop is counted rather than silent"
+    // Counted, and counted as what it is: a mark was forgotten — and **nothing the user could miss
+    // was lost**, which is the distinction the app's own startup sentence depends on. The two
+    // counts were one number once, and the sum reached a line that said "rows … did not survive":
+    // this ledger holds no rows at all, so that sentence would have been false about a file whose
+    // only missing entry was a stream position.
+    assert_eq!(
+        loaded.forgotten_marks, 1,
+        "the mark the previous run left is forgotten rather than carried"
+    );
+    assert_eq!(
+        loaded.dropped_rows, 0,
+        "a forgotten mark is not a row, so no row-loss is reported for this file"
     );
 
     // And the same through the feed, which is where it matters: the ending this run produces at

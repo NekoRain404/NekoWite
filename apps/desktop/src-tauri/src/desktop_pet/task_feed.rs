@@ -485,22 +485,53 @@ impl PetTaskFeed {
     }
 }
 
+/// The sentence a read of the ledger owes the log, or `None` when nothing a user could miss was
+/// lost.
+///
+/// Split from the printing the way `instance_guard`'s probe is split from its report, and for the
+/// same reason: what counts as a loss, and how it is spelled, is a rule — and a rule that can only
+/// be read off a terminal is one no test holds. Two things about the spelling are decisions. It
+/// counts **rows**, so a read that dropped nothing but stream marks owes no sentence at all (that
+/// sentence used to be the sum of rows, aged-out rows and marks, and it was printed — by this app,
+/// on this machine — as 「2 rows … did not survive」 for a file holding no missing row). And the
+/// plural is written out, because the same line really was printed as 「1 rows」.
+pub fn loss_report(loaded: &super::history::Loaded) -> Option<String> {
+    if loaded.dropped_rows == 0 {
+        return None;
+    }
+    let rows = if loaded.dropped_rows == 1 {
+        "row"
+    } else {
+        "rows"
+    };
+    Some(format!(
+        "nekowite: {} {rows} of the pet's reminder ledger did not survive the restart",
+        loaded.dropped_rows
+    ))
+}
+
 /// The rows the ledger's file held, or an empty ledger when there is no readable one.
 ///
 /// A file this build could not read costs the reminder and never the feature: the app starts with an
 /// empty ledger, which is exactly what it started with before the file existed. What is *not* silent
 /// is how much did not survive — the count is printed rather than dropped, because a bound that
 /// quietly forgets a reminder is the 漏提示 this whole path is graded against.
+///
+/// **The sentence is about rows, and only rows reach it.** It used to be the sum of three different
+/// things — rows, rows that aged out, and *stream marks* — which made the app tell its user that
+/// 「2 rows of the pet's reminder ledger did not survive the restart」 for a file whose two missing
+/// entries were marks: a position in a stream, forgotten on every load by design, and never a
+/// reminder. Marks have their own count now (`Loaded::forgotten_marks`) and no sentence: they are
+/// dropped on every restart, and a line that always appears is one nobody reads. The plural is
+/// spelled rather than left as `1 rows`, which is what the message said before — a real log line,
+/// from this app, on this machine.
 fn restored_history(store: &HistoryStore, now_ms: i64) -> TaskHistory {
     let loaded = store.load(now_ms);
     if let Some(detail) = &loaded.detail {
         eprintln!("nekowite: the pet's reminder ledger was not restored: {detail}");
     }
-    if loaded.dropped > 0 {
-        eprintln!(
-            "nekowite: {} rows of the pet's reminder ledger did not survive the restart",
-            loaded.dropped
-        );
+    if let Some(loss) = loss_report(&loaded) {
+        eprintln!("{loss}");
     }
     loaded.history
 }

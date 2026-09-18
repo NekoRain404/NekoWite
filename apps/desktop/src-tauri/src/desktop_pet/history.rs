@@ -235,11 +235,20 @@ pub enum Decoded {
 }
 
 /// A ledger that was read back, and how much of it did not fit.
+///
+/// **Two counts, not one.** They were one — "dropped" — and the caller rendered the sum as rows,
+/// which made the app print 「2 rows of the pet's reminder ledger did not survive the restart」 for
+/// a file whose two missing entries were *stream marks*: positions in a stream, never rows, and not
+/// even a loss (a mark from a previous runtime can only mis-fire — see the store's header). A
+/// sentence about the user's reminders has to be about the user's reminders, so the two are counted
+/// apart and only the row count can reach that sentence.
 #[derive(Debug)]
 pub struct Restored {
     pub history: TaskHistory,
-    /// Rows and marks the stored file held beyond this build's own bounds, dropped from the old end.
-    pub dropped: usize,
+    /// Rows the stored file held beyond this build's record bound, dropped from the old end.
+    pub dropped_records: usize,
+    /// Marks the stored file held beyond this build's mark bound, dropped from the old end.
+    pub dropped_marks: usize,
 }
 
 /// The bounded index: what ended, and how far each stream has been read.
@@ -425,8 +434,8 @@ impl TaskHistory {
     /// Read a stored ledger back (§6.3's 「重启读取已处理账本」).
     ///
     /// A file longer than this build's bounds is truncated from the old end and counted in
-    /// {@link Restored::dropped} rather than rejected: a bound that refused the whole ledger because
-    /// a previous build kept more rows would turn a size difference into amnesia.
+    /// {@link Restored::dropped_records} rather than rejected: a bound that refused the whole ledger
+    /// because a previous build kept more rows would turn a size difference into amnesia.
     pub fn decode(raw: &str, capacity: usize, mark_capacity: usize) -> Decoded {
         let parsed = match serde_json::from_str::<Persisted>(raw) {
             Ok(parsed) => parsed,
@@ -452,7 +461,8 @@ impl TaskHistory {
         }
         Decoded::Restored(Restored {
             history,
-            dropped: dropped_records + dropped_marks,
+            dropped_records,
+            dropped_marks,
         })
     }
 }
