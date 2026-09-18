@@ -224,6 +224,64 @@ describe('a picked image this app has no reader for', () => {
   })
 })
 
+describe('a paste before the engine has answered', () => {
+  // The sentence is the whole of what is asserted here, and that is not a shortcut: the file is
+  // refused either way, and the panel's `null` — what `AgentGateway.capabilities` leaves behind
+  // when it rejects — is the state a *reader* hits, because the report arrives after this component
+  // mounts. Read in English so the assertion can name the words (the catalogue's other language
+  // carries the same key); the `detail` inside the braces is the service's own.
+  beforeEach(() => {
+    setLocale('en')
+  })
+
+  /** A clipboard carrying one image: all `addFromTransfer` looks at before it reads any bytes. */
+  function paste(name = 'shot.png'): DataTransfer {
+    const file = new File(['x'], name, { type: 'image/png' })
+    const item = { kind: 'file', type: 'image/png', getAsFile: () => file }
+    return {
+      items: [item] as unknown as DataTransferItemList,
+      files: [file] as unknown as FileList,
+    } as unknown as DataTransfer
+  }
+
+  /** The same intake, with the whole report replaced by what the case is about. */
+  function overReport(
+    reports: readonly AgentCapabilityReport[] | null,
+  ): ReturnType<typeof useAgentComposerAttachments> {
+    return useAgentComposerAttachments({ capabilities: () => reports, vault: () => VAULT })
+  }
+
+  it('does not name a report nobody holds, and says nothing has answered instead', async () => {
+    // The two states `AgentPanel` keeps apart — and that both consumers used to fold together with
+    // a `?? []`, which made this sentence unreachable. Written from the reader's side because that
+    // is where the difference is: the refusal is the same act, and what they are told about it is
+    // not.
+    const nothing = overReport(null)
+    await nothing.addFromTransfer(paste())
+    // An engine whose report arrived and names no such feature: the other `unreported`, and the
+    // other sentence.
+    const empty = overReport([])
+    await empty.addFromTransfer(paste())
+
+    expect(notices).toHaveLength(2)
+    expect(notices[0]).toContain('shot.png')
+    expect(notices[0]).toContain('has not answered')
+    expect(notices[1]).toContain('names no such feature')
+    expect(notices[0]).not.toBe(notices[1])
+    // And neither paste put anything in the message: no report licensed a block, so none was built.
+    expect(nothing.held.value).toEqual([])
+    expect(empty.held.value).toEqual([])
+  })
+
+  it('draws no control for either, which is the half the two states do agree on', async () => {
+    // `unreported` is one arm: a window that drew an offer here would be offering something nobody
+    // has said the engine reads. The two differ in words, not in what may be pressed.
+    expect(overReport(null).imageStanding.value.kind).toBe('unreported')
+    expect(overReport([]).imageStanding.value.kind).toBe('unreported')
+    expect(overReport(null).resourceStanding.value.kind).toBe('unreported')
+  })
+})
+
 describe('a picked note', () => {
   it('is still read as text and embedded whole', async () => {
     // The other arm, unchanged — and the guard that matters most here, because the routing added

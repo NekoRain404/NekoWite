@@ -9,6 +9,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import type { AgentCapabilityReport } from '../../../platform/gateways/agent-contracts'
 import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS_PER_BATCH,
@@ -17,6 +18,7 @@ import {
 } from '../../attachments'
 import {
   attachmentKey,
+  attachmentStanding,
   describeRefusal,
   imageAttachment,
   imagesFromDataTransfer,
@@ -276,5 +278,62 @@ describe('what a paste or a drop carries', () => {
     )
     expect(result.accepted).toEqual([])
     expect(result.refused).toEqual([])
+  })
+})
+
+describe('what the engine’s report licenses', () => {
+  /** One row of a report, about images unless the case says otherwise. */
+  function row(finding: AgentCapabilityReport['finding']): AgentCapabilityReport {
+    return { feature: 'image-attachments', declared: 'advertised', finding }
+  }
+
+  /** The other feature's row, which is not this feature's. */
+  function otherFeature(): AgentCapabilityReport {
+    return { ...row({ status: 'available' }), feature: 'embedded-context' }
+  }
+
+  it('reads the three findings off the row the report names', () => {
+    expect(attachmentStanding([row({ status: 'available' })], 'image-attachments')).toEqual({
+      kind: 'allowed',
+    })
+    // The engine's own words travel with its own answer, which is what lets the surface say *why*
+    // rather than that something was refused.
+    const refused = row({ status: 'unavailable', detail: 'the engine read no images' })
+    expect(attachmentStanding([refused], 'image-attachments')).toEqual({
+      kind: 'refused',
+      detail: 'the engine read no images',
+    })
+    const asked = row({ status: 'unverified', detail: 'nobody asked' })
+    expect(attachmentStanding([asked], 'image-attachments')).toEqual({
+      kind: 'unreported',
+      detail: 'nobody asked',
+    })
+    // A row for the other feature is not a row for this one: the two are licensed separately.
+    expect(attachmentStanding([otherFeature()], 'image-attachments')).toEqual({
+      kind: 'unreported',
+      detail: expect.stringContaining('names no such feature'),
+    })
+  })
+
+  it('tells a report that names no such feature apart from no report at all', () => {
+    // **The state this suite exists for.** Both answers are `unreported` — nothing is allowed and
+    // nothing travels — and they are not one state: the reader who offers a file anyway is owed a
+    // sentence, and the sentence is the whole of the difference. `null` is how the panel reaches
+    // the second one (`AgentPanel` keeps `null` when `AgentGateway.capabilities` rejects, which the
+    // adapter does rather than answer a report it cannot read), so a consumer that writes
+    // `reports ?? []` is telling that reader their engine's report names no such feature — a claim
+    // about a report nobody holds.
+    const noReport = attachmentStanding(null, 'image-attachments')
+    const unnamed = attachmentStanding([otherFeature()], 'image-attachments')
+
+    expect(noReport).toEqual({
+      kind: 'unreported',
+      detail: expect.stringContaining('has not answered'),
+    })
+    expect(unnamed).toEqual({
+      kind: 'unreported',
+      detail: expect.stringContaining('names no such feature'),
+    })
+    expect(noReport).not.toEqual(unnamed)
   })
 })

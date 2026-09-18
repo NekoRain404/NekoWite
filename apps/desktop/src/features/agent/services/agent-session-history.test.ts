@@ -90,6 +90,17 @@ describe('whether the engine offers the method behind a control', () => {
     expect(capabilityAvailable([], 'session-list')).toBe(false)
   })
 
+  it('answers `null` — no report at all — the same way, which this question and no other may do', () => {
+    // An engine that has not answered cannot license a control: the gate is an `available` finding,
+    // and "nothing has answered" is not one. The collapse is asserted here so that it is a rule this
+    // function owns rather than a `?? []` each call site writes for itself — and it is *this*
+    // question's rule only. A surface that has to say **why** it refused a file owes a different
+    // sentence per state, and `agent-composer-attachments.ts` keeps them apart
+    // (`attachmentStanding`).
+    expect(capabilityAvailable(null, 'session-list')).toBe(false)
+    expect(capabilityAvailable(null, 'session-close')).toBe(false)
+  })
+
   it('reads each feature on its own line, so the two controls cannot be drawn together', () => {
     // `session-list` available and `session-close` unverified is the state the pinned engine may
     // well be in: history is offered, and the free action is not.

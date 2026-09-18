@@ -263,6 +263,11 @@ const {
  * answer `session/close` without answering `session/list`, and each control is drawn on its own
  * answer rather than on the pair.
  *
+ * `null` is a state of its own and not an empty report — a report this window cannot read is
+ * rejected rather than shortened (`tauri-agent.ts`), so no surface may answer a reader with "names
+ * no such feature" for a report nobody holds. Both leave every control un-drawn; they part company
+ * in one sentence, the one a refused attachment is shown with (`attachmentStanding`).
+ *
  * The report belongs to the runtime the session belongs to and is read once, on mount: a panel is
  * mounted per session, and a runtime the host has replaced has no answer left to give.
  */
@@ -272,9 +277,9 @@ onMounted(async () => {
   try {
     capabilityReports.value = await props.gateway.capabilities(props.session)
   } catch {
-    // Nothing arrived, so nothing is offered — and the composer is left with `null` rather than
-    // with an empty report. The two are different states: one is an engine that answered nothing,
-    // the other an engine that answered "no".
+    // Nothing arrived, so nothing is offered — and the ref stays `null` rather than being folded
+    // into an empty report. The two are different states: see the note above for the sentence they
+    // part company in.
     capabilityReports.value = null
   }
 })

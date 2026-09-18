@@ -46,11 +46,13 @@ import {
 
 export interface UseAgentComposerAttachmentsOptions {
   /**
-   * The engine's own report for this session, or null while it has not arrived.
+   * The engine's own report for this session, or `null` while it has not arrived.
    *
-   * `null` is not an empty report: nothing has answered yet, so every standing is `unreported` and
-   * no control is drawn. A window that drew them anyway would be offering something nobody has
-   * said the engine reads.
+   * Handed to `attachmentStanding` as it is, `null` included: an engine that has not answered and
+   * one whose report names no such feature are both `unreported` — no control is drawn for either,
+   * so neither can be acted on — and they are *not* one state, because the reader who offers a file
+   * anyway is owed a different sentence for each. Folding the two together with a `?? []` is the one
+   * line that erases that, and it was here.
    */
   capabilities: () => readonly AgentCapabilityReport[] | null
   /** The workspace the reader is in, for the file's text. `null` before a session is on screen. */
@@ -107,10 +109,10 @@ export function useAgentComposerAttachments(
   const held = ref<AgentPromptAttachment[]>([])
 
   const imageStanding = computed(() =>
-    attachmentStanding(options.capabilities() ?? [], 'image-attachments'),
+    attachmentStanding(options.capabilities(), 'image-attachments'),
   )
   const resourceStanding = computed(() =>
-    attachmentStanding(options.capabilities() ?? [], 'embedded-context'),
+    attachmentStanding(options.capabilities(), 'embedded-context'),
   )
 
   /** What the engine's report says about one kind of attachment. Taken by kind rather than by

@@ -46,6 +46,10 @@ import type {
  *
  * A missing row is `unreported` and not `refused`, for the same reason: a report this window cannot
  * find the feature in has not reported it absent — it has not reported it at all.
+ *
+ * `unreported` is one arm with two sentences: the report arrived and does not name the feature, or
+ * no report arrived at all. The arm is the same because the handling is (nothing is allowed and the
+ * reader is told why); the sentence is not, because the second is not a fact about a report.
  */
 export type AgentAttachmentStanding =
   | { readonly kind: 'allowed' }
@@ -56,6 +60,11 @@ export type AgentAttachmentStanding =
  *  because the engine is not what is missing. */
 const NO_ROW =
   'this engine’s report names no such feature, so nothing has said whether a prompt may carry one'
+
+/** What to say when no report has arrived — the panel's `null`. Also not a sentence about the
+ *  engine: it has neither answered nor been read, so nothing is known either way. */
+const NO_REPORT =
+  'this session’s engine has not answered with a capability report, so nothing has said whether a prompt may carry one'
 
 /** The two features an attachment is gated on, named as the report names them. */
 export type AgentAttachmentFeature = 'image-attachments' | 'embedded-context'
@@ -72,11 +81,20 @@ export function featureFor(attachment: AgentPromptAttachment): AgentAttachmentFe
  *
  * The report is what `AgentGateway.capabilities` answers, and this reads it rather than a boolean a
  * caller collapsed it into — the whole point of the three arms is that the surface can say *why*.
+ *
+ * **`null` is taken as it is** — a report that never arrived — rather than as an empty one. A
+ * caller writing `reports ?? []` here is the one line that erases the difference, and the difference
+ * is the whole of what a reader is told: an empty report says this engine names no such feature,
+ * while `null` says nothing at all has answered. Neither is reachable as the other:
+ * `AgentGateway.capabilities` rejects a report it cannot read (`tauri-agent.ts`'s `capabilities`,
+ * which throws rather than answer a short list) precisely so no surface shows a claim about a
+ * report nobody holds.
  */
 export function attachmentStanding(
-  reports: readonly AgentCapabilityReport[],
+  reports: readonly AgentCapabilityReport[] | null,
   feature: AgentAttachmentFeature,
 ): AgentAttachmentStanding {
+  if (reports === null) return { kind: 'unreported', detail: NO_REPORT }
   const row = reports.find((report) => report.feature === feature)
   if (row === undefined) return { kind: 'unreported', detail: NO_ROW }
   switch (row.finding.status) {

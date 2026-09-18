@@ -36,15 +36,26 @@ import type {
  * `available` and nothing else — see this file's header. A missing row is the same answer as an
  * unverified one: a report this window cannot find the feature in has not reported it available.
  *
+ * **`null` — no report at all — is that same answer a third time**, and the collapse is made here
+ * rather than by a `?? []` at each call site, so it is one decision with a reason instead of two
+ * coincidences. The reason: a control is drawn on an `available` finding and on nothing else, so a
+ * report that never arrived cannot license one, and reading "nothing has answered" as a yes is the
+ * failure this shape exists to prevent.
+ *
+ * It is *not* the same answer everywhere — a surface that has to say **why** a reader is being
+ * refused owes them a different sentence per state, which is `agent-composer-attachments.ts`'s
+ * `attachmentStanding` — so this collapse belongs to the question this function answers, which is a
+ * boolean.
+ *
  * One function for every feature this surface gates on (`session-list` for the history control
  * itself, `session-close` for the free action on a row) rather than one per feature: the rule is
  * §3.4's, and a second copy of it is a second place for `unverified` to be read as a yes.
  */
 export function capabilityAvailable(
-  reports: readonly AgentCapabilityReport[],
+  reports: readonly AgentCapabilityReport[] | null,
   feature: AgentCapabilityFeature,
 ): boolean {
-  return reports.some(
+  return (reports ?? []).some(
     (report) => report.feature === feature && report.finding.status === 'available',
   )
 }

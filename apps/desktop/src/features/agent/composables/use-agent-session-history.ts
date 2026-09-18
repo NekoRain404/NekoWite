@@ -53,6 +53,11 @@ export interface UseAgentSessionHistoryOptions {
   /**
    * The engine's whole report for this session's runtime, as it arrived — `null` means nothing
    * answered, which is not the same as an engine that answered "no".
+   *
+   * Handed to `capabilityAvailable` unchanged, and that function is where the two are deliberately
+   * read alike: a control is drawn for an `available` finding and on nothing else, so neither state
+   * may license one. This list has no sentence to write about either — the surfaces that do are the
+   * composer's, and they do not fold the two (`use-agent-composer-attachments.ts`).
    */
   capabilities: Ref<readonly AgentCapabilityReport[] | null>
   /**
@@ -134,15 +139,13 @@ export function useAgentSessionHistory(
    *
    * Derived rather than kept as two refs written once on mount, which is what they were: the
    * report is set exactly once, so `computed` and the old imperative pair answer the same thing at
-   * every instant — including the first, where `capabilityAvailable` over an empty list is false
-   * and the controls are not drawn. The two are separate questions about one report: an engine may
-   * answer `session/close` without answering `session/list`, and each control is drawn on its own
-   * answer rather than on the pair.
+   * every instant — including the first, where there is no report at all and `capabilityAvailable`
+   * answers false, so the controls are not drawn. The two are separate questions about one report:
+   * an engine may answer `session/close` without answering `session/list`, and each control is
+   * drawn on its own answer rather than on the pair.
    */
-  const offered = computed(() => capabilityAvailable(options.capabilities.value ?? [], 'session-list'))
-  const closeable = computed(() =>
-    capabilityAvailable(options.capabilities.value ?? [], 'session-close'),
-  )
+  const offered = computed(() => capabilityAvailable(options.capabilities.value, 'session-list'))
+  const closeable = computed(() => capabilityAvailable(options.capabilities.value, 'session-close'))
 
   /** The list's element id, so the rows and the listbox agree on one name. */
   const listId = `agent-history-${options.sessionId}`
