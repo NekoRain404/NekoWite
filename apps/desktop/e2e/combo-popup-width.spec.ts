@@ -153,4 +153,59 @@ test.describe('the width of a combo box’s list', () => {
     expect(read.popupRight).toBeLessThanOrEqual(read.viewport)
     expect(read.popup).toBeGreaterThanOrEqual(read.field - SUBPIXEL)
   })
+
+  /**
+   * The other bound, driven until it is the one that binds.
+   *
+   * The first three cases all end with the *field* deciding the width, so none of them says
+   * anything about the ceiling — a list bounded by nothing would pass every one of them. The
+   * ceiling is reachable the ordinary way: the field is editable and its value is deliberately
+   * never constrained by `options` (`ComboBox.vue`), so a pasted model id of any length becomes an
+   * option and its row is what makes the *content*, rather than the field, the widest thing in the
+   * rule. This is the case that fails if the list is left with no room bound at all.
+   */
+  test('is bounded by the window when one option is longer than the room for it', async ({ page }) => {
+    await openDialog(page, 860, 560)
+    // Long enough that its row cannot fit in the 860px window at any font size this app uses.
+    const long = `qwen2.5-coder-${'x'.repeat(200)}:latest`
+    // Pasted, and then the field pressed to look at the suggestions — the flow a user who has a
+    // model id in hand actually takes. The press is not decoration: `onInput` narrows the list
+    // against the options it has *this* keystroke, the long id only becomes one on the next
+    // render, and `hide()` is what an empty narrowing does — so the list is opened by the press
+    // rather than by the paste, and it opens on the whole set, long id included.
+    await page.locator('#settings-ai-model').fill(long)
+    await page.locator('#settings-ai-model').click()
+    await page.locator('.combo-popup').waitFor({ state: 'visible', timeout: 5000 })
+    await page.waitForTimeout(300)
+    const read = await page.evaluate(() => {
+      const field = document.querySelector('#settings-ai-model') as HTMLElement
+      const popup = document.querySelector('.combo-popup') as HTMLElement
+      const label = popup.querySelector('.combo-option-label') as HTMLElement
+      const f = field.getBoundingClientRect()
+      const p = popup.getBoundingClientRect()
+      const round = (n: number): number => Math.round(n * 100) / 100
+      return {
+        field: round(f.width),
+        popup: round(p.width),
+        popupLeft: round(p.left),
+        popupRight: round(p.right),
+        viewport: window.innerWidth,
+        // Not the row's `scrollWidth`: the row is a flex box that shrank to the popup, so it
+        // reports the width it was given rather than the one it wanted. The label is the box the
+        // text is measured in, and it is the one that ellipsises — so `scrollWidth > clientWidth`
+        // there is the evidence that the text did not fit, which is the whole question.
+        labelWanted: round(label.scrollWidth),
+        labelGot: round(label.clientWidth),
+      }
+    })
+    console.log(
+      `the long option: list ${read.popup} (label wanted ${read.labelWanted}, got ${read.labelGot}; field ${read.field}), ${read.popupLeft}..${read.popupRight} in ${read.viewport}`,
+    )
+    // The ceiling is the bound that held. Without this the case would pass on a list that simply
+    // happened to fit, which is what the first three cases already cover.
+    expect(read.labelWanted).toBeGreaterThan(read.labelGot)
+    expect(read.popupLeft).toBeGreaterThanOrEqual(0)
+    expect(read.popupRight).toBeLessThanOrEqual(read.viewport)
+    expect(read.popup).toBeLessThan(read.viewport)
+  })
 })
