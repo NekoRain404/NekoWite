@@ -9,6 +9,10 @@
 //!   and the commands are the only thing that reaches them from a window.
 //! - [`commands`]: the `#[tauri::command]` IPC surface — thin args/DTO/error
 //!   mapping only.
+//! - [`main_window`]: what the main window is — the label the config declares it
+//!   under, the one builder call every declared window is built by, and the
+//!   raise that builds it again when the user closed it and the pet kept the
+//!   process alive.
 //! - [`instance_guard`]: whether this process's single-instance guard actually armed — the
 //!   plugin's D-Bus name either exists or it does not, and the launch that has none is the one
 //!   that used to say nothing at all.
@@ -28,6 +32,7 @@ pub mod domain;
 pub mod errors;
 #[cfg(target_os = "linux")]
 pub mod instance_guard;
+pub mod main_window;
 pub mod open_file;
 pub mod providers;
 pub mod state;
@@ -63,10 +68,21 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
+            // **The window this raises is not assumed to exist.** It is destroyed when the user
+            // closes it, and while the pet is on the process outlives it — the wry runtime exits
+            // only when its window map empties (`tauri-runtime-wry-2.11.4/src/lib.rs:4310-4322`),
+            // and the pet's windows are in that map. With the window gone this callback used to
+            // match nothing, so every launch while the app was in that state exited 0 with no
+            // window and nothing said anywhere. `main_window::raise` shows the window that is
+            // there and *builds it again from `tauri.conf.json`'s own entry* when it is not; the
+            // sentence is for the case where even that fails, because it is the only thing this
+            // process can do about it — the second launch's exit code belongs to the plugin, which
+            // exits 0 before its caller could change it (`platform_impl/linux.rs:84-90`).
+            if let Err(detail) = main_window::raise(app) {
+                eprintln!(
+                    "nekowite: a launch asked this instance to show its main window and it could \
+                     not: {detail}"
+                );
             }
             // A second launch is how a file manager opens a `.md` in an app that
             // is already running, so this `argv` is where the file is. It used to
@@ -199,15 +215,14 @@ pub fn run() {
             app.manage(state::DesktopPetState::new(app.handle()));
 
             // The windows `run` above took over from Tauri's own pass, built
-            // from their config so nothing about them is duplicated here.
+            // from their config so nothing about them is duplicated here — and
+            // through `main_window::build`, which is the one place a declared
+            // window becomes a window, so the clipboard setting that builder
+            // carries cannot be forgotten by whichever site builds the next one
+            // (`main_window::raise` is the other, and it rebuilds the main window
+            // the user has closed).
             for config in app.config().app.windows.iter().filter(|w| !w.create) {
-                tauri::WebviewWindowBuilder::from_config(app.handle(), config)?
-                    // What makes right-click Paste possible at all: with the
-                    // setting off, `document.execCommand('paste')` returns false
-                    // and `navigator.clipboard.readText()` rejects
-                    // `NotAllowedError`, driver gesture or not.
-                    .enable_clipboard_access()
-                    .build()?;
+                main_window::build(app.handle(), config)?;
             }
             // `nekowite notes.md`: the first launch's file arrives in our own
             // `argv`, before any window or listener exists. That is this

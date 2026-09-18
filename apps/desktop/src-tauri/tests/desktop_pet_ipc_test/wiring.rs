@@ -395,12 +395,78 @@ fn a_click_on_a_task_reaches_the_main_window_as_the_key_and_nothing_else() {
     assert_eq!(heard[0].as_object().expect("an object").len(), 6);
 }
 
+/// A click on a task with no main window open *builds* one — it is not refused.
+///
+/// This used to assert the opposite, and its premise was the thing that was wrong: "no window
+/// labelled `main`" was read as "the app was closed", so the pet answered 「the main window is not
+/// open, so there is nowhere to show the settings」 and nothing acted on the refusal. But a process
+/// whose main window was closed while the pet is on is not a closed app — the pet's own windows are
+/// what keep it running — and it is the *rule* (`main_window::raise`) that a window which is gone is
+/// built again from `tauri.conf.json`'s declaration. What this case holds is that the pet's route
+/// reaches that rule: the click answers, and the window it needs exists afterwards.
 #[test]
-fn a_click_with_no_main_window_is_refused_in_words() {
+fn a_click_with_no_main_window_builds_one_again() {
+    // The app's own config, because the declaration is the thing being built from: `app()` next
+    // door uses `mock_context`, whose config declares no windows at all.
+    let surfaces = FakeSurfaces::new();
+    let pet = Pet {
+        app: mock_builder()
+            .manage(DesktopPetState::with_surfaces(Box::new(surfaces)))
+            .invoke_handler(tauri::generate_handler![
+                desktop_pet_tasks,
+                desktop_pet_open_task
+            ])
+            .build(tauri::generate_context!())
+            .expect("the app's own tauri.conf.json builds this surface"),
+    };
+    assert!(
+        pet.app.get_webview_window(MAIN_WINDOW).is_none(),
+        "the state a closed main window leaves behind: the process is up, the window is not"
+    );
+
+    let task = json!({
+        "agentId": "opencode",
+        "profileId": "default",
+        "runtimeEpoch": "epoch-1",
+        "vaultId": "vault-a",
+        "sessionId": "ses-1",
+        "runId": "run-0",
+    });
+    let router = window(&pet, "pet-1");
+    call(&router, "desktop_pet_open_task", json!({ "task": task }))
+        .expect("the route answers by building the window rather than by refusing");
+
+    let rebuilt = pet
+        .app
+        .get_webview_window(MAIN_WINDOW)
+        .expect("the click put the main window back");
+    let config = pet
+        .app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|window| window.label == MAIN_WINDOW)
+        .expect("the config declares the window that came back")
+        .clone();
+    assert_eq!(
+        rebuilt.label(),
+        config.label,
+        "the window that came back is the declared one, built from the config rather than from a \
+         copy of its options"
+    );
+}
+
+/// And where there is no declaration to build from, the refusal names that — not a silence.
+///
+/// The other arm, on the harness's own `mock_context`: a config that declares no windows is the one
+/// state a raise cannot answer, and it has to answer something. The sentence names the declaration
+/// because that is what is missing; the old one named the window ("the main window is not open"),
+/// which described the state and not the reason.
+#[test]
+fn a_click_with_nothing_declared_is_refused_in_words() {
     let pet = app();
 
-    // No window labelled `main` exists in this app, which is the "the app was closed" case: the
-    // pet does not get to reopen it, and the refusal says which of the two happened.
     let task = json!({
         "agentId": "opencode",
         "profileId": "default",
@@ -411,8 +477,11 @@ fn a_click_with_no_main_window_is_refused_in_words() {
     });
     let router = window(&pet, "pet-1");
     let refusal = call(&router, "desktop_pet_open_task", json!({ "task": task }))
-        .expect_err("there is nowhere to show the session");
+        .expect_err("this config declares no window to build");
 
     let sentence = refusal.as_str().expect("a sentence, not a code");
-    assert!(sentence.contains("main window"), "{sentence}");
+    assert!(
+        sentence.contains("tauri.conf.json") && sentence.contains(MAIN_WINDOW),
+        "the refusal has to name what is missing: {sentence}"
+    );
 }

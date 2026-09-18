@@ -135,10 +135,12 @@ pub const PET_HOST_APPEARANCE_CHANNEL: &str = "pet-host-appearance";
 
 /// The main window's label, as the app builds it from `tauri.conf.json`.
 ///
-/// Spelled here rather than taken from a request for the reason the whole file is about: which
-/// window the pet's 设置 raises is the host's decision, and `open_file.rs` already names this
-/// label for the same purpose (a second launch raises the same window).
-const MAIN_WINDOW: &str = "main";
+/// Taken from [`crate::main_window`] rather than spelled here: the label is one fact about one
+/// window, and it is now named in three places — this file's raise, the setup that builds the
+/// window, and the launch that rebuilds it when the user has closed it — so it lives in the module
+/// those three are about. It is still never taken from a request: which window the pet's 设置
+/// raises is the host's decision.
+const MAIN_WINDOW: &str = crate::main_window::LABEL;
 
 /// §5.1's pet sub-pages, as this side validates them.
 ///
@@ -807,8 +809,12 @@ pub fn desktop_pet_open_task<R: tauri::Runtime>(
 /// Two steps, in this order, and the order is the requirement: §5.1's 「主窗口隐藏时先安全唤起，不
 /// 依赖 DOM 是否已挂载」. The window is raised first, so the event lands on a listener that is
 /// mounted — a request delivered to a hidden window's page is a request answered by nothing.
-/// The main window is never *created* here: if it is gone, that is a closed app, and a pet window
-/// does not get to reopen it.
+///
+/// *Closed* is not the same state as *gone for good*: while the pet is on, this process outlives
+/// the main window the user closed, and `main_window::raise` builds it again from its declaration
+/// rather than refusing. It used to answer 「the main window is not open, so there is nowhere to
+/// show the settings」 and nothing acted on it — a refusal a right-click could not get past, in
+/// the one state this host is the only thing that can report.
 #[tauri::command]
 pub fn desktop_pet_open_settings<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -832,23 +838,14 @@ pub fn desktop_pet_open_settings<R: tauri::Runtime>(
 
 /// Raise the main window, or say why it cannot be raised.
 ///
-/// Each step is reported rather than swallowed: "the settings did not open" is a dead-looking
-/// right-click, and which of the three failed is what tells the difference between a window that
-/// is minimized and one the session manager took away.
+/// One call into [`crate::main_window::raise`], which is where both halves live: the window that
+/// exists is unminimized, shown and focused (each step reported rather than swallowed — "the
+/// settings did not open" is a dead-looking right-click, and which of the three failed is what
+/// tells a minimized window apart from one the session manager took away), and the window the user
+/// closed is built again from its declaration instead of being answered with a refusal nobody
+/// could act on.
 fn raise_main<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
-    use tauri::Manager;
-    let window = app.get_webview_window(MAIN_WINDOW).ok_or_else(|| {
-        "the main window is not open, so there is nowhere to show the settings".to_string()
-    })?;
-    window
-        .unminimize()
-        .map_err(|error| format!("the main window could not be restored: {error}"))?;
-    window
-        .show()
-        .map_err(|error| format!("the main window could not be shown: {error}"))?;
-    window
-        .set_focus()
-        .map_err(|error| format!("the main window could not be focused: {error}"))
+    crate::main_window::raise(app)
 }
 
 /// Tell every window what the feature state is now.
