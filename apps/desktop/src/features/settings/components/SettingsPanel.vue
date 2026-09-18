@@ -51,6 +51,7 @@ import { createAgentSettingsClients } from '../../../app/agent-settings-composit
 import { PET_SETTINGS_SECTION, type PetSettingsPage } from '../../../platform/gateways/pet-contracts'
 import { useSettingsDialog } from '../composables/use-settings-dialog'
 import { DIALOG_WIDTH_MIN, useDialogSize } from '../composables/use-dialog-size'
+import { resetContentScroll } from '../composables/content-scroll'
 import { markArrived, markLeaving } from '../../../composables/surface-leave'
 import type { SettingsOpenTarget, SettingsSectionId } from '../types'
 
@@ -107,6 +108,15 @@ const agentClients = createAgentSettingsClients()
 const dialogRef = ref<HTMLElement | null>(null)
 const overlayRef = ref<HTMLElement | null>(null)
 
+/**
+ * The scroll container, and the reason this file holds it: it is the box the *rail* replaces the
+ * contents of. Handed to {@link resetContentScroll} rather than to a rule of its own, because the
+ * agents section's own rail swaps pages inside this same box and one rule with two callers is what
+ * keeps the two swaps from landing in different places — see `content-scroll.ts` for the
+ * measurement and for why the second caller finds the box instead of being handed it.
+ */
+const contentRef = ref<HTMLElement | null>(null)
+
 const { appVersion, onOverlayPointerDown, focusDialog } = useSettingsDialog({
   dialogRef,
   onClose: () => emit('close'),
@@ -130,8 +140,17 @@ const {
 
 // The keyboard follows the eye: changing section moves focus back to the panel
 // container, so Tab starts from the top of the new section.
+//
+// The eye follows the same rule, and it is the half that was missing: focus went to the top of the
+// new section while the *scroll* stayed where the old one had left it, so a reader who had scrolled
+// to the bottom of the AI page arrived at the bottom of whichever page they opened next. Measured
+// in Chromium at 1280x800: `1194/1230` before the press, `186/186` after it — the last row of a
+// page they had not seen the top of. The reset is instant and in this same watcher, because it is
+// the same act: the reader chose a different page, and both the keyboard and the viewport move to
+// where that page begins.
 watch(activeSection, () => {
   focusDialog()
+  resetContentScroll(contentRef.value)
 })
 
 // The request arriving while the dialog is already open — §5.1's 设置定位 has to answer the
@@ -183,7 +202,10 @@ watch(
       </div>
       <div class="dialog-body">
         <SettingsNavigation v-model:active-section="activeSection" />
-        <div class="dialog-content">
+        <div
+          ref="contentRef"
+          class="dialog-content"
+        >
           <!-- One page at a time, and the swap is a *cross-fade*: the page
                leaving is still arriving's equal, not a thing to be waited on.
                Vue's `<Transition>` default mode runs the two together, which

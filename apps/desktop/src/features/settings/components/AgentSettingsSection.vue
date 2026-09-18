@@ -66,6 +66,7 @@ import type { CataloguePrefill } from '../../agent-settings/components/AgentCata
 import type { AgentSettingsClients } from '../../../app/agent-settings-composition'
 import type { AgentPageId } from '../types'
 import { useAgentPanel } from '../composables/use-agent-panel'
+import { resetContentScroll } from '../composables/content-scroll'
 import AgentSettingsNavigation from './AgentSettingsNavigation.vue'
 
 const props = defineProps<{
@@ -280,6 +281,22 @@ function landing(id: AgentPageId): AgentPageId {
 }
 watch(mountable, () => { active.value = landing(active.value) }, { immediate: true })
 
+/**
+ * The rail's own viewport rule: the reader arrives at the top of the page they opened.
+ *
+ * The second-level rail had the first-level rail's defect — measured in Chromium at 1280x800, the
+ * `runtime` page scrolled to the bottom and the next row pressed, the reader landed **108px** down
+ * a page that had just opened. `resetContentScroll` is the dialog's rule and not a copy of it: the
+ * box is found from this section's own root, because the box belongs to the panel above and neither
+ * level may name the other's markup. `content-scroll.ts` carries the measurement and the reasoning.
+ *
+ * A watcher and not a handler on the rail's event, so the two ways `active` can move are one path:
+ * the row the reader presses, and `landing` re-homing a page whose client stopped being buildable
+ * under it. The second is not the reader's gesture and it is still a page they have never seen.
+ */
+const root = ref<HTMLElement | null>(null)
+watch(active, () => { resetContentScroll(root.value) })
+
 
 /**
  * One sentence per section that is not mounted, keyed by the list's own ids.
@@ -315,7 +332,10 @@ const gaps = computed(() => [
 </script>
 
 <template>
-  <section class="settings-section">
+  <section
+    ref="root"
+    class="settings-section"
+  >
     <span class="settings-label">{{ t('agent.settings.agents.section.title') }}</span>
     <p class="settings-note">
       {{ t('agent.settings.agents.section.hint') }}
