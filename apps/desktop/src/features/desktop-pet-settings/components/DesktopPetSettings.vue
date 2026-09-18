@@ -70,6 +70,11 @@ import { computed, onMounted, ref, shallowRef, useSlots, watch } from 'vue'
 import { Bell, FolderKanban, Heart, MessageSquare, PawPrint, SlidersHorizontal, Wrench } from 'lucide-vue-next'
 import { PET_SETTINGS_PAGES } from '../../../platform/gateways/pet-contracts'
 import { t } from '../../../i18n'
+// The settings dialog's own rule, taken from where it lives rather than restated: this rail swaps
+// the page inside that dialog's one scroll container, which is the same act the dialog's rail and
+// the agents tree's rail perform. `content-scroll.ts` finds the box from the content being swapped
+// into it, so neither feature has to spell the other's class.
+import { resetContentScroll } from '../../settings/composables/content-scroll'
 import { usePetSettings } from '../composables/use-pet-settings'
 import PetGeneralSettings from './PetGeneralSettings.vue'
 import PetNotificationSettings from './PetNotificationSettings.vue'
@@ -202,6 +207,29 @@ watch(active, (page) => {
   for (const domain of PAGE_DOMAINS[page]) ensureLoaded(domain)
 }, { immediate: true })
 
+/** This container's own element, which `resetContentScroll` walks up from to find the dialog's
+ *  scroll box. */
+const root = ref<HTMLElement | null>(null)
+
+/**
+ * The rail's viewport rule: the reader arrives at the top of the page they opened.
+ *
+ * **Measured, because a report of this one had only been read.** Nothing in this directory touched
+ * the offset, and the section is the third rail to reuse `.dialog-content` — but the magnitude is
+ * not the other two's. `.pet-settings__rail` is not sticky, so a reader can only press a row while
+ * the rail is inside the box: at rest its top is 16px below the box's, so **16px** is the most the
+ * container can be scrolled with the whole rail still on screen. Pressed there, the page that was
+ * opened arrived at `108` against its own at-rest `108` — 16px past its top, with its first row cut
+ * off. `settings-scroll-reset.spec.ts` reads both numbers off the boxes rather than choosing them,
+ * so the day this rail moves (a section label above it, a sticky rail, a taller tab strip) the
+ * offset a reader can reach is measured again rather than assumed.
+ *
+ * A watcher and not a handler on the rail's click, so the two ways `active` can move are one path:
+ * the row the reader presses, and `landing` re-homing a page whose component this build does not
+ * have. The second is not the reader's gesture and it is still a page they have never seen.
+ */
+watch(active, () => { resetContentScroll(root.value) })
+
 onMounted(() => {
   if (context === null) return
   for (const domain of PREVIEW_DOMAINS) ensureLoaded(domain)
@@ -218,7 +246,10 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="pet-settings">
+  <section
+    ref="root"
+    class="pet-settings"
+  >
     <p
       v-if="!context"
       class="settings-note pet-settings__absence"

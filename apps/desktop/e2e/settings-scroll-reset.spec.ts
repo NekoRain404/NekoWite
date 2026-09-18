@@ -39,7 +39,10 @@ import { openNote } from './support/editorHarness'
 const AGENT_PAGES = ['runtime', 'provider', 'configuration', 'skills', 'permission', 'registry', 'catalogue']
 
 /** The dialog rail's rows, in `SettingsNavigation.vue`'s order — the ids the spec clicks by index. */
-const SECTIONS = ['general', 'appearance', 'editor', 'export', 'ai', 'plugins', 'agents', 'desktopPet']
+const SECTIONS = ['general', 'appearance', 'editor', 'export', 'ai', 'plugins', 'agents', 'desktop-pet']
+
+/** The pet's own rail, in `DesktopPetSettings.vue`'s order — `PET_SETTINGS_PAGES`'s. */
+const PET_PAGES = ['general', 'character', 'bubble', 'notification', 'care', 'project', 'advanced']
 
 /**
  * The registry's answer, as `agent_registry_read` serializes it — the same shape
@@ -243,4 +246,98 @@ test.describe('the settings dialog, when its content is swapped', () => {
     }
     console.log(`the agents rail (scrollTop/firstLine): ${seen.join(' ')} at rest ${rest.firstLineOffset}`)
   })
+
+  /**
+   * The pet's own rail, on the same container, with the third shape of the same defect.
+   *
+   * `DesktopPetSettings.vue` swaps the page inside `.dialog-content` through a keyed
+   * `<Transition>` and touched no offset, so the reader who pressed a row while the container was
+   * scrolled arrived at the page they opened already part-way down it. Measured in Chromium at
+   * 1280x800 by this case, which fails without the fix.
+   *
+   * **The offset this case uses is read, not chosen.** `.pet-settings__rail` is not sticky, so a
+   * reader can only press a row while the rail is inside the box — and how far that is, is the
+   * rail's own geometry: at rest its top is 16px below the box's, so **16px** is the most the
+   * container can be scrolled with the whole rail still on screen. That bound is why this rail's
+   * defect is smaller than the dialog's (186px) or the agents' (108px) and why it is reported
+   * beside them rather than instead of them: the magnitude is a property of where this rail sits,
+   * not of the rule the other two now follow. It is asserted to be non-zero so the case cannot
+   * pass on a layout where a reader could never have scrolled at all.
+   */
+  test('does the same for every row of the pet’s own rail', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await openNote(page)
+    await page.locator('.status-btn').last().click()
+    await page.locator('.settings-overlay').waitFor({ state: 'visible', timeout: 5000 })
+    await page.locator('.dialog-nav .nav-row').nth(SECTIONS.indexOf('desktop-pet')).click()
+    await page.locator('.pet-settings__rail').waitFor({ state: 'visible', timeout: 5000 })
+    await page.waitForFunction(
+      (count) => document.querySelectorAll('.pet-settings__tab').length === count,
+      PET_PAGES.length,
+      { timeout: 5000 },
+    )
+    await page.waitForTimeout(300)
+
+    // How far the container can be scrolled while the whole rail is still inside it, read off the
+    // two boxes rather than assumed.
+    const reach = await page.evaluate(() => {
+      const content = document.querySelector('.dialog-content') as HTMLElement
+      const rail = document.querySelector('.pet-settings__rail') as HTMLElement
+      return Math.round(
+        rail.getBoundingClientRect().top - content.getBoundingClientRect().top,
+      )
+    })
+    console.log(`the pet rail: reach ${reach}px`)
+    expect(reach, 'the rail is at the very top of the box, so no reader could scroll behind it')
+      .toBeGreaterThan(0)
+
+    const seen: string[] = []
+    for (const id of PET_PAGES) {
+      // Every row is opened from a *different*, taller page, so the offset the case sets is not
+      // clamped away before the row is pressed.
+      const from_ = id === 'bubble' ? 'character' : 'bubble'
+      // This page's own at-rest number, taken the one way that cannot be the thing under test:
+      // opened from the other page with the container already at its top, so the offset can only
+      // be 0. Read per page rather than once for all of them — the pages differ by a pixel in
+      // where their root lands (a wrapped rail, a note that one page draws and the next does not),
+      // and a comparison across pages would then be measuring that difference instead of the
+      // offset. The selector is the wrapper and not the page, so the number is the *page root's*
+      // top edge: `landing` takes the shown element's first child, which is every pet page's own
+      // `<section class="settings-section">`.
+      const baseline = await swap(page, from_, id, 0)
+      expect(baseline.scrollTop).toBe(0)
+
+      const to = await swap(page, from_, id, reach)
+      seen.push(`${id}: ${to.scrollTop}/${to.firstLineOffset} (at rest ${baseline.firstLineOffset})`)
+      console.log(`the pet rail, ${id}: ${seen[seen.length - 1]}`)
+      expect(to.selected).toBe(id)
+      expect(to.scrollTop).toBe(0)
+      expect(to.firstLineOffset).toBe(baseline.firstLineOffset)
+    }
+    console.log(`the pet rail: ${seen.join('; ')}`)
+  })
 })
+
+/**
+ * Open `from`, put the container at `offset`, press `to`, and answer where the reader landed.
+ *
+ * The offset is read back *before* the press and asserted, because Playwright scrolls an element
+ * into view before clicking it: a press the harness had first scrolled the container for would
+ * measure the harness rather than the page. That is not hypothetical — this file's first attempt
+ * at this rail scrolled to the bottom, and every press came back `0` for the helper's reason while
+ * the page kept its offset.
+ */
+async function swap(page: Page, from: string, to: string, offset: number): Promise<Landing> {
+  await page.locator(`.pet-settings__tab[data-page="${from}"]`).click()
+  await page.waitForTimeout(300)
+  await page.evaluate((top: number) => {
+    ;(document.querySelector('.dialog-content') as HTMLElement).scrollTop = top
+  }, offset)
+  const before = await page.evaluate(
+    () => Math.round((document.querySelector('.dialog-content') as HTMLElement).scrollTop),
+  )
+  expect(before, `the container moved before ${to} was pressed`).toBe(offset)
+  await page.locator(`.pet-settings__tab[data-page="${to}"]`).click()
+  await page.waitForTimeout(350)
+  return landing(page, '.pet-settings__content', '.pet-settings__tab')
+}
