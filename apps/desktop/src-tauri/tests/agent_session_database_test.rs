@@ -56,8 +56,9 @@ use nekowite_lib::agent_runtime::registry::{
     AgentRegistration, AgentRegistry, EnvPolicy, InstallSource,
 };
 
-/// The six roots `isolated_profile_env` names, and the four variables that close what the engine
-/// would otherwise read out of the environment it is handed (`process::isolated_profile_env`).
+/// The roots `isolated_profile_env` names, and the variables that close what the engine would
+/// otherwise read out of the environment it is handed — `environment`'s record carries the full
+/// list and the measurement behind each one (`environment::isolated_profile_env`).
 const ROOTS: [&str; 5] = [
     "HOME",
     "XDG_CONFIG_HOME",

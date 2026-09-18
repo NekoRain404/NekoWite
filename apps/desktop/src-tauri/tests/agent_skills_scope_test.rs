@@ -9,7 +9,7 @@
 //!
 //! The distinction this file exists to hold is §8.2's, and it is the one a readout gets wrong by
 //! the flattering direction: a scope the engine's rules name is **configured**, and a scope this
-//! launch actually reads **contributes**. They came apart when `process.rs`'s `isolated_profile_env`
+//! launch actually reads **contributes**. They came apart when `environment.rs`'s `isolated_profile_env`
 //! began setting `OPENCODE_DISABLE_EXTERNAL_SKILLS`, which stopped the engine scanning `.claude`
 //! and `.agents` — and a scope list that kept describing those directories as sources of skills
 //! would have told a user their own private skills were being read by an agent that had stopped
@@ -61,7 +61,7 @@ fn write_skill(root: &Path, folder: &str, name: &str) -> PathBuf {
 }
 
 /// One engine variable, as a launch environment carries it — the shape
-/// `process::isolated_profile_env` returns, written out here because this target includes
+/// `environment::isolated_profile_env` returns, written out here because this target includes
 /// `skills.rs` alone and reaches no sibling module.
 fn switch(variable: &str, value: &str) -> (String, String) {
     (variable.to_string(), value.to_string())

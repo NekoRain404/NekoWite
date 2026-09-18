@@ -97,7 +97,7 @@ impl SkillScope {
 /// launch that sets a switch and a scope list somebody remembered to tell about it are two facts
 /// that can drift, and they did: setting `OPENCODE_DISABLE_EXTERNAL_SKILLS` in the app-managed
 /// launch stopped the engine reading `.claude` and `.agents` while the scope list still described
-/// those directories as sources of skills. `process::isolated_profile_env` is what an app-managed
+/// those directories as sources of skills. `environment::isolated_profile_env` is what an app-managed
 /// launch is built from, so the vector it returns is what decides `suppressed_by` below, and the
 /// readout and the launch cannot disagree.
 ///
@@ -146,7 +146,7 @@ fn is_on(value: &str) -> bool {
 /// directory itself, and a caller wanting the ancestors adds them — the worktree root is a fact
 /// about the engine's session that this module cannot see.
 ///
-/// `env` is the environment that launch is given — `process::isolated_profile_env`'s own vector
+/// `env` is the environment that launch is given — `environment::isolated_profile_env`'s own vector
 /// for an app-managed profile, and nothing at all for one reusing the user's configuration, which
 /// this host injects nothing into. It is a parameter rather than a reach for the process
 /// environment because a readout is built for one launch and must describe *that* one; an empty

@@ -56,7 +56,7 @@
 //! `session/new`'s model list, and an inherited `OPENCODE_DB` put the engine's database at the
 //! developer's own path. The second test below is that measurement in both directions, and the
 //! launch now carries the value that closes each one. It is a deny-list and cannot be complete —
-//! what it does not cover is named in `process::isolated_profile_env`'s own doc comment rather
+//! what it does not cover is named in `environment::isolated_profile_env`'s own doc comment rather
 //! than left to be assumed.
 //!
 //! The walk-up is *not* one of those: it reads `.opencode` and `opencode.json` from every directory

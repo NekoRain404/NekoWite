@@ -9,7 +9,7 @@
 //!    disk instead (`SkillLibrary::view_of`) and refuses a name that is no longer there.
 //!  - **A window does not name a profile root.** The roots the scope list is built from come off
 //!    the profile this backend opened, and the engine switches that decide `suppressed_by` come
-//!    from the very environment the launch is given (`process::isolated_profile_env`), never from a
+//!    from the very environment the launch is given (`environment::isolated_profile_env`), never from a
 //!    list somebody remembered to keep in step.
 //!  - **The project scope is not in the list.** `opencode_scopes_without_project` says why: it
 //!    needs a project, this dialog has none, and a page listing a project it does not know would be

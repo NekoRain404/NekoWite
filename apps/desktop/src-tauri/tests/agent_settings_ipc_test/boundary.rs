@@ -219,7 +219,7 @@ fn the_injected_roots_the_readout_reports_are_the_ones_the_launch_uses() {
 /// live source.
 ///
 /// It is a test rather than a comment because the two facts live in two files: the launch
-/// environment is `process::isolated_profile_env`, and the scopes §8.2's page renders are
+/// environment is `environment::isolated_profile_env`, and the scopes §8.2's page renders are
 /// `skills::opencode_scopes`. A scope list taking a hand-kept list of "switches we believe are
 /// set" is exactly how the page came to name `.claude` and `.agents` as sources of skills after
 /// the app-managed launch had stopped scanning them; feeding it the launch's own vector is the

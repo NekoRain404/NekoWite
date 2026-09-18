@@ -3,9 +3,15 @@
 //!
 //! Layering, so that a change has one place to land:
 //!
-//! - [`process`] — the environment the engine is launched with, including the
-//!   CA bundle of P0 §2.4. Spawning, the process group and its teardown belong
-//!   to the ACP SDK's transport (see that module for why).
+//! - [`process`] — the launch itself: the CA bundle of P0 §2.4, a bound on the
+//!   frames the engine may send, and the stderr sample. Spawning, the process
+//!   group and its teardown belong to the ACP SDK's transport (see that module
+//!   for why).
+//! - [`environment`] — the environment that launch carries: the roots a
+//!   profile-isolated engine is handed, and the variables it may not let an
+//!   inherited environment decide. Its own module because it is a *record* as
+//!   much as a function — what is closed, what is left open, and how each was
+//!   measured against the pinned engine.
 //! - [`acp_transport`] — the ACP connection itself: the SDK's client, our own
 //!   per-call timeouts, and the failure classification the SDK cannot do.
 //! - [`session`] — sessions: which engine session the host knows about.
@@ -94,10 +100,12 @@ pub mod update;
 pub mod usage;
 
 mod acp_transport;
+mod environment;
 mod process;
 mod runs;
 
 pub use acp_transport::{EngineConnection, EngineEvents, PermissionRequest};
+pub use environment::isolated_profile_env;
 pub use events::{
     AgentEventEnvelope, AgentEventKind, AgentFailureCode, AgentIdentity, TransportError,
 };
@@ -110,7 +118,7 @@ pub use live_notes::{
     LIVE_NOTE_ATTACH_CHANNEL, LIVE_NOTE_BOUND, LIVE_NOTE_REQUEST_CHANNEL,
 };
 pub use permission_grants::{EngineHttp, GrantsReadout, SavedGrant};
-pub use process::{env_pairs, isolated_profile_env, EngineLaunch, SYSTEM_CA_BUNDLE};
+pub use process::{env_pairs, EngineLaunch, SYSTEM_CA_BUNDLE};
 pub use recovery::{Baseline, Recovery, RecoveryOutcome, RecoveryPlan, RecoveryRefusal};
 pub use session::{
     AgentRuntime, AgentRuntimeEvents, RuntimeEvent, SessionError, SessionInfo, INITIALIZE_BOUND,
