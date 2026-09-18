@@ -84,6 +84,8 @@ bash scripts/package-win.sh
 
 Linux 二进制依赖系统里的 GTK / WebKitGTK。Windows 便携版不需要安装器。
 
+**支持的架构只有 x86_64（Linux / glibc）。** `scripts/package-linux.sh` 产出的每一个产物——`nekowite_<version>_x64`、deb、rpm、`nekowite_<version>_amd64.AppImage`——都是这一个架构，而随包内置的 OpenCode 引擎是 `scripts/fetch-opencode-linux.sh` 固定的单一制品 `opencode-linux-x64@1.18.29`，即 `x86_64-unknown-linux-gnu`。所以在 arm64 机器上，AppImage 与 deb/rpm 都执行不起来（内核直接拒绝这个 ELF）；musl 发行版（如 Alpine）同样不行，因为该引擎是动态链接 glibc 的。从源码在本机构建也一样：构建出的应用是本机架构，但内置的引擎仍是 x86_64，启动引擎时才会失败——**这个架构不是「尚未支持」，而是本版本只交付这一个。**
+
 ## 项目状态
 
 当前版本 **1.0.0**。面向写作者的核心能力（编辑、知识库、公式、引用、导出、AI）已经能用。还没有官方 GitHub Release 渠道、没有自动更新；Windows 便携 exe 是主要用户交付物，Linux 可从源码打出单个二进制。插件沙箱仍在路线图上。

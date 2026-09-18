@@ -11,6 +11,18 @@
 #   scripts/fetch-opencode-linux.sh                 # download, verify, install
 #   scripts/fetch-opencode-linux.sh --tarball FILE  # verify an already-fetched file
 #
+# **One architecture, and it is x86_64-gnu.** `PKG` and `TARGET_TRIPLE` are
+# constants rather than something derived from `uname -m`, because npm publishes
+# one Linux platform package per architecture (`opencode-linux-x64`,
+# `opencode-linux-arm64`, …) with its own digest, and this app's bundle names
+# exactly one sidecar. So a machine of another architecture cannot be served by
+# passing a different tarball here: the answer is not this script but
+# `README.md`'s platform note, which is where a reader on arm64 or musl finds
+# out why nothing this project ships will start there. Nothing here checks the
+# architecture either — cross-building and container builds are both legitimate
+# callers, and a refusal keyed on `uname` would break them while telling the
+# person who needed the answer nothing.
+#
 # The installed path is gitignored: 176 MB belongs in a release artifact, not in
 # a commit. `scripts/verify-opencode-linux.sh` (T14) is what proves the installed
 # one answers ACP; this script only proves it is the file we meant.
@@ -59,6 +71,10 @@ install -m 0755 "$src" "$DEST"
 
 echo "installed $DEST"
 echo "  version  $("$DEST" --version 2>/dev/null || echo '--version FAILED')"
+# Named in the log, because the architecture is the one property of this artifact
+# a reader cannot see from the version: a build log that says only `1.18.29` does
+# not say which machine the bundle will run on.
+echo "  target   $TARGET_TRIPLE"
 echo "  sha256   $(sha256sum "$DEST" | cut -d' ' -f1)"
 echo "  license  MIT (opencode-ai@$VERSION)"
 echo
