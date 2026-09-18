@@ -1,15 +1,28 @@
 <script lang="ts">
 /**
- * The compatibility surface for this section's copy: the vocabulary and the builder that reads the
- * catalogue now live in `agent-skills-labels.ts`, and the two types are re-exported here.
+ * The compatibility surface for this section: the vocabulary and the builder that reads the
+ * catalogue live in `agent-skills-labels.ts`, the shapes this page reads live in
+ * `agent-skills-view.ts`, and the types of both are re-exported here.
  *
  * The re-export is not decoration. The specifier callers already name is *this file* —
  * `features/agent-settings/index.ts` exports `AgentSkillsLabels` from
- * `./components/AgentSkillsSettings.vue` — and an SFC's named type exports are what such a specifier
- * resolves against. A split keeps the old path working; moving the definition is a change to where
- * the copy lives, while moving the name a caller imports would be a change to the caller.
+ * `./components/AgentSkillsSettings.vue`, while `services/agent-skills-ipc.ts`,
+ * `app/agent-settings-composition.ts` and the specs beside both of them name the readout, the row
+ * and the client here — and an SFC's named type exports are what such a specifier resolves against.
+ * A split keeps the old path working; moving the definition is a change to where the copy lives,
+ * while moving the name a caller imports would be a change to the caller.
  */
 export type { AgentSkillsLabels, SkillRefusalKind } from './agent-skills-labels'
+export type {
+  AgentSkillsClient,
+  AgentSkillsReadout,
+  SkillDisableView,
+  SkillEntryView,
+  SkillPreviewView,
+  SkillRefusal,
+  SkillScopeView,
+  SkillSurfaceView,
+} from './agent-skills-view'
 </script>
 
 <script setup lang="ts">
@@ -70,98 +83,14 @@ export type { AgentSkillsLabels, SkillRefusalKind } from './agent-skills-labels'
  */
 import { computed, onMounted, ref } from 'vue'
 
-import {
-  skillsLabels,
-  type AgentSkillsLabels,
-  type SkillRefusalKind,
-} from './agent-skills-labels'
-
-/** A refusal as the backend sends it: its kind, plus the facts that sentence carries. */
-export interface SkillRefusal {
-  kind: SkillRefusalKind
-  [fact: string]: unknown
-}
-
-/** How a directory's contents can be switched off, as `skills.rs` reports it. */
-export type SkillDisableView =
-  | { kind: 'per-skill' }
-  | { kind: 'engine-switch'; variable: string }
-  | { kind: 'none' }
-
-/** What the engine will do with a discovered skill. */
-export type SkillSurfaceView =
-  | { kind: 'offered' }
-  | { kind: 'undescribed' }
-  | { kind: 'suppressed'; variable: string }
-  | { kind: 'unusable'; error: SkillRefusal }
-  | { kind: 'disabled' }
-
-export interface SkillEntryView {
-  name: string
-  description: string | null
-  directory: string
-  scope: string
-  scopeLabel: string
-  owner: 'managed' | 'engine' | 'foreign'
-  conflicts: string[]
-  surface: SkillSurfaceView
-  /** The engine's switch that is on for this row's *scope*, or `null` if none is (see the file
-      comment: a directory that is configured and one that contributes are two facts). */
-  suppressedBy: string | null
-  disable: SkillDisableView
-}
-
-/** One directory the engine's rules name, as the readout describes it. */
-export interface SkillScopeView {
-  id: string
-  label: string
-  root: string
-  /** The engine's own switch that stops it reading this directory, or `null` if it reads it. */
-  suppressedBy: string | null
-}
-
-export interface AgentSkillsReadout {
-  /** Every directory the engine's rules name — the page draws one heading per entry. */
-  scopes: SkillScopeView[]
-  skills: SkillEntryView[]
-  disabled: SkillEntryView[]
-  /**
-   * The scope an import would install into, or `null` when this profile has none.
-   *
-   * A scope *id* into {@link AgentSkillsReadout.scopes} rather than a path: what the page needs is
-   * where the control would write, and where that is is the backend's answer — the same predicate
-   * `SkillLibrary::import` refuses on, so a page offering an import the backend would refuse (or
-   * omitting one it would accept) cannot be built from this readout.
-   */
-  importScope: string | null
-}
-
-/** What an import would install, read from the folder and written nowhere. */
-export interface SkillPreviewView {
-  name: string
-  description: string
-  files: { path: string; bytes: number }[]
-  scripts: { path: string; bytes: number }[]
-  totalBytes: number
-}
-
-/**
- * The backend, chosen at the composition site.
- *
- * Two failure channels, kept apart as they are everywhere else in this tree: a **rejection** is the
- * call not completing and the page says so; a **refusal** is data that comes back and is rendered.
- *
- * The read carries both, and `preview` already did: an arrangement the backend refuses to build a
- * library from (this host's store lying inside a directory the engine scans) is not a broken
- * connection, and answering it as one would leave the page's "could not be read from the backend"
- * standing over a backend that answered with a reason.
- */
-export interface AgentSkillsClient {
-  read(): Promise<AgentSkillsReadout | SkillRefusal>
-  preview(source: string): Promise<SkillPreviewView | SkillRefusal>
-  import(source: string, replace: boolean): Promise<SkillRefusal | null>
-  setEnabled(name: string, scope: string, enabled: boolean): Promise<SkillRefusal | null>
-}
+import { skillsLabels, type AgentSkillsLabels } from './agent-skills-labels'
+import type {
+  AgentSkillsClient,
+  AgentSkillsReadout,
+  SkillEntryView,
+  SkillPreviewView,
+  SkillRefusal,
+} from './agent-skills-view'
 
 const props = defineProps<{
   client: AgentSkillsClient
@@ -504,9 +433,6 @@ onMounted(load)
         </ul>
       </div>
 
-      <!-- The form only where there is a directory this host may write in. A profile reusing the
-           user's own installation has none, and the sentence says what such a profile would need
-           rather than drawing a control whose only possible answer is a refusal. -->
       <!-- The form only where there is a directory this host may write in. A profile reusing the
            user's own installation has none, and the sentence says what such a profile would need
            rather than drawing a control whose only possible answer is a refusal. -->
