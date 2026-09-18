@@ -36,35 +36,15 @@ let instances = 0
  * ContextMenu sits in the frozen `ui/` surface, so its placement and dismissal
  * are ported below.)
  *
- * **Where the popup goes, and why it does not simply render here.** `place()`
- * turns a `getBoundingClientRect()` — a *viewport* rectangle — into `left`/`top`
- * and `place()`'s window clamps are the window's, which is only an answer while
- * the popup's containing block is the viewport: an ancestor with a `transform`,
- * a `translate`, a `filter`, a `backdrop-filter` or a `contain` becomes the
- * containing block instead, and every coordinate is then measured from *its*
- * padding box. The settings overlay is already one of those
- * (`SettingsPanel.vue`'s `backdrop-filter`; measured), and it is benign today
- * only because it happens to cover the viewport exactly — the popup's placement
- * would rest on that accident rather than on the recipe.
- *
- * Nor is the trigger's own parent safe. 21 of this app's 22 call sites wrap the
- * trigger in a `<label for>` that names it, and a popup inside that label hands
- * its clicks to the label's activation behaviour: measured in Chromium, a press
- * on the popup's own 5px padding forwards to the trigger and closes the list it
- * was pressed inside.
- *
- * So the popup is teleported out of the host's subtree all the same — but not to
- * `body`, which is *outside* the one element that carries the user's appearance.
- * `AppShell.vue:271-292` puts `data-theme`, `data-color-scheme`, `data-accent`,
- * `data-contrast` and the eight inline `--app-*` properties on `.shell` and
- * nowhere else in the page, so a child of `body` resolves `--app-elevated`,
- * `--app-text`, `--app-border`, `--app-shadow-menu` and `--app-font` from
- * `palettes.css`'s `:root` block: every select in the app opened a light popup
- * in a dark theme, with the default face and the light shadow. The popup now
- * renders inside `.shell` and inherits the one declaration set — nothing about
- * the appearance is repeated here, exactly as `SettingsPanel.vue` stopped
- * repeating it by dropping its own teleport. `popupHost` below is where that
- * element is found.
+ * **Where the popup goes, and why it does not simply render here.** It is teleported out of the
+ * host's subtree: `popupHostOf` (`popup-host.ts`, which seven surfaces ask) is where it lands, and
+ * that file is where both halves of the rule are written — the ancestor with a `backdrop-filter`
+ * that would become the containing block for these viewport coordinates, and the `<label for>` that
+ * 21 of this app's 22 call sites wrap the trigger in, which would hand the popup's own clicks to the
+ * label's activation behaviour. The answer is the trigger's nearest `.shell` and never `body`:
+ * `body` is outside the one element that carries the user's appearance (`AppShell.vue:271-292`), so
+ * a popup there opens light in a dark theme with the system face and the default shadow — measured,
+ * and what `e2e/select-popup-scope.spec.ts` pins.
  *
  * `disabled` needs no prop: it falls through to the trigger, a real `<button>`
  * that takes no clicks and is skipped by Tab when disabled.
@@ -86,6 +66,17 @@ const emit = defineEmits<{
   (e: 'update:modelValue', value: string | number): void
 }>()
 
+/** What a popup is placed *from* rather than to: enough width to exist, and no ceiling — a box
+ *  without one is what {@link measurePlacement} has to read to learn its content's width. `null`
+ *  and not `Infinity`, because `max-width: Infinitypx` is not a value. */
+const unplaced = () => ({
+  left: 0,
+  top: 0,
+  minWidth: 180,
+  maxWidth: null as number | null,
+  drop: 'down' as 'down' | 'up',
+})
+
 /** Whether the list is up. The travel itself is the stylesheet's: `<Transition>`
  *  stages the two class sets below, and the global prefers-reduced-motion rule
  *  in `styles/motion.css` is what shortens them for a user who asked for less. */
@@ -95,13 +86,11 @@ const activeIndex = ref(0)
 /** Where the popup was put, and which way it had to open. `drop` is not
  *  geometry the component uses — it is what tells the stylesheet which edge of
  *  the popup is the one touching the trigger, so the arrival can come from there
- *  and the scale can grow out of it. */
-const pos = ref<{ left: number; top: number; minWidth: number; drop: 'down' | 'up' }>({
-  left: 0,
-  top: 0,
-  minWidth: 180,
-  drop: 'down',
-})
+ *  and the scale can grow out of it.
+ *
+ *  `minWidth`/`maxWidth` are the popup's own bounds, *measured* rather than declared — see
+ *  {@link measurePlacement} for the two numbers and for why the stylesheet holds neither. */
+const pos = ref(unplaced())
 
 const triggerEl = ref<HTMLButtonElement | null>(null)
 const popupEl = ref<HTMLElement | null>(null)
@@ -139,10 +128,9 @@ const enabledIndexes = (): number[] =>
  * Put the popup against its trigger, inside the viewport: below the control,
  * flipped above when that overflows, nudged sideways to fit.
  *
- * Synchronous, and that is what {@link followTrigger} needs: its loop runs once a frame and must
- * not have two placements in flight, so the measuring half is separated from the `nextTick` that
- * waits for the popup to exist. That await is real — `popupEl` is rendered by the `v-if` `show()`
- * sets and is null until it is — so {@link place} keeps it.
+ * Synchronous, and that is what {@link followTrigger} needs — one loop, one placement in flight —
+ * so the measuring half is separated from the `nextTick` that waits for the popup to exist, which
+ * {@link place} keeps.
  */
 function measurePlacement(): void {
   const trigger = triggerEl.value
@@ -150,11 +138,22 @@ function measurePlacement(): void {
   if (!trigger || !popup) return
   const pad = 8
   const anchor = trigger.getBoundingClientRect()
-  // The box, not the rect: the rect is measured through the enter transition.
-  // And the wider of the two: the floor below widens the popup, so clamping
-  // against the old width would let it cross the right edge.
-  const floor = Math.max(180, Math.min(anchor.width, 280))
-  const width = Math.max(popup.offsetWidth, floor)
+  // The room the window gives a list — the window less the same pad it keeps from either edge — and
+  // the control's own width, clamped into it. Those two are the whole of the popup's width rule:
+  // never narrower than the control it belongs to, never wider than the window it is in. The
+  // stylesheet declares neither, and the one that used to be there (`max-width: 280px`) was not a
+  // ceiling but a second, smaller width — measured in Chromium at 1280x800 through
+  // `e2e/select-popup-width.spec.ts`, every select in the settings dialog opened its list at
+  // **280px inside a 526px control**, with the labels it exists to show ellipsised at the same
+  // character the closed control had already ellipsised them at, and it stayed 280 while the user
+  // dragged the dialog wider (the control went 526 -> 606). The floor's own inner 180 is for a
+  // control *smaller* than a list can usefully be.
+  const ceiling = Math.max(180, window.innerWidth - pad * 2)
+  const floor = Math.min(Math.max(180, anchor.width), ceiling)
+  // The box, not the rect: the rect is measured through the enter transition. And the clamp below
+  // is against the width the popup will *have* — its content's, once the floor and the ceiling have
+  // had their say — because the content's alone is the number that crosses the right edge.
+  const width = Math.min(Math.max(popup.offsetWidth, floor), ceiling)
   const height = popup.offsetHeight
   const below = anchor.bottom + 4
   const above = anchor.top - height - 4
@@ -170,8 +169,8 @@ function measurePlacement(): void {
     top: dropsDown
       ? Math.min(below, Math.max(pad, window.innerHeight - height - pad))
       : above,
-    // Never narrower than the control it belongs to, never wider than a menu.
     minWidth: floor,
+    maxWidth: ceiling,
     drop: dropsDown ? 'down' : 'up',
   }
 }
@@ -185,13 +184,12 @@ async function place(): Promise<void> {
  * The trigger, followed while it moves — `ComboBox.vue`'s shape, where it was measured first, and
  * the same blind spot this file and `use-detached-popup.ts` both had.
  *
- * The trigger can move *without* any of the two things this component watched — the window
+ * The trigger can move *without* either of the two things this component watched — the window
  * resizing, anything scrolling — and a `ResizeObserver` cannot see it either, because `scale` and
  * `translate` leave every number of a box unchanged. The settings pages arrive through exactly that
- * spring (`SettingsPanel.vue:347-355`), so a press landing while the page is still on its way in is
- * placed against a trigger that goes on moving. Measured in Chromium at 1280x720, pressed the
- * moment `#settings-ui-font` existed: the list settled **5.031px** further off its trigger than the
- * recipe's four, and **3.938px** to its right.
+ * spring (`SettingsPanel.vue`'s page swap), so a press landing while the page is still on its way
+ * in is placed against a trigger that goes on moving. `e2e/select-popup-scope.spec.ts` is where
+ * that was measured and where the numbers live.
  *
  * So the rectangle is read once a frame, and the loop stops as soon as two frames agree — three
  * reads for an open with nothing moving, and nothing once the trigger has arrived. The stop is the
@@ -208,9 +206,8 @@ let follow = 0
 let watched = ''
 let still = 0
 
-/** The trigger's placement-relevant geometry, as a string to compare frame against frame. Only the
- *  numbers {@link measurePlacement} reads: a rect that differs in a field nothing is placed from
- *  would keep the loop alive for a change no reader can see. */
+/** The trigger's placement-relevant geometry as a string: only the numbers {@link measurePlacement}
+ *  reads, so a change in a field nothing is placed from cannot keep the loop alive. */
 function rectKey(): string {
   const rect = triggerEl.value?.getBoundingClientRect()
   return rect === undefined ? '' : `${rect.top}:${rect.left}:${rect.width}:${rect.height}`
@@ -311,6 +308,16 @@ function watchViewport(watching: boolean): void {
 
 function show(): void {
   if (open.value) return
+  // The placement is forgotten before the list is drawn again, and that is not a tidy-up: `pos`
+  // outlives the popup, Vue renders the next one with the *last* `min-width` on its first frame,
+  // and the first `measurePlacement` is usually the only one (the follow loop re-places a *moving*
+  // trigger, and a list opened at rest has none). So the loop used to read a box the component had
+  // sized for a previous, different trigger — invisible while the stylesheet pinned the width at
+  // 280px, and a visible misplacement the moment the floor followed the control: measured through
+  // `e2e/settings-resize.spec.ts`, the AI provider's list opened **87px to the left of its
+  // control**, a `min-width: 908px` from a wider dialog entering the left clamp. Forgetting it
+  // makes the placement idempotent, which is the property that was missing.
+  pos.value = unplaced()
   open.value = true
   // Only ever opens on a selectable row: a value that is (or has become) a
   // disabled option must not be what Enter would commit.
@@ -458,7 +465,14 @@ onBeforeUnmount(() => {
           ref="popupEl"
           class="select-popup"
           :class="{ 'is-above': pos.drop === 'up' }"
-          :style="{ left: `${pos.left}px`, top: `${pos.top}px`, minWidth: `${pos.minWidth}px` }"
+          :style="{
+            left: `${pos.left}px`,
+            top: `${pos.top}px`,
+            minWidth: `${pos.minWidth}px`,
+            // `undefined` and not `null`: Vue removes a style property for either, and only
+            // `undefined` is a `StyleValue`.
+            maxWidth: pos.maxWidth === null ? undefined : `${pos.maxWidth}px`,
+          }"
           role="listbox"
         >
           <button
@@ -521,7 +535,10 @@ onBeforeUnmount(() => {
   /* Above the modal layer (10000) — a dropdown opens from inside the settings
      dialog — and below the toast layer (11000). */
   z-index: 10001;
-  max-width: 280px;
+  /* No `max-width`. It is a measurement rather than a declaration (`measurePlacement`'s `floor` and
+     `ceiling`), and a `280px` used to sit here as a second, smaller answer to the same question —
+     see that function for what it cost. `max-height` stays, and it is a *different* decision: a
+     list longer than 280px scrolls, which is the number `e2e/popup-list-room.spec.ts` reads. */
   max-height: 280px;
   overflow-y: auto;
   padding: 5px;

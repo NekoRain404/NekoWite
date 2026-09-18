@@ -503,6 +503,15 @@ test.describe('the settings dialog’s size', () => {
     await expect(page.locator('.select-popup')).toBeVisible()
     // The list arrives on the pop rung, and a rect read inside it is a reading of the animation —
     // measured once already, as 274.4px for a 280px menu (0.98 of the `--app-motion-scale-pop`).
+    //
+    // **The wait is a moment, and not `getAnimations().every(finished)` alone.** That expression is
+    // vacuous before the transition has been created — `[].every(...)` is `true` — so it returned
+    // immediately, and the read below landed inside the curve on every run. It went unnoticed while
+    // the list was pinned at 280px, where 2% of the box is 5.6px and the assertion's tolerance is 4;
+    // measured once the box follows its control, the same 2% of 530px is 10.6px and the case failed
+    // on the animation rather than on the placement. `--app-motion` is 200ms, so 400 is past the end
+    // of the rung with the same margin every other wait in this file keeps.
+    await page.waitForTimeout(400)
     await page.waitForFunction(
       () =>
         document
@@ -538,10 +547,18 @@ test.describe('the settings dialog’s size', () => {
     // drags above are for and is two orders of magnitude larger than this.
     const expectedLeft = Math.min(Math.max(8, placed.triggerLeft), placed.viewportWidth - placed.width - 8)
     expect(Math.abs(placed.leftGap + placed.triggerLeft - expectedLeft)).toBeLessThan(4)
-    // And the menu is capped where the component says it is — `Math.min(anchor.width, 280)` at
-    // `SelectMenu.vue:154`, "never wider than a menu". Asserted rather than assumed, because a
-    // popup that grew to its 529px trigger's width in a widened dialog would be a different defect
-    // and this is the line that would report it.
+    // And the list is inside the bound the component measured for it: `SelectMenu.vue`'s
+    // `measurePlacement` writes both bounds inline, so this reads the box against the number that
+    // was written rather than against a constant restated here.
+    //
+    // This line used to carry the opposite rationale — "the menu is capped where the component says
+    // it is, `Math.min(anchor.width, 280)`, and a popup that grew to its 529px trigger's width in a
+    // widened dialog would be a different defect" — and the assertion below it was the same
+    // `width <= maxWidth + 1` either way, which is exactly why the reasoning had to be checked
+    // rather than trusted: it *pinned nothing*. 280 was a width the list could never exceed rather
+    // than a bound it was being held to, and `e2e/select-popup-width.spec.ts` is the file that now
+    // measures what the width should be. What survived, and is asserted here, is the pairing: the
+    // placement and the number it placed against.
     expect(placed.width).toBeLessThanOrEqual(placed.maxWidth + 1)
   })
 })
