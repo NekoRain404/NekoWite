@@ -348,6 +348,87 @@ describe('the agent rail — reopening a session the engine holds', () => {
     return { gateway, fake, rail, loads, earlier, later, load }
   }
 
+  /**
+   * The move that has no load in it, and the one the pet's task link is built on.
+   *
+   * The engine refuses to load a session a runtime is *serving* (`session-open`), and the host
+   * refuses one it already holds (`AlreadyOpen`) — so without the handles this rail keeps, a
+   * session the reader left could not be brought back at all, even though a task may still be
+   * running in it. The run is the point: §5.1 keeps it going while the reader is elsewhere, and
+   * the test below holds the rail to leaving it running.
+   */
+  it('shows a session this runtime already serves without asking the engine to load it', async () => {
+    const gateway = createMemoryAgentGateway({ agentId: 'opencode', profileId: 'default' })
+    const fake = fakeComposition({ gateway })
+    const loads: string[] = []
+    const load = gateway.loadSession.bind(gateway)
+    gateway.loadSession = async (sessionId, request) => {
+      loads.push(sessionId)
+      return load(sessionId, request)
+    }
+    const onResumeFailed = vi.fn()
+    const rail = createAgentRail({ compose: () => fake.composition, onResumeFailed })
+
+    await rail.open('vault-a', '/notes/a')
+    const first = rail.state.value
+    if (first.kind !== 'live') throw new Error('unreachable')
+    // A turn that never finishes: what the reader leaves behind when the reminder arrives.
+    gateway.script({ hang: true })
+    void gateway.prompt(first.session, 'keep working')
+
+    // A second session on the SAME runtime — "new session" while the first one runs — which is
+    // exactly the state a pet's task row is clicked from.
+    await rail.newSession()
+    const second = rail.state.value
+    if (second.kind !== 'live') throw new Error('unreachable')
+
+    await rail.resume(first.session.sessionId)
+
+    const after = rail.state.value
+    if (after.kind !== 'live') throw new Error('unreachable')
+    expect(after.session.sessionId).toBe(first.session.sessionId)
+    // No load: the handle this window holds is the whole answer, and the engine would have refused
+    // the call anyway.
+    expect(loads).toEqual([])
+    expect(onResumeFailed).not.toHaveBeenCalled()
+    // A remount under the key that session had when it was opened — the panel is replaced, never
+    // re-pointed, and the store finds the record it kept for that key.
+    expect(after.key).toBe(first.key)
+    expect(after.key).not.toBe(second.key)
+    // The runtime was never stopped and the run in the session the reader left is still running.
+    expect(fake.stop).not.toHaveBeenCalled()
+    expect((await gateway.snapshot(after.session)).state).toBe('running')
+  })
+
+  it('falls back to a load for a handle the engine has let go', async () => {
+    const gateway = createMemoryAgentGateway({ agentId: 'opencode', profileId: 'default' })
+    const fake = fakeComposition({ gateway })
+    const loads: string[] = []
+    const load = gateway.loadSession.bind(gateway)
+    gateway.loadSession = async (sessionId, request) => {
+      loads.push(sessionId)
+      return load(sessionId, request)
+    }
+    const rail = createAgentRail({ compose: () => fake.composition })
+
+    await rail.open('vault-a', '/notes/a')
+    const first = rail.state.value
+    if (first.kind !== 'live') throw new Error('unreachable')
+    await rail.newSession()
+    // The history list's own free action: the session is closed on the engine, and the handle this
+    // rail kept for it is dead from that moment. Showing it must not mount a panel on a dead
+    // handle — whose only possible report would be a failure about a session nobody asked to
+    // close — so the rail learns it is gone and loads it, which is what revives it.
+    await gateway.closeSession(first.session.sessionId)
+
+    await rail.resume(first.session.sessionId)
+
+    expect(loads).toEqual([first.session.sessionId])
+    const after = rail.state.value
+    if (after.kind !== 'live') throw new Error('unreachable')
+    expect(after.session.sessionId).toBe(first.session.sessionId)
+  })
+
   it('re-adopts the session and makes it the one on screen, under a new key', async () => {
     const { rail, loads, earlier, later, fake } = await twoSessions()
 

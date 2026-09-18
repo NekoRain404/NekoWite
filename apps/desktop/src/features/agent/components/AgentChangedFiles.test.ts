@@ -138,7 +138,6 @@ async function afterTheRun(entry: AgentToolEntry = toolRow()): Promise<void> {
     edits: captured,
   }
   sessions.records[key] = record
-  sessions.focus(key)
 }
 
 /** Mount the surface as the editor pane mounts it. `identity` is read on every render, which is
@@ -199,7 +198,6 @@ describe('what the run changed', () => {
       lastDrop: null,
       edits: [],
     }
-    sessionsOf().focus(key)
     const host = await mount()
 
     expect(sentence(host, '[data-changes-empty]')).toBe(t('agent.changes.empty'))

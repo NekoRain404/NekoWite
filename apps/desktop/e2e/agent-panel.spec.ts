@@ -250,6 +250,7 @@ async function mount(page: Page, options: MountOptions = {}): Promise<void> {
       const { AgentPanel } = await import('/src/features/agent/index.ts')
       const { createMemoryAgentGateway } = await import('/src/platform/gateways/memory-agent.ts')
       const { useAgentSessionStore } = await import('/src/features/agent/stores/agent-session.ts')
+      const { sessionKey } = await import('/src/features/agent/services/agent-session-view.ts')
 
       const previous = window.__agentPanel
       const prompts = previous?.prompts ?? []
@@ -298,10 +299,10 @@ async function mount(page: Page, options: MountOptions = {}): Promise<void> {
       app.use(piniaInstance)
       app.mount(host)
 
-      const record = () => {
-        const key = store.activeKey
-        return key === null ? null : store.recordFor(key)
-      }
+      // The panel's own session, addressed by the key the spec mounted it with: the store keeps no
+      // "active" key for this to read (`src/features/agent/stores/agent-session.ts` — the pointer
+      // was removed), and the session is the one object this spec has held all along.
+      const record = () => store.recordFor(sessionKey(session))
       window.__agentPanel = {
         gateway,
         session,

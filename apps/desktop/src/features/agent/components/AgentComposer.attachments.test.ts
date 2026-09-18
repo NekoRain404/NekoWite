@@ -13,8 +13,9 @@
  * report rather than this component's reading of one.
  *
  * The workspace is the panel's too — a prop on the composer, exactly as the panel hands it down —
- * and three cases point the *store* at a vault of its own to hold that: this component's four
- * readers of the vault (a pick, a drop, a mention and the `+`) must not follow the store's focus.
+ * and three cases put a second session of another vault in the window to hold that: this component's
+ * four readers of the vault (a pick, a drop, a mention and the `+`) must not follow anything but the
+ * prop, and the store no longer has a pointer for them to follow in any case.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick, type App as VueApp } from 'vue'
@@ -128,23 +129,25 @@ function mountComposer(
   mounted.push(app)
 }
 
-/** The state a live panel mounts its composer in: a session attached with its record in front of
- *  the store. Nothing below depends on it — that is the subject of the divergence cases — and it
- *  is kept because it is the state the composer is really mounted in. */
+/** The state a live panel mounts its composer in: a session attached to the store, its record in
+ *  the table the panel's own key addresses. Nothing below depends on it — that is the subject of
+ *  the divergence cases — and it is kept because it is the state the composer is really mounted in.
+ */
 async function withSession(): Promise<void> {
   const store = useAgentSessionStore()
   await store.attach(gateway, session)
-  store.focus(sessionKey(session))
   await settle()
 }
 
-/** A session in another vault, focused: the pet's task link (`app/pet-task-link.ts`) moves the
- *  store's pointer to a session whose panel is not the one on screen. */
-async function focusAnotherVault(): Promise<void> {
+/** A second session of this window, in another vault, held the way the rail holds one it has left:
+ *  attached while its panel was up, detached when the rail moved on. The store holds both records
+ *  and names neither as "in front" — there is no such name in it (`stores/agent-session.ts`), which
+ *  is what these cases are really about: the composer's workspace is the session it was handed. */
+async function anotherVaultInTheWindow(): Promise<void> {
   const elsewhere = await gateway.openSession({ vaultId: '/somewhere/else', cwd: '/somewhere/else' })
   const store = useAgentSessionStore()
   await store.attach(gateway, elsewhere)
-  store.focus(sessionKey(elsewhere))
+  store.detach(sessionKey(elsewhere))
   await settle()
 }
 
@@ -523,14 +526,14 @@ describe('a drop', () => {
     expect(event.defaultPrevented).toBe(true)
   })
 
-  it('addresses a dragged note in its own vault, not the one the store is pointed at', async () => {
-    // The vault is the session's own, handed in by the panel that holds it — so a store pointer
-    // moved elsewhere (the pet's task link) cannot turn a note of this session's folder into a
-    // path this component refuses to touch.
+  it('addresses a dragged note in its own vault, not in the one another session works in', async () => {
+    // The vault is the session's own, handed in by the panel that holds it — so a second session of
+    // another vault in the same window cannot turn a note of this session's folder into a path this
+    // component refuses to touch.
     readMock.mockResolvedValue('# welcome')
     mountComposer(report(['embedded-context']))
     await withSession()
-    await focusAnotherVault()
+    await anotherVaultInTheWindow()
 
     const event = dragPath(`${VAULT}/welcome.md`)
     field().dispatchEvent(event)
@@ -618,14 +621,14 @@ describe('the `@` menu', () => {
     expect(field().value).toBe('welcome.md ')
   })
 
-  it('lists the notes of its own vault, not the one the store is pointed at', async () => {
-    // The `@` menu's vault is the composer's own — the prop the panel handed down — so a store
-    // pointer that moved to another session's vault cannot offer this message notes from a
-    // workspace the turn is not being sent to, nor hide the ones it is.
+  it('lists the notes of its own vault, not those of another session in the window', async () => {
+    // The `@` menu's vault is the composer's own — the prop the panel handed down — so another
+    // session held by this window cannot offer this message notes from a workspace the turn is not
+    // being sent to, nor hide the ones it is.
     indexGetMock.mockResolvedValue([`${VAULT}/welcome.md`])
     mountComposer(report(['embedded-context']))
     await withSession()
-    await focusAnotherVault()
+    await anotherVaultInTheWindow()
 
     field().value = '@wel'
     field().dispatchEvent(new Event('input', { bubbles: true }))

@@ -24,6 +24,8 @@ import { useAgentSessionStore, type AgentSessionRecord } from '../stores/agent-s
 import { createAgentComposition } from '../../../app/agent-composition'
 import { attachmentMonthDir } from '../../attachments'
 import { captureEditBaselines } from '../services/agent-edit-apply'
+import { createMemoryAgentGateway } from '../../../platform/gateways/memory-agent'
+import { useAgentSession } from '../composables/use-agent-session'
 import type { AgentLiveNote } from '../services/agent-context-snapshot'
 import { initialAgentSessionView, sessionKey } from '../services/agent-session-view'
 import type { AgentToolEntry } from '../services/agent-timeline'
@@ -161,8 +163,10 @@ async function standing(note: AgentLiveNote | null = atSend(), entry: AgentToolE
     lastDrop: null,
     edits: at,
   }
+  // Seeded by key, and nothing else: the store holds no "session in front" for this surface to be
+  // pointed at, which is what makes the case below — a *second* session in the same store — a
+  // question about this component rather than about the store's pointer.
   sessions.records[key] = record
-  sessions.focus(key)
 }
 
 /**
@@ -201,6 +205,35 @@ async function mountWithInsertions(insertions: ReturnType<typeof compositionOver
   await new Promise((resolve) => setTimeout(resolve, 0))
   await nextTick()
   return host
+}
+
+/**
+ * Another surface of this window on another session, through the real binding.
+ *
+ * This is the rail's panel when the rail is showing a different session — and it was the state the
+ * store's pointer could be left in by the pet's task link, whose click named a session the rail had
+ * moved past. The surface below draws its proposals for the session the *shell* hands it, so what
+ * this case holds down is that the apply is judged against the same one: a window that is on
+ * another session must not be able to send this note's edit somewhere else, or refuse it.
+ */
+async function anotherSessionOnScreen(): Promise<void> {
+  const gateway = createMemoryAgentGateway({ agentId: 'opencode', profileId: 'default' })
+  await gateway.start()
+  const elsewhere = await gateway.openSession({ vaultId: '/elsewhere', cwd: '/elsewhere' })
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const app = createApp(
+    defineComponent({
+      setup() {
+        useAgentSession({ gateway, session: elsewhere })
+        return () => null
+      },
+    }),
+  )
+  app.use(pinia)
+  app.mount(host)
+  mounted.push(app)
+  await nextTick()
 }
 
 /** Mount the surface and settle its first render. */
@@ -366,6 +399,21 @@ describe('the proposal the editor pane draws', () => {
     expect(host.querySelector('[data-artifact-preview]')).toBeNull()
     expect(host.querySelector('[data-artifact-refused]')?.textContent).toContain('doctype')
     expect(byAction(host, 'agent-artifact-insert')).toBeNull()
+  })
+
+  it('applies under the session it was handed, not the one another surface is on', async () => {
+    await standing()
+    await anotherSessionOnScreen()
+    const host = await mount()
+
+    await click(byAction(host, 'agent-edit-apply'))
+
+    // The note is where the request left it and the write goes in, judged against the session the
+    // shell handed this surface. A store that answered "which session is this" could name the other
+    // one — and the apply, which compares the session a proposal was produced under with the one it
+    // is applied under, would refuse a write the reader asked for and had every reason to expect.
+    expect(disk.get(PATH)).toBe(AGENT_TEXT)
+    expect(host.textContent).toContain(t('agent.note.outcome.saved'))
   })
 
   it('offers nothing when there is no session on screen', async () => {

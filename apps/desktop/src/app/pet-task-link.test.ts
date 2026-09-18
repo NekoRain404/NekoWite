@@ -1,24 +1,24 @@
 /**
- * The return half of §6.2's 点击返回任务, without a pet window or a rail.
+ * The return half of §6.2's 点击返回任务, without a pet window.
  *
- * The flow this exists for is 收起面板 → 完成提醒 → 返回对应会话, so the three things that can be
- * wrong are the three the module's header names: a listener that lives as long as the rail (and so
- * never hears the click it exists for), a click that re-points the store at a session this window
- * does not hold, and a registration nobody releases. The platform adapter is mocked rather than the
- * Tauri API: `onPetTaskRequest` has its own suite, and this one is about what the shell's policy
- * does with a key.
+ * The flow this exists for is 收起面板 → 完成提醒 → 返回对应会话, so the things that can be wrong are
+ * the ones the module's header names: a listener that lives as long as the rail (and so never hears
+ * the click it exists for), a click that does not put the session it names on screen, a click that
+ * asks the rail for a session the runtime cannot serve, and a registration nobody releases. The
+ * platform adapter is mocked rather than the Tauri API: `onPetTaskRequest` has its own suite, and
+ * this one is about what the shell's policy does with a key.
  *
- * The store is the real one over the memory double, for the reason `agent-session.test.ts` gives:
- * what a click addresses is the store's own record table, and a hand-built stub of it would assert
- * a rule this file wrote instead of the rule the store keeps.
+ * **No store is mounted here, and that is the state under test.** The link used to move the agent
+ * store's pointer (`focus`) to the session the key named while the rail kept the session it was on,
+ * so the store and the screen could name two different sessions and nothing said so. The pointer is
+ * gone (`features/agent/stores/agent-session.ts`) and this file no longer imports the store: what a
+ * click changes is the rail, through the two readings the shell hands in.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick, type App as VueApp } from 'vue'
-import { createPinia, setActivePinia, type Pinia } from 'pinia'
+import { createPinia, setActivePinia } from 'pinia'
 import { attachPetTaskLink } from './pet-task-link'
-import { createMemoryAgentGateway } from '../platform/gateways/memory-agent'
-import { sessionKey } from '../features/agent/services/agent-session-view'
-import { useAgentSessionStore } from '../features/agent/stores/agent-session'
+import type { AgentIdentity } from '../platform/gateways/agent-contracts'
 import type { PetTaskKey } from '../platform/gateways/pet-contracts'
 
 const platform = vi.hoisted(() => ({ onPetTaskRequest: vi.fn() }))
@@ -27,11 +27,18 @@ vi.mock('../platform/pet-task-request', () => ({
 }))
 
 let mounted: VueApp[] = []
-let pinia: Pinia
 
+/**
+ * A Pinia, installed and never read.
+ *
+ * The link resolves no store any more, and this is here so that the *only* thing a case can fail
+ * on is the click's policy: the version this file was written to replace resolved the agent store
+ * when it was attached, so a suite without one would have every case in the file failing on a
+ * store that is missing rather than on the click that was not honoured — which is the difference
+ * between a red that indicts the fix and a red that indicts the harness.
+ */
 beforeEach(() => {
-  pinia = createPinia()
-  setActivePinia(pinia)
+  setActivePinia(createPinia())
 })
 
 afterEach(() => {
@@ -53,9 +60,7 @@ function registration(): {
   deliver: (key: PetTaskKey) => void
 } {
   const release = vi.fn()
-  let deliver: (key: PetTaskKey) => void = () => {
-    throw new Error('nothing was delivered: the registration did not resolve')
-  }
+  let deliver: ((key: PetTaskKey) => void) | null = null
   let finish = (): void => {}
   platform.onPetTaskRequest.mockImplementation(
     (cb: (key: PetTaskKey) => void) =>
@@ -66,7 +71,10 @@ function registration(): {
   )
   return {
     release,
-    deliver: (key) => deliver(key),
+    deliver: (key) => {
+      if (deliver === null) throw new Error('nothing was delivered: the registration did not resolve')
+      deliver(key)
+    },
     settle: async () => {
       finish()
       await nextTick()
@@ -74,96 +82,157 @@ function registration(): {
   }
 }
 
-function mount(inputs: { railOpen: () => boolean; onOpenRail: () => void }): void {
+interface LinkState {
+  railOpen: boolean
+  session: AgentIdentity | null
+  shown: string[]
+  opened: number
+}
+
+/** The shell's three readings, as one mutable state a case can move between clicks. */
+function linkState(session: AgentIdentity | null, railOpen = true): LinkState {
+  return { railOpen, session, shown: [], opened: 0 }
+}
+
+function mount(state: LinkState): void {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const app = createApp({
     setup() {
-      attachPetTaskLink(inputs)
+      attachPetTaskLink({
+        railOpen: () => state.railOpen,
+        onOpenRail: () => {
+          state.opened += 1
+          state.railOpen = true
+        },
+        session: () => state.session,
+        onShow: (sessionId) => state.shown.push(sessionId),
+      })
       return () => null
     },
   })
-  app.use(pinia)
   app.mount(host)
   mounted.push(app)
 }
 
-/** The store's session, as the composition site hands it over, and the key the pet would send. */
-async function opened(): Promise<{ key: PetTaskKey; sessionId: string }> {
-  const gateway = createMemoryAgentGateway({ agentId: 'agent-1', profileId: 'profile-1' })
-  await gateway.start()
-  const session = await gateway.openSession({ vaultId: 'vault-1', cwd: '/tmp/vault' })
-  await useAgentSessionStore().attach(gateway, session)
-  return { key: { ...session, runId: 'run-0' }, sessionId: session.sessionId }
+/** One session of one runtime, as the rail's `live` arm hands it over, and the key the pet sends
+ *  for it. */
+function session(overrides: Partial<AgentIdentity> = {}): AgentIdentity {
+  return {
+    agentId: 'agent-1',
+    profileId: 'profile-1',
+    runtimeEpoch: 'epoch-1',
+    vaultId: '/tmp/vault',
+    sessionId: 'ses-a',
+    ...overrides,
+  }
 }
 
-describe('the pet’s task link', () => {
-  it('focuses the session the key names, and reads it', async () => {
-    const host = registration()
-    const { key } = await opened()
-    const store = useAgentSessionStore()
-    const target = sessionKey(key)
-    // A second session, so "the store moved" is something a wrong implementation cannot pass by
-    // accident: the record the click must reach is not the only one there.
-    const other = sessionKey({ ...key, sessionId: 'ses-other' })
-    store.records[other] = { ...store.records[target]!, identity: { ...key, sessionId: 'ses-other' } }
-    store.focus(other)
+const keyOf = (identity: AgentIdentity, runId = 'run-0'): PetTaskKey => ({ ...identity, runId })
 
-    const onOpenRail = vi.fn()
-    mount({ railOpen: () => true, onOpenRail })
+describe('the pet’s task link', () => {
+  it('asks the rail for the session the key names, when the rail is on another one of its runtime', async () => {
+    const host = registration()
+    // The disagreement this file was fixed for, constructed: the rail shows one session of its
+    // runtime and the pet's task names another — the state a reader reaches by starting a new
+    // session while a task goes on in the old one, or by picking an older row from the history
+    // list. The click must move what is on screen, not a pointer behind it.
+    const state = linkState(session({ sessionId: 'ses-a' }))
+    mount(state)
     await nextTick()
     await host.settle()
 
-    host.deliver(key)
+    host.deliver(keyOf(session({ sessionId: 'ses-b' })))
     await nextTick()
 
-    // The record key is the five identity fields and no run: the same key `useAgentSession` files
-    // the panel's own record under, which is what makes a `PetTaskKey` addressable without a
-    // second store.
-    expect(store.activeKey).toBe(sessionKey({ ...key }))
-    // The rail is already on screen, so nothing is asked for. The click moved the store and
-    // nothing else.
-    expect(onOpenRail).not.toHaveBeenCalled()
+    expect(state.shown).toEqual(['ses-b'])
+    // The rail was already on screen, so nothing is asked of the shell's own toggle.
+    expect(state.opened).toBe(0)
+  })
+
+  it('asks for nothing when the key names the session already on screen', async () => {
+    const host = registration()
+    const state = linkState(session({ sessionId: 'ses-a' }))
+    mount(state)
+    await nextTick()
+    await host.settle()
+
+    host.deliver(keyOf(session({ sessionId: 'ses-a' })))
+
+    // A move to where the reader already is would be a remount for nothing — and the engine would
+    // refuse the load underneath it (`session-open`).
+    expect(state.shown).toEqual([])
+  })
+
+  it('does not ask the rail for a session of another runtime', async () => {
+    const host = registration()
+    const shown = session({ sessionId: 'ses-a', vaultId: '/tmp/vault' })
+    const state = linkState(shown, false)
+    mount(state)
+    await nextTick()
+    await host.settle()
+
+    // Another vault, and another engine: `agent_load_session` refuses the first before the engine
+    // is asked, and a session of the second is not this runtime's to serve. The window is still
+    // raised and the rail still shows what it has — the honest answer, and the one the host's own
+    // channel doc promises.
+    host.deliver(keyOf(session({ sessionId: 'ses-b', vaultId: '/tmp/other' })))
+    host.deliver(keyOf(session({ sessionId: 'ses-c', agentId: 'another-engine' })))
+
+    expect(state.shown).toEqual([])
+    expect(state.opened).toBe(1)
+  })
+
+  it('takes a task from before the runtime was restarted, which is the same engine and vault', async () => {
+    const host = registration()
+    // The engine's session ids outlive a runtime instance — that is what its own history list is —
+    // so the only fields that decide whether this window can go back to a session are the engine,
+    // the profile and the vault. The epoch names the instance, and it is not one of them.
+    const state = linkState(session({ runtimeEpoch: 'epoch-2' }))
+    mount(state)
+    await nextTick()
+    await host.settle()
+
+    host.deliver(keyOf(session({ runtimeEpoch: 'epoch-1', sessionId: 'ses-b' })))
+
+    expect(state.shown).toEqual(['ses-b'])
   })
 
   it('asks for the rail, which is the state the whole flow runs in', async () => {
     const host = registration()
-    const railOpen = false
-    const onOpenRail = vi.fn()
-    mount({ railOpen: () => railOpen, onOpenRail })
+    const state = linkState(session({ sessionId: 'ses-b' }), false)
+    mount(state)
     await nextTick()
     await host.settle()
 
-    host.deliver({ ...(await opened()).key })
+    host.deliver(keyOf(session({ sessionId: 'ses-b' })))
 
     // §3.1.3 keeps the run going while the panel is away, so the reminder arrives with the panel
-    // collapsed — and a return path that only moved the store would put nothing on screen.
-    expect(onOpenRail).toHaveBeenCalledTimes(1)
+    // collapsed — and a return path that only asked the rail for a session would put nothing on
+    // screen.
+    expect(state.opened).toBe(1)
+    expect(state.shown).toEqual([])
   })
 
-  it('does not re-point the store at a session this window is not holding', async () => {
+  it('does nothing at all when no runtime is up', async () => {
     const host = registration()
-    const { key } = await opened()
-    const store = useAgentSessionStore()
-    const held = sessionKey(key)
-    store.focus(held)
-
-    mount({ railOpen: () => true, onOpenRail: vi.fn() })
+    const state = linkState(null, true)
+    mount(state)
     await nextTick()
     await host.settle()
 
-    // A key the engine is no longer running: the window is still raised and the rail still shows
-    // what it has, but the store keeps the session that is really on screen. `focus` takes any
-    // string, so the alternative is an active key nothing answers to.
-    host.deliver({ ...key, runtimeEpoch: 'epoch-2' })
+    host.deliver(keyOf(session({ sessionId: 'ses-b' })))
 
-    expect(store.activeKey).toBe(held)
-    expect(store.records[sessionKey({ ...key, runtimeEpoch: 'epoch-2' })]).toBeUndefined()
+    // No engine, no session to move to and nothing to ask for: the rail will start its own runtime
+    // for the vault the app has open when the panel mounts, which is `agent-rail.ts`'s business
+    // and not a session this click can name.
+    expect(state.shown).toEqual([])
+    expect(state.opened).toBe(0)
   })
 
   it('releases the listener when the window goes away, in flight or already resolved', async () => {
     const host = registration()
-    mount({ railOpen: () => false, onOpenRail: vi.fn() })
+    mount(linkState(null, false))
     await nextTick()
     await host.settle()
 
@@ -173,7 +242,7 @@ describe('the pet’s task link', () => {
 
     // And a registration that had not resolved when the window went away still has an owner.
     const second = registration()
-    mount({ railOpen: () => false, onOpenRail: vi.fn() })
+    mount(linkState(null, false))
     await nextTick()
     mounted.forEach((app) => app.unmount())
     mounted = []

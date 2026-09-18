@@ -32,7 +32,8 @@ import { useSettingsStore } from '../stores/settings'
 import type { PluginIntegrityRequest, PluginPermissionRequest } from '../services/plugins'
 import { notifyError } from '../services/errors'
 import { getLocale, t } from '../i18n'
-import { attachAgentRail, failureSentence } from './agent-rail'
+import { attachAgentRail } from './agent-rail-attachment'
+import { failureSentence } from './agent-rail'
 import { attachPetHostAppearanceLink } from './pet-host-appearance-link'
 import { attachPetSettingsLink } from './pet-settings-link'
 import { attachPetTaskLink } from './pet-task-link'
@@ -256,16 +257,28 @@ const settingsTarget = computed<SettingsOpenTarget | null>(
 // ---- The pet's click on a task (§6.2's 点击返回任务) -------------------------
 //
 // The other half of the same flow: the pet's row calls `desktop_pet_open_task`, the host raises
-// this window and emits D1's key, and the link focuses the session it names and asks for the rail
-// — which may be collapsed, since the flow this exists for is 收起面板 → 完成提醒 → 返回. The
+// this window and emits D1's key, and the link asks for the rail and for the session it names —
+// which may be collapsed, since the flow this exists for is 收起面板 → 完成提醒 → 返回. The
 // listener, the rule about which sessions a click may address and the release are
-// `pet-task-link.ts`'s; the shell supplies the reading only it has and the panel it wants shown.
+// `pet-task-link.ts`'s; the shell supplies the three readings only it has — whether the rail is
+// open, which session the rail is showing, and the rail's own way between sessions — plus the
+// panel it wants shown.
 attachPetTaskLink({
   railOpen: () => props.railOpen,
   onOpenRail: () => {
     railTab.value = 'ai'
     if (!props.railOpen) emit('toggle-rail')
   },
+  // The rail's own state, not the store's: the session on screen is the one the rail's `live` arm
+  // names, and there is no second answer to that question (`stores/agent-session.ts`).
+  session: () => {
+    const live = agentState.value
+    return live.kind === 'live' ? live.session : null
+  },
+  // The rail's `resume`, through the attached handle: a session this runtime already serves comes
+  // back from the handle the window holds — the run in it untouched — and one it does not is
+  // loaded. Refusals are the rail's to report (`onResumeFailed`, wired above).
+  onShow: (sessionId) => void resumeAgentSession(sessionId),
 })
 
 const shellStyle = computed<Record<string, string>>(() => ({

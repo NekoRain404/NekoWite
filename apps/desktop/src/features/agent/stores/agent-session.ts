@@ -6,8 +6,26 @@
  * separate). Everything that has to be *decided* about an event is in the reducer; this
  * file is the part that talks to a gateway and the part that remembers what belongs to one
  * session rather than to a window: the draft and the scroll position
- * (§5.1 「每会话独立草稿、滚动位置」). The third member of that sentence, the unread flag, is
- * gone — `focus` below carries the argument.
+ * (§5.1 「每会话独立草稿、滚动位置」).
+ *
+ * **There is no session in front here, and that is a decision with a history.** The store used to
+ * carry one — `activeKey`, written by `focus`, with `activeRecord`/`activeView`/`activeState`/
+ * `canSend` derived from it — for the surfaces that "have no session of their own". Every one of
+ * them turned out to have one: the panel is mounted with a session, the editor pane is handed the
+ * rail's own on a prop, and the note surface is handed the same one. What was left was a second,
+ * mutable answer to "which session is this window on" — and the pet's task link
+ * (`app/pet-task-link.ts`) could move it while the rail kept the session on screen, so the store
+ * and the screen could name two different sessions. Three surfaces were written against that
+ * pointer and every one of them was wrong in a different way (a send to a conversation nobody was
+ * looking at, a workspace from another vault, an edit applied under a session the proposal was
+ * never produced for); this file no longer offers it. What is in front is the rail's `live` state
+ * (`app/agent-rail.ts`), which is also what mounts the panel — one owner, one remount under a new
+ * `railKey`, and no pointer for a click to move.
+ *
+ * The per-session `unread` flag lived here too and was deleted first, for the same reason: it had
+ * no renderer a reader could reach (the only surface that could draw "a session you are not
+ * looking at received something" is a list of the window's own sessions, and there is none), and
+ * its one reachable setter put the mark on the session that *was* on screen.
  *
  * The gateway arrives as an argument rather than an import. This module is where the
  * feature meets whichever adapter is behind `AgentGateway`, and the adapter is chosen at
@@ -38,7 +56,7 @@
  * an await.
  */
 
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import { AgentFailure } from '../../../platform/gateways/agent-contracts'
 import type {
@@ -49,7 +67,6 @@ import type {
   AgentIdentity,
   AgentPromptAttachment,
   AgentSession,
-  AgentSessionState,
 } from '../../../platform/gateways/agent-contracts'
 import { reduceAgentEvent, type AgentDropReason, type AgentReduction } from '../services/agent-event-reducer'
 import {
@@ -63,7 +80,6 @@ import {
 import {
   failAgentRun,
   initialAgentSessionView,
-  isRunLive,
   resolvePermission,
   sessionKey,
   startAgentRun,
@@ -121,13 +137,6 @@ export type AgentAnswerOutcome =
 
 export const useAgentSessionStore = defineStore('agentSession', () => {
   const records = ref<Record<string, AgentSessionRecord>>({})
-  const activeKey = ref<string | null>(null)
-  /** Frames that named a session this store is not holding: one it never opened, one it has
-   *  detached and closed, or one whose identity has drifted (another vault, another runtime
-   *  instance). Counted rather than dropped in silence, for the reason the per-session drop
-   *  counters exist — the lifecycle spec's reading of Zed found its equivalent guard
-   *  discarding a superseded frame with no log, no metric and no trace. */
-  const unattributed = ref(0)
   /** The subscriptions, one per session. Not reactive: these are handles, not state. */
   const subscriptions = new Map<string, AgentSubscription>()
 
@@ -154,15 +163,6 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
       eventListeners.delete(listener)
     }
   }
-
-  const activeRecord = computed(() =>
-    activeKey.value === null ? null : (records.value[activeKey.value] ?? null),
-  )
-  const activeView = computed<AgentSessionView | null>(() => activeRecord.value?.view ?? null)
-  const activeState = computed<AgentSessionState | null>(() => activeRecord.value?.view.state ?? null)
-  /** §6.2's one active generation, as the composer sees it: a second send while a run is
-   *  live is refused rather than queued into the engine. */
-  const canSend = computed(() => activeRecord.value !== null && !isRunLive(activeRecord.value.view))
 
   function recordFor(key: string | null): AgentSessionRecord | null {
     return key === null ? null : (records.value[key] ?? null)
@@ -204,6 +204,14 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
    * it last knew — but a frame for a session this window never held is not this store's to
    * apply, and it is dropped here rather than in the reducer, because there is no view for
    * it to have been judged against.
+   *
+   * **The drop is reported in the console and counted nowhere.** It used to be a store member
+   * (`unattributed`), written and read by nobody but tests: no surface of this window can render
+   * "a frame arrived for a session you are not holding", because the only one that could is a list
+   * of the window's own sessions and there is none. The frames that reach here are a mismatch
+   * between the host's identity stamp and the one this window subscribed with — the state the
+   * lifecycle spec's reading of Zed found its guard discarding in silence — so the fact stays
+   * reported, in the one place a bug report can read it, and stops pretending to be a control.
    */
   function onEvent(event: AgentEvent): void {
     const key = sessionKey(event)
@@ -213,7 +221,10 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
       // boundary the reducer enforces per event, one level up — and it is deliberately the
       // *composite* key rather than the session id, because the session id alone cannot tell
       // a runtime instance from the next one.
-      unattributed.value += 1
+      console.warn(
+        `[NekoWite] a ${event.kind} frame named a session this window is not holding (${event.vaultId} / ${event.sessionId}), so it was dropped`,
+        event,
+      )
       return
     }
     const reduced: AgentReduction = reduceAgentEvent(record.view, event)
@@ -288,10 +299,6 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     subscriptions.delete(key)
   }
 
-  function detachAll(): void {
-    for (const key of [...subscriptions.keys()]) detach(key)
-  }
-
   /** Re-establish a session's state from a fresh snapshot, keeping what the reader is reading.
    *  The subscription continues: this is the repair for a hole in the stream, not a remount. */
   async function resync(key: string): Promise<void> {
@@ -320,17 +327,17 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
   /**
    * Send one turn, to the session `key` names.
    *
-   * **The key is a parameter and not `activeKey`, and that is the whole of a defect.** A
-   * composer draws one session's record and acts on it; the session in front is whatever
-   * `focus` was last given, and it is not always the one a control belongs to. `app/pet-task-link.ts`
-   * is the reachable case: the pet's row focuses the session its task names — one this window
-   * still holds a record for — and the rail keeps the session it was on, so the window can be
-   * looking at one session while the store's active key names another. A send addressed by
-   * `activeKey` then went to a conversation the reader was not looking at, or, when that
-   * session's panel had already unmounted and taken its subscription with it, nowhere at all:
-   * `no-session` is a typed refusal, and a caller that discards it has drawn a control that can
-   * be pressed with nothing to show for it. `cancel` and `resync` have always been addressed
-   * this way; these two were the pair that were not.
+   * **The key is a parameter, and the store holds no second answer to "which session".** A
+   * composer draws one session's record and acts on it, and the window it acts for is the one the
+   * rail has on screen; the send is addressed by the caller's own key so the two cannot be told
+   * apart by anything. Before the pointer was removed this was a live defect rather than a rule:
+   * the pet's task link (`app/pet-task-link.ts`) moved the store's active key to the session its
+   * task named while the rail kept the session it was on, and a send addressed by that pointer
+   * went to a conversation the reader was not looking at — or, when that session's panel had
+   * already unmounted and taken its subscription with it, nowhere at all: `no-session` is a typed
+   * refusal, and a caller that discards it has drawn a control that can be pressed with nothing to
+   * show for it. `cancel` and `resync` have always been addressed this way; these two were the
+   * pair that were not, and the key is now the only address this file has.
    *
    * Refused while a run is live, and the text is kept as the draft rather than queued into
    * the engine — §6.2 allows one active generation per session, and quietly calling the
@@ -478,38 +485,6 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
   }
 
   /**
-   * Put a session's record on screen. What reads it is `activeRecord` — the panel assembles its
-   * own rows from the key it was mounted with, so this pointer is for the surfaces that have no
-   * session of their own (`use-agent-note-host.ts`).
-   *
-   * **It used to clear an `unread` flag, and the flag is gone.** The pair was written into the
-   * record, exposed on the store, and read by nobody: no component, no template, no instrument —
-   * only tests, which is the shape that looks like a live surface to whoever reads the interface
-   * next. It was deleted rather than wired for two measured reasons.
-   *
-   *  - **It had no renderer a reader could reach.** The record set it for a frame applied to a
-   *    session that was not `activeKey`, and the only surface that can say "a session you are not
-   *    looking at received something" is a list of the window's own sessions. There is none: the
-   *    rail shows one session, and the history menu's rows are the *engine's* sessions, keyed by
-   *    the engine's ids, where a session this window never subscribed to has no record to be
-   *    unread on (Zed's counterpart is a dot in its agent panel's session list).
-   *  - **Its condition does not mean what the name says.** A session can only be marked while it
-   *    is subscribed, and only `useAgentSession` subscribes — on mount, focusing in the same
-   *    breath. The one reachable way to make the two disagree is `app/pet-task-link.ts`: it moves
-   *    the pointer to the session its task names while the rail keeps the session it was on, so
-   *    the flag lands on the session **on screen**, where a "you have news" marker would be
-   *    false. Reaching the state the marker was written for needs the session list itself, and
-   *    the list is the missing thing — not the flag.
-   *
-   * §5.1's 「每会话独立」 is still the rule for what remains here: the draft and the scroll
-   * position are the key's, not the panel's. If a session list lands, the flag belongs with it,
-   * read off the subscription the list keeps rather than off this pointer.
-   */
-  function focus(key: string | null): void {
-    activeKey.value = key
-  }
-
-  /**
    * Adopt the option list an engine answered a `set_config_option` with.
    *
    * The same field a `config-changed` frame replaces, written by the other path to the same fact:
@@ -541,24 +516,16 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
 
   return {
     records,
-    activeKey,
-    unattributed,
-    activeRecord,
-    activeView,
-    activeState,
-    canSend,
     recordFor,
     editBaseline,
     observeEvents,
     attach,
     detach,
-    detachAll,
     send,
     cancel,
     answer,
     recoverChange,
     resync,
-    focus,
     setDraft,
     setScroll,
     adoptOptions,

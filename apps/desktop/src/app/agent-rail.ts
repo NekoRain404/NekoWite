@@ -6,9 +6,10 @@
  * it is asked to, and what the shell shows when the answer is no. They are separate because
  * the composition is a factory with three calls (T4's file, extended by T9/T10/T11) and this
  * is a lifecycle with a state machine — and because the lifecycle is the half that needs a
- * test that can drive it without a window.
+ * test that can drive it without a window. The half that does need one — the two `watch`es and
+ * the unmount that attach this lifecycle to a component — is `agent-rail-attachment.ts`.
  *
- * ## The four rules it is written to
+ * ## The five rules it is written to
  *
  *  - **The switch is off, nothing happens.** No composition is built, no process is asked
  *    for, and the rail keeps the chat panel it has always had (§12's 新旧功能开关可回退
@@ -25,6 +26,11 @@
  *    engine already running for this vault — and every one of them is shown as it was
  *    received, over the two ways out (try again, or go back to the chat). A rollback that
  *    looks like a crash is not a rollback.
+ *  - **A session this runtime serves is shown, not loaded.** The rail holds the handles it
+ *    minted ({@link createAgentRail}'s `serving`), so a move between two sessions of one runtime
+ *    is a remount for the one the window already holds and a `loadSession` for one it does not —
+ *    the engine refuses a load of a session it is serving, and that refusal is right. This is the
+ *    rule the pet's task link and the panel's history list both arrive through.
  *
  * ## Latest-wins, by a queue and a generation
  *
@@ -37,7 +43,7 @@
  * rather than shown over the runtime that replaced it.
  */
 
-import { onBeforeUnmount, shallowRef, watch, type Ref } from 'vue'
+import { shallowRef, type Ref } from 'vue'
 import type { AgentGateway, AgentSession } from '../platform/gateways/agent-contracts'
 import { createAgentComposition, type AgentComposition } from './agent-composition'
 import { t } from '../i18n'
@@ -130,8 +136,15 @@ export interface AgentRail {
    */
   open(vaultId: string, cwd: string): Promise<void>
   /**
-   * Reopen a session the running engine already holds, and put it on screen — the one move
-   * between two sessions of one runtime.
+   * Put one of this runtime's sessions on screen — the one move between two sessions of one
+   * runtime, and the only one there is.
+   *
+   * Two ways in, and which one is taken is a fact about this window, not a preference: a session
+   * this runtime has **already served** is shown from the handle this window holds for it
+   * (nothing is asked of the engine — a load is refused for a session a runtime is serving, and
+   * rightly so: a conversation does not change by being looked at), and a session it has not is
+   * loaded, which is what `loadSession` is for. Both land in the same `live` arm under a new
+   * {@link railKey}, so a session change is a remount and never a re-point of the panel.
    *
    * Resolves when the attempt has settled, and never rejects: a load that failed leaves the
    * session that was already open exactly where it was, and reports the engine's refusal through
@@ -161,120 +174,6 @@ export interface AgentRail {
   retry(): Promise<void>
   /** Take the runtime down and go back to `idle`. */
   close(): Promise<void>
-}
-
-/**
- * What the shell gives the rail: three readings, and the two things a runtime needs to be built.
- *
- * They are getters rather than values because all three are live — the switch is a setting the
- * user can flip in the dialog that is open over this very rail, the folder is the vault the app
- * has open, and the rail is on screen or not — and a rail that captured one of them at setup
- * would keep working on the answer it was first given.
- */
-export interface AgentRailInputs {
-  /** §12's feature switch. See `stores/settings-agent.ts` for the value and its default. */
-  enabled: () => boolean
-  /** The folder the app has open, or null. A runtime is started *for* one. */
-  vaultPath: () => string | null
-  /** Whether the rail is on screen. */
-  railOpen: () => boolean
-  compose?: (vaultId: string) => AgentComposition
-  onStopFailed?: (error: unknown) => void
-  onResumeFailed?: (error: unknown) => void
-  onNewSessionFailed?: (error: unknown) => void
-}
-
-export interface AttachedAgentRail {
-  /** What the rail draws. */
-  readonly state: Ref<AgentRailState>
-  /** The live composition, for the editor pane's surface — see {@link AgentRail.composition}. */
-  readonly composition: Ref<AgentComposition | null>
-  /**
-   * Ask the backend again after a refusal.
-   *
-   * The one action the rail's own body needs. Its other way out — going back to the chat panel —
-   * is the *switch*, which belongs to the caller (`inputs.enabled` is the caller's own value),
-   * so undoing it is the caller's own act rather than a second path into the same decision.
-   */
-  retry(): Promise<void>
-  /**
-   * The other way between sessions of one runtime: what the panel's history control leads to.
-   *
-   * On the attached rail as well as the created one, because the panel's gesture arrives here —
-   * the shell is what holds both the rail and the folder the session was opened for.
-   */
-  resume(sessionId: string): Promise<void>
-  /**
-   * A third: a conversation that has never existed, on the same runtime — what the list's own
-   * "new session" entry leads to. Here for the same reason `resume` is: the gesture arrives from
-   * the panel, and the shell is the layer that holds both the rail and the folder.
-   */
-  newSession(): Promise<void>
-}
-
-/**
- * Drive a rail from the shell's three inputs, and hand back the state it should draw.
- *
- * This is the whole of the policy the acceptance clause 「新旧功能开关可回退」 is about, and it is
- * here rather than in `AppShell.vue` because it is the same subject as the rest of this file:
- * when an engine runs. What the shell keeps is the decision it has no business delegating — the
- * *value* of the switch (a setting) and the *value* of the folder (the vault it opened).
- *
- * Four readings of the three inputs, and each is a rule:
- *
- *  - **Off, or no folder, or no rail: nothing runs.** The switch going off closes the runtime, so
- *    the rollback is a real one — no process is left behind that could still write to the open
- *    note. The folder closing is the same rule, and deliberately not conditioned on the rail
- *    being open: an engine for a folder the user has left has no session in front of it, and a
- *    process nobody can see is a process nobody can stop.
- *  - **On, with a folder, with the rail open: started on demand** (§3.1.3).
- *  - **The rail closing is not a stop** (§5.1 任务可以在面板收起后继续): the panel is unmounted —
- *    that is what releases its subscription — and the run goes on. Reopening re-establishes the
- *    panel from a snapshot, and this call is idempotent for the vault already live.
- *  - **The window going away is the one teardown** §3.4.8 asks for: this host cleans up the
- *    processes this host started.
- */
-export function attachAgentRail(inputs: AgentRailInputs): AttachedAgentRail {
-  const rail = createAgentRail({
-    ...(inputs.compose ? { compose: inputs.compose } : {}),
-    ...(inputs.onStopFailed ? { onStopFailed: inputs.onStopFailed } : {}),
-    ...(inputs.onResumeFailed ? { onResumeFailed: inputs.onResumeFailed } : {}),
-    ...(inputs.onNewSessionFailed ? { onNewSessionFailed: inputs.onNewSessionFailed } : {}),
-  })
-
-  /** Start one, if there is a folder to work in, a switch asking for one and a rail to draw it
-   *  in. Idempotent for the vault already live, so the three inputs can change independently
-   *  without the answer changing. */
-  function start(): void {
-    const vault = inputs.vaultPath()
-    if (!inputs.enabled() || vault === null || !inputs.railOpen()) return
-    void rail.open(vault, vault)
-  }
-
-  watch(
-    () => [inputs.enabled(), inputs.vaultPath()] as const,
-    () => {
-      if (!inputs.enabled() || inputs.vaultPath() === null || !inputs.railOpen()) void rail.close()
-      else start()
-    },
-    { immediate: true },
-  )
-
-  watch(inputs.railOpen, (open) => {
-    if (open) start()
-  })
-
-  onBeforeUnmount(() => {
-    void rail.close()
-  })
-
-  return {
-    state: rail.state,
-    composition: rail.composition,
-    retry: () => rail.retry(),
-    resume: (sessionId) => rail.resume(sessionId),
-    newSession: () => rail.newSession(),
-  }
 }
 
 /**
@@ -358,14 +257,30 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
    *  is in another subtree and reaches this file through the shell. Written wherever `live` is, so
    *  the two cannot describe different moments. */
   const composition = shallowRef<AgentComposition | null>(null)
+  /**
+   * Every session this runtime instance has served, by the engine's own id — the handles this
+   * window would otherwise have dropped.
+   *
+   * It exists for one question a caller cannot answer for itself: *is this session one this window
+   * already holds?* The engine refuses a load of a session a runtime is serving (`session-open`),
+   * so without this table a session the reader left — a task still running, a conversation from
+   * ten seconds ago — could not be brought back on screen at all, by the history list or by the
+   * pet's task link, even though this window holds a working handle for it. A table rather than a
+   * second state field: nothing draws it, and what is on screen is still the one `live` arm.
+   *
+   * Cleared with the runtime, and that is what keeps an id honest: a session id outlives a runtime
+   * instance (the engine's own table is on its disk), so the handle under an id is only the right
+   * one for the instance that minted it — a new runtime re-adopts the session as a new handle.
+   */
+  const serving = new Map<string, AgentSession>()
   /** The last request, so `retry` has something to repeat. */
   let asked: { vaultId: string; cwd: string } | null = null
   /** Bumped by every request and by `close`; a step older than the current value is dropped. */
   let generation = 0
   /** The one queue: at most one start, stop or open in flight, in the order they were asked. */
-  let queue: Promise<void> = Promise.resolve()
+  let queue: Promise<unknown> = Promise.resolve()
 
-  function enqueue(step: () => Promise<void>): Promise<void> {
+  function enqueue<T>(step: () => Promise<T>): Promise<T> {
     // Both handlers are the step: a queue that stopped after one failure would be a rail that
     // silently ignores every later click. No step is allowed to reject — the one thing that
     // can throw before an await (`compose`) is guarded where it is called — so the queue is
@@ -375,12 +290,40 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
     return next
   }
 
+  /** Publish the arm that means "this session is on screen, on this runtime".
+   *
+   *  One writer for the state and the composition behind it, because the two describe one moment:
+   *  a surface that read them during a gap would otherwise get one of them from a different moment
+   *  than the other — which is the disagreement `composition`'s own doc says it is held apart to
+   *  avoid. Every path that puts a session on screen goes through here. */
+  function publishLive(
+    composition_: AgentComposition,
+    session: AgentSession,
+    vaultId: string,
+    cwd: string,
+    engineName: string,
+  ): void {
+    state.value = {
+      kind: 'live',
+      vaultId,
+      cwd,
+      key: railKey(session),
+      gateway: composition_.gateway,
+      session,
+      engineName,
+    }
+    composition.value = composition_
+  }
+
   async function teardown(): Promise<void> {
     const held = live
     live = null
     // Published first, so a surface that asked during the teardown gets nothing rather than a
     // binding to a runtime this call is on its way to stopping.
     composition.value = null
+    // The handles go with the runtime: they were minted by it, and a new one re-adopts every
+    // session it serves as a handle of its own (see `serving`).
+    serving.clear()
     if (held === null) return
     try {
       await held.composition.stop()
@@ -419,16 +362,8 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
         // any other: a vault switch during it must not be answered with the old session.
         const engineName = await engineNameFor(compositionOrThrow, session.agentId)
         if (mine !== generation) return
-        state.value = {
-          kind: 'live',
-          vaultId,
-          cwd,
-          key: railKey(session),
-          gateway: compositionOrThrow.gateway,
-          session,
-          engineName,
-        }
-        composition.value = compositionOrThrow
+        serving.set(session.sessionId, session)
+        publishLive(compositionOrThrow, session, vaultId, cwd, engineName)
       } catch (error) {
         if (mine !== generation) return
         // The composition is kept: it is what a `close` has to stop, and the runtime may well
@@ -439,16 +374,24 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
   }
 
   /**
-   * Reopen a session the engine holds — `request`'s sibling, and deliberately not a second
-   * lifecycle.
+   * Put a session on screen: the one move between two sessions of one runtime.
    *
-   * It goes through the **same `enqueue` and the same generation latch**, because the races are
-   * the same ones: a vault switch or the switch going off while a load is in flight must not let
-   * the loaded session arrive as the current one, and a load must not overlap a start or a stop
-   * (the backend is being asked to re-adopt a session on a runtime that may be on its way out).
-   * On success it publishes the same `live` arm, so a session change is a remount under a new
-   * {@link railKey} and the panel — which reads its session once — is replaced rather than
-   * re-pointed. The store's `focus`/`attach` path then does the rest, unchanged.
+   * Two ways in, and the order is the whole point. A session this runtime has **already served**
+   * (`serving`) is one this window holds a working handle for, so showing it is not a call to the
+   * engine at all — and cannot be, because the engine refuses to load a session a runtime is
+   * already serving (`session-open`). That refusal is right: a conversation does not change by
+   * being looked at, and the case it covers is an ordinary one — the reader left a session, the
+   * run in it went on (§5.1), and the pet's reminder or the history list asks for it back
+   * (§6.2's 点击返回任务). Everything else goes to `loadSession`, which is what mints a handle for a
+   * session the engine holds and this runtime does not.
+   *
+   * Both arms go through the **same `enqueue` and the same generation latch**, because the races
+   * are the same ones: a vault switch or the switch going off while an adopt or a load is in
+   * flight must not let the session arrive as the current one, and neither may overlap a start or
+   * a stop (the backend is being asked about a runtime that may be on its way out). Both publish
+   * the same `live` arm, so a session change is a remount under a {@link railKey} and the panel —
+   * which reads its session once, and whose store addresses every action by the key it was mounted
+   * with — is replaced rather than re-pointed.
    *
    * Three things it does *not* do, each of them a decision:
    *
@@ -462,7 +405,64 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
    *    the wrong trade — so the state is left exactly as it is and the engine's refusal goes to
    *    {@link AgentRailDeps.onResumeFailed}.
    */
-  function resume(sessionId: string): Promise<void> {
+  async function resume(sessionId: string): Promise<void> {
+    const now = state.value
+    if (now.kind !== 'live' || now.session.sessionId === sessionId) return
+    const served = serving.get(sessionId)
+    if (served !== undefined && (await adopt(served))) return
+    return load(sessionId)
+  }
+
+  /**
+   * Show a session this runtime already serves, from the handle this window holds — or report that
+   * the handle is no longer one to show.
+   *
+   * The liveness read is the reason this is a queued step rather than an assignment: a handle can
+   * outlive its session. The history list's free action closes a session on the engine
+   * (`services/agent-session-history.ts` → `AgentGateway.closeSession`), and the handle this table
+   * holds for it is dead from that moment — publishing it would mount a panel whose only possible
+   * report is a failure about a session nobody asked to close. The read is the same snapshot the
+   * panel's own handshake takes, so it is a fact the gateway can answer without an engine call,
+   * and its refusal means the handle is gone; the entry is dropped and the caller falls back to
+   * `load`, which is what can still bring a freed session back.
+   *
+   * Answers whether it published. A `false` is about the *handle*, never about the session: the
+   * caller that wants one on screen has the load path left to try.
+   */
+  function adopt(session: AgentSession): Promise<boolean> {
+    const mine = ++generation
+    return enqueue(async () => {
+      if (mine !== generation) return false
+      const held = live
+      if (held === null) return false
+      const now = state.value
+      if (now.kind !== 'live' || now.session.sessionId === session.sessionId) return false
+      try {
+        await held.composition.gateway.snapshot(session)
+      } catch {
+        serving.delete(session.sessionId)
+        return false
+      }
+      if (mine !== generation) return false
+      // The engine's name is read again for the session being shown — it is the same engine, and a
+      // name cached from the previous session would be this file answering for a registration it
+      // has not read.
+      const engineName = await engineNameFor(held.composition, session.agentId)
+      if (mine !== generation) return false
+      publishLive(held.composition, session, now.vaultId, now.cwd, engineName)
+      return true
+    })
+  }
+
+  /**
+   * Load a session the engine holds into this runtime — the arm for a session this window has
+   * never served (a row from the engine's own history), and the one a dead handle falls back to.
+   *
+   * Takes no early-return of its own for a session already on screen beyond re-reading the state
+   * it must publish over: `resume` decided that, and a state that moved while an adopt was in
+   * flight is caught here for the same reason the generation latch exists.
+   */
+  function load(sessionId: string): Promise<void> {
     const now = state.value
     if (now.kind !== 'live' || now.session.sessionId === sessionId) return Promise.resolve()
     // The pair an `AgentOpenRequest` needs, read from the runtime that is up rather than from
@@ -481,16 +481,10 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
         // registration it has not read.
         const engineName = await engineNameFor(held.composition, session.agentId)
         if (mine !== generation) return
-        state.value = {
-          kind: 'live',
-          vaultId: target.vaultId,
-          cwd: target.cwd,
-          key: railKey(session),
-          gateway: held.composition.gateway,
-          session,
-          engineName,
-        }
-        composition.value = held.composition
+        // Now a session this runtime serves, like the ones `open` and `newSession` mint: a second
+        // ask for it is a move, not a load.
+        serving.set(session.sessionId, session)
+        publishLive(held.composition, session, target.vaultId, target.cwd, engineName)
       } catch (error) {
         if (mine !== generation) return
         onResumeFailed(error)
@@ -536,16 +530,12 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
         // registration it has not read.
         const engineName = await engineNameFor(held.composition, session.agentId)
         if (mine !== generation) return
-        state.value = {
-          kind: 'live',
-          vaultId: target.vaultId,
-          cwd: target.cwd,
-          key: railKey(session),
-          gateway: held.composition.gateway,
-          session,
-          engineName,
-        }
-        composition.value = held.composition
+        // **The session being left is not closed, and that is what `serving` is for.** The run in
+        // it goes on (§5.1), the engine keeps serving it, and this table is what remembers the
+        // handle — so the reader can come back to it (the pet's task link, or the history list)
+        // without the engine being asked to hand over a session it is already serving.
+        serving.set(session.sessionId, session)
+        publishLive(held.composition, session, target.vaultId, target.cwd, engineName)
       } catch (error) {
         if (mine !== generation) return
         onNewSessionFailed(error)

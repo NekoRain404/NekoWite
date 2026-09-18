@@ -1,12 +1,11 @@
 /**
  * The store's tests.
  *
- * They drive the memory double rather than a hand-built stream, because the store's job is
- * the part the reducer cannot see: the handshake that opens a window, the calls, and which
- * of several sessions a frame belongs to. Every frame here is one the double actually
- * produced, and the events that must not pollute a session are ones it was asked to deliver
- * late — from a run that ended, from a vault the window left, from a runtime instance that
- * is over.
+ * They drive the memory double rather than a hand-built stream, because the store's job is the
+ * part the reducer cannot see: the handshake that opens a window, the calls, and which of several
+ * sessions a frame belongs to. Every frame here is one the double actually produced, and the
+ * events that must not pollute a session are ones it was asked to deliver late — from a run that
+ * ended, from a vault the window left, from a runtime instance that is over.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -38,13 +37,12 @@ async function opened(
 /**
  * Hold every snapshot until the test lets that one go, in the order the calls were made.
  *
- * The handshake's races are about what happens between the host reading out its record and
- * the subscription that continues from it, and nothing can be asserted about that window
- * unless a test can open it. Each snapshot is taken when its call is made — the way a host
- * that answers slowly still answered about the moment it was asked — so what the test does
- * while one is held is *newer* than the snapshot on its way back. Releasing them out of
- * order is how a slow answer lands after a fast one, which is the interleaving that makes a
- * superseded attempt dangerous.
+ * The handshake's races are about what happens between the host reading out its record and the
+ * subscription that continues from it, and nothing can be asserted about that window unless a
+ * test can open it. Each snapshot is taken when its call is made — the way a host that answers
+ * slowly still answered about the moment it was asked — so what the test does while one is held
+ * is *newer* than the snapshot on its way back. Releasing them out of order is how a slow answer
+ * lands after a fast one, which is the interleaving that makes a superseded attempt dangerous.
  */
 function holdSnapshots(gateway: MemoryAgentGateway): Array<() => void> {
   const take = gateway.snapshot.bind(gateway)
@@ -64,8 +62,8 @@ function holdSnapshots(gateway: MemoryAgentGateway): Array<() => void> {
 }
 
 /**
- * Hold the answer to the next `subscribe`: `called` resolves when the host has been asked,
- * and the listener it hands over is counted when it is released.
+ * Hold the answer to the next `subscribe`: `called` resolves when the host has been asked, and the
+ * listener it hands over is counted when it is released.
  */
 function holdNextSubscribe(gateway: MemoryAgentGateway): {
   called: Promise<void>
@@ -103,21 +101,19 @@ describe('the session store', () => {
     const store = useAgentSessionStore()
     const { gateway, session } = await opened()
     await store.attach(gateway, session)
-    store.focus(sessionKey(session))
     const key = sessionKey(session)
     return { store, gateway, session, key, record: () => store.records[key] }
   }
 
   it('opens a window on a session and reduces what the engine sends', async () => {
     const { store, key, record } = await attached()
-    expect(store.activeView?.state).toBe('ready')
+    expect(record().view.state).toBe('ready')
 
     await store.send(key, 'hello')
 
     expect(record().view.state).toBe('completed')
     expect(record().view.timeline.map((entry) => entry.kind)).toEqual(['user', 'text'])
     expect(record().view.lastResult?.stopReason).toBe('end-turn')
-    expect(store.activeState).toBe('completed')
     expect(key).toContain(sessionKey(store.records[key].identity))
   })
 
@@ -127,13 +123,14 @@ describe('the session store', () => {
     const spy = vi.spyOn(gateway, 'prompt')
 
     const sending = store.send(key, 'the first question')
-    expect(store.canSend).toBe(false)
+    // The view's state is the fact §6.2's one-generation rule is read off: the panel's composer
+    // computes its own answer from the same record, and the store keeps no second copy of it.
+    expect(record().view.state).toBe('running')
     const refused = await store.send(key, 'and a second one')
 
     expect(refused).toEqual({ accepted: false, reason: 'run-in-flight' })
     expect(spy).toHaveBeenCalledTimes(1)
-    // §6.2: the later input waits in the draft rather than being sent beside the run in
-    // flight.
+    // §6.2: the later input waits in the draft rather than being sent beside the run in flight.
     expect(record().draft).toBe('and a second one')
     expect(record().view.timeline.filter((entry) => entry.kind === 'user')).toHaveLength(1)
 
@@ -180,6 +177,12 @@ describe('the session store', () => {
     const { store, gateway, session, record } = await attached()
     const seen: string[] = []
     const stop = store.observeEvents((event) => seen.push(event.kind))
+    // The drop's report: a frame for a session this window is not holding is dropped rather than
+    // applied, and said out loud because nothing in this window can draw it.
+    const reported: string[] = []
+    vi.spyOn(console, 'warn').mockImplementation((message: unknown) => {
+      reported.push(String(message))
+    })
 
     // T8's `/` menu is the caller: it distinguishes "nothing published yet" from "published an
     // empty list", which the reduced view reports as the same empty array. Feeding it the frames
@@ -187,15 +190,19 @@ describe('the session store', () => {
     gateway.emit(session, { kind: 'commands-changed', payload: { commands: [{ name: 'review' }] } })
     expect(seen).toEqual(['commands-changed'])
 
-    // A frame this store refuses is not a frame anybody downstream hears: an event that was not
-    // applied to the view is not one a menu may draw a row from.
+    // A frame this store refuses is not one anybody downstream hears: an event that was not applied
+    // to the view is not one a menu may draw a row from.
     gateway.emit(session, {
       kind: 'commands-changed',
       payload: { commands: [{ name: 'elsewhere' }] },
       identity: { vaultId: 'vault-elsewhere' },
     })
     expect(seen).toEqual(['commands-changed'])
-    expect(store.unattributed).toBe(1)
+    // Reported where a bug report can read it, and counted nowhere: no surface can draw "a frame
+    // arrived for a session you are not holding", so the fact goes to the console rather than into
+    // a store member only tests would read.
+    expect(reported).toHaveLength(1)
+    expect(reported[0]).toContain('vault-elsewhere')
 
     stop()
     gateway.emit(session, { kind: 'commands-changed', payload: { commands: [] } })
@@ -209,16 +216,19 @@ describe('the session store', () => {
     const { gateway, session } = await opened()
     const staleEpoch = session.runtimeEpoch
 
-    // The runtime goes away and a new instance comes up: anything still queued from the old
-    // one is addressed to a session that no longer exists under that identity.
+    // The runtime goes away and a new instance comes up: anything still queued from the old one
+    // is addressed to a session that no longer exists under that identity.
     await gateway.crash()
     await gateway.start()
     const reopened = await gateway.openSession({ vaultId: 'vault-1', cwd: '/tmp/vault' })
     expect(reopened.runtimeEpoch).not.toBe(staleEpoch)
     await store.attach(gateway, reopened)
     const key = sessionKey(reopened)
-    store.focus(key)
     const before = store.records[key].view.sequence
+    const reported: string[] = []
+    vi.spyOn(console, 'warn').mockImplementation((message: unknown) => {
+      reported.push(String(message))
+    })
 
     gateway.emit(reopened, {
       kind: 'text-delta',
@@ -226,7 +236,6 @@ describe('the session store', () => {
       runId: 'run-1',
       identity: { runtimeEpoch: staleEpoch },
     })
-    expect(store.unattributed).toBe(1)
 
     gateway.emit(reopened, {
       kind: 'text-delta',
@@ -235,8 +244,9 @@ describe('the session store', () => {
       identity: { vaultId: 'vault-2' },
     })
     // Neither frame was placed: the composite key is the boundary, so they never reached the
-    // session on screen — and they were counted rather than dropped in silence.
-    expect(store.unattributed).toBe(2)
+    // session on screen, and neither was dropped in silence.
+    expect(reported).toHaveLength(2)
+    expect(reported[1]).toContain('vault-2')
     expect(store.records[key].view.sequence).toBe(before)
     expect(store.records[key].dropped).toBe(0)
     expect(store.records[key].view.timeline.some((entry) => 'text' in entry)).toBe(false)
@@ -285,20 +295,19 @@ describe('the session store', () => {
     const firstKey = sessionKey(first.session)
     const secondKey = sessionKey(second.session)
     await store.attach(second.gateway, second.session)
-    store.focus(firstKey)
     store.setDraft(secondKey, 'half-written over there')
     store.setScroll(secondKey, 120)
 
-    // Something happens in the session that is not on screen.
+    // Something happens in the second session.
     second.gateway.emit(second.session, {
       kind: 'usage-changed',
       payload: { usedTokens: 42, contextTokens: 100, cost: null },
     })
 
-    // It is applied to its own record — which is the whole of what the two-session rule is now:
-    // the pointer names one session and the other one's state is untouched either way.
+    // It is applied to its own record, by the composite key the frame carries — and the first
+    // session's record is untouched. §5.1's 「每会话独立」 is the key's: the draft and the scroll
+    // position as much as the view, and nothing here is "the session" rather than "a session".
     expect(store.records[secondKey].view.usage?.usedTokens).toBe(42)
-    // The session on screen heard nothing of it.
     expect(store.records[firstKey].view.usage).toBeNull()
     expect(store.records[firstKey].view.sequence).toBe(0)
     expect(store.records[secondKey].draft).toBe('half-written over there')
@@ -311,7 +320,6 @@ describe('the session store', () => {
     const { gateway, session } = await opened()
     await store.attach(gateway, session)
     const key = sessionKey(session)
-    store.focus(key)
     store.setDraft(key, 'the question I was typing')
 
     // The runtime dies under the turn.
@@ -403,7 +411,6 @@ describe('the session store', () => {
     // subscription continues from the sequence it reports.
     await store.attach(gateway, session)
     const key = sessionKey(session)
-    store.focus(key)
     expect(store.records[key].view.sequence).toBeGreaterThan(0)
     expect(store.records[key].view.state).toBe('completed')
 
@@ -433,7 +440,6 @@ describe('the session store', () => {
     })
     await store.attach(gateway, revived)
     const key = sessionKey(revived)
-    store.focus(key)
 
     expect(
       store.records[key].view.timeline.map(
@@ -452,7 +458,6 @@ describe('the session store', () => {
     const { gateway, session } = await opened()
     await store.attach(gateway, session)
     const key = sessionKey(session)
-    store.focus(key)
 
     store.detach(key)
     store.detach(key)
@@ -619,17 +624,18 @@ describe('the session store', () => {
     await store.resync('no-such-session')
   })
 
-  it('sends to the session it is given, not to whichever one is in front', async () => {
+  it('sends to the key it is given, and refuses one whose panel is gone', async () => {
     const { store, gateway, session, key, record } = await attached()
     const elsewhere = await gateway.openSession({ vaultId: 'vault-1', cwd: '/tmp/vault' })
     await store.attach(gateway, elsewhere)
     const elsewhereKey = sessionKey(elsewhere)
-    // The rail moves past that session — its panel unmounts and takes its subscription with it —
-    // and then the pet's task link focuses it, because this window still holds its record
-    // (`app/pet-task-link.ts`). The two sessions are now: the one in front, and the one a
-    // composer is mounted on.
+    // The rail moves past that session and its panel unmounts, taking its subscription with it.
+    // This is the state the pet's task link used to reach from the other side: it moved the store
+    // *pointer* to a key like this one, and a control that then addressed "the session in front"
+    // sent into a key with no subscription at all. The pointer is gone, so there is no "in front"
+    // to address by accident: a call goes to the key its caller holds, and the key that is no
+    // window's any more answers with the typed refusal rather than with nothing.
     store.detach(elsewhereKey)
-    store.focus(elsewhereKey)
     const prompt = vi.spyOn(gateway, 'prompt')
 
     await store.send(key, 'the message')
@@ -638,8 +644,6 @@ describe('the session store', () => {
     expect(prompt).toHaveBeenCalledTimes(1)
     expect(prompt.mock.calls[0][0]).toMatchObject({ sessionId: session.sessionId })
     expect(record().view.timeline.filter((entry) => entry.kind === 'user')).toHaveLength(1)
-    // Addressed by the key that is merely in front, the same call is the refusal the composer
-    // used to run into by accident — and its outcome is the only thing that would have said so.
     expect(await store.send(elsewhereKey, 'and another')).toEqual({
       accepted: false,
       reason: 'no-session',
@@ -665,7 +669,6 @@ describe('the versions a request is submitted with', () => {
     const store = useAgentSessionStore()
     const { gateway, session } = await opened({ vaultId })
     await store.attach(gateway, session)
-    store.focus(sessionKey(session))
     const key = sessionKey(session)
     return { store, gateway, session, key, record: () => store.records[key] }
   }

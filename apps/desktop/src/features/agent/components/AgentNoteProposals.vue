@@ -73,7 +73,16 @@ const props = defineProps<{
 
 const tabs = useTabsStore()
 const sessions = useAgentSessionStore()
-const host = useAgentNoteHost()
+/**
+ * The edit port, told the session this surface belongs to.
+ *
+ * `props.identity` is the shell's own reading — the session the rail has on screen — and it is the
+ * same identity the proposals below are assembled from, so the apply and the proposal it applies
+ * cannot be about two different sessions. Handed in as a reader rather than captured here for the
+ * reason `useAgentNoteHost` gives: the session can change under a mounted surface, and the identity
+ * that matters is the one in front at the moment of the apply.
+ */
+const host = useAgentNoteHost({ identity: () => props.identity })
 
 /** The note the editor has in front. The surface is about this one and says so by being here. */
 const path = computed<string | null>(() => tabs.activeTab?.path ?? null)

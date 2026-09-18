@@ -17,13 +17,22 @@
  *    decision they did not take. The single exception is the pane going away, and it settles as
  *    `discard` — nothing written — because that is the state the note is really in.
  *
- * The session's identity comes from the agent store, and it is read at the moment of the apply
+ * The session's identity is the **caller's own** — required, and read at the moment of the apply
  * rather than captured when the surface mounted: a runtime that was restarted between the question
  * and the answer is exactly what `identity-changed` exists to catch, and a captured identity would
  * hide it.
+ *
+ * It used to have a default that read the agent store's pointer (`activeRecord`), and that default
+ * was a defect with teeth: the pointer could name a session the surface was not showing — the pet's
+ * task link moved it while the rail kept the session on screen — and the apply would then be judged
+ * against a session the proposal was never produced under, refusing a write the reader had every
+ * reason to expect to land. The store no longer has a pointer (`stores/agent-session.ts`), and this
+ * port no longer has a default: a caller that does not know which session it is editing for cannot
+ * build a host at all, which is the honest shape for the one port in this feature that decides
+ * *where* a write goes.
  */
 
-import { computed, onBeforeUnmount, ref, type ComputedRef, type Ref } from 'vue'
+import { onBeforeUnmount, ref, type Ref } from 'vue'
 import type { AgentIdentity } from '../../../platform/gateways/agent-contracts'
 import type { AgentEditRefusal } from '../services/agent-edit-apply'
 import type { LiveNoteLookup } from '../services/agent-context-snapshot'
@@ -31,7 +40,6 @@ import type { AgentEditChoice, AgentEditConflict, AgentEditHost, AgentEditOutcom
 import { applyAgentEdit } from '../services/agent-edit-apply'
 import { liveNoteEditorOf } from '../services/live-note-responder'
 import { writeNoteText } from '../services/agent-note-write'
-import { useAgentSessionStore } from '../stores/agent-session'
 import { useTabsStore } from '../../../stores/tabs'
 
 export interface AgentNoteHostDeps {
@@ -39,8 +47,17 @@ export interface AgentNoteHostDeps {
   lookup?: (path: string) => LiveNoteLookup
   /** The write, for a test that drives this without a tab store. */
   write?: (path: string, text: string) => Promise<AgentEditWriteOutcome>
-  /** The session the proposal is applied under, for a test that drives this without a store. */
-  identity?: () => AgentIdentity | null
+  /**
+   * The session the proposal is applied under — the surface's own, the one it drew the proposals
+   * for. A reader function rather than a value, because the session can change under a mounted
+   * surface (the rail reopens another one) and the apply has to be judged against the session that
+   * is in front at that instant, not the one the surface started with.
+   *
+   * Required, and the argument is in this file's header: this port decides where a write lands, and
+   * a default read from anywhere else — the store's pointer, most of all — is a second answer to
+   * "which session is this" that the caller cannot see.
+   */
+  identity: () => AgentIdentity | null
 }
 
 export interface AgentNoteHost {
@@ -51,27 +68,23 @@ export interface AgentNoteHost {
   /** The user's answer. Exactly one call settles the question; a second is ignored. */
   answer(choice: AgentEditChoice): void
   /**
-   * Apply `proposal` under the session on screen.
+   * Apply `proposal` under the session the surface is showing.
    *
    * The identity is read here rather than passed in, because a caller that read one itself could
    * pair an answer with a session it was never produced under — and both halves would be
    * well-formed, which is precisely the mismatch nothing downstream can see.
    */
   apply(proposal: AgentEditProposal): Promise<AgentEditOutcome>
-  /** Whether there is a session to apply under at all. False draws no apply control. */
-  readonly canApply: ComputedRef<boolean>
 }
 
 /** Why an apply had no session to run under. `sessionId` names the whole of what is missing. */
 const NO_SESSION: AgentEditRefusal = { reason: 'identity-changed', field: 'sessionId' }
 
-export function useAgentNoteHost(deps: AgentNoteHostDeps = {}): AgentNoteHost {
+export function useAgentNoteHost(deps: AgentNoteHostDeps): AgentNoteHost {
   const tabs = useTabsStore()
-  const sessions = useAgentSessionStore()
 
   const lookup = deps.lookup ?? ((path: string) => tabs.lookUpLiveNote(path))
   const write = deps.write ?? writeNoteText
-  const identity = deps.identity ?? (() => sessions.activeRecord?.identity ?? null)
 
   const editor = liveNoteEditorOf({ lookUpLiveNote: lookup })
 
@@ -116,16 +129,10 @@ export function useAgentNoteHost(deps: AgentNoteHostDeps = {}): AgentNoteHost {
   }
 
   async function apply(proposal: AgentEditProposal): Promise<AgentEditOutcome> {
-    const live = identity()
+    const live = deps.identity()
     if (live === null) return { status: 'refused', refusal: NO_SESSION }
     return applyAgentEdit(proposal, live, host)
   }
 
-  return {
-    host,
-    conflict,
-    answer,
-    apply,
-    canApply: computed(() => identity() !== null),
-  }
+  return { host, conflict, answer, apply }
 }

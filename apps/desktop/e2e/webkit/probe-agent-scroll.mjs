@@ -1018,18 +1018,45 @@ function wire(wd) {
  * (`stores/agent-session.ts`: `no-session` when the *active* key has no subscription or record,
  * `run-in-flight` when the record it names is live) — and the panel discards that outcome.
  *
- * The store keys its records by the pair (session, subscription) that `send` also reads, but the
- * *panel* reads its record through the key it was mounted with, so the two can disagree. What
- * separates the arms without mutating anything:
+ * The store keys its records by the pair (session, subscription) that `send` also reads, and the
+ * *panel* reads its record through the key it was mounted with. The two used to be compared —
+ * the store carried an `activeKey`, and a press could be explained by whether that pointer and
+ * the panel's own key agreed — and the pointer is gone (`stores/agent-session.ts`: it was a
+ * second answer to "which session is this window on", and the pet's task link could move it).
+ * What is left is the one fact the arms are told apart by:
  *
- *  - which record holds the text this probe just typed, which names the panel's own key;
- *  - whether the store's `activeKey` is that same key;
- *  - the state of the record `activeKey` names: a live one is the `run-in-flight` arm, a missing
- *    one is `no-session` by record, and a present, non-live one can only be `no-session` by
+ *  - **which record holds the text this probe just typed**, which names the panel's own key —
+ *    captured while the field holds it (`window.__nkwPanelKey`, resolved at each typing site) and
+ *    read back here, since a press may have cleared the field by the time this runs;
+ *  - the state of *that* record: a live one is the `run-in-flight` arm, a missing one is
+ *    `no-session` by record, and a present, non-live one can only be `no-session` by
  *    subscription.
  *
  * Read, never asserted on: the probe reports, `verify.mjs` decides.
  */
+/**
+ * Remember which record the composer's field belongs to, by the text just typed into it.
+ *
+ * The store no longer names the session a panel is on (`stores/agent-session.ts`), and the
+ * composer's field is the seam where the panel's own key is observable from outside: the draft it
+ * writes goes to the record the panel was mounted with, so the record holding `typed` is the one
+ * on screen. Kept on `window` because the reads that need it happen after a press has cleared the
+ * field.
+ */
+function rememberPanelKey(wd, typed) {
+  return wd.executeAsync(
+    `const done = arguments[arguments.length - 1];
+     import('/src/features/agent/stores/agent-session.ts').then(function (m) {
+       const store = m.useAgentSessionStore();
+       const records = store.records || {};
+       const keys = Object.keys(records);
+       window.__nkwPanelKey = keys.filter(function (k) { return records[k].draft === arguments[0]; })[0] ?? null;
+       done({ keys: keys, panel: window.__nkwPanelKey });
+     }, function (e) { done({ why: String(e && e.message ? e.message : e) }); });`,
+    [typed],
+  )
+}
+
 function readAgentStore(wd) {
   return wd.executeAsync(
     `const done = arguments[arguments.length - 1];
@@ -1047,13 +1074,13 @@ function readAgentStore(wd) {
                   lastResult: r.view.lastResult ? r.view.lastResult.stopReason : null };
        };
        const field = document.querySelector('.agent-composer-field');
+       const panel = window.__nkwPanelKey ?? null;
        done({
-         active: store.activeKey,
+         panel: panel,
          keys: keys,
-         activeHeld: store.activeKey !== null && keys.indexOf(store.activeKey) >= 0,
-         activeView: seen(store.activeKey),
+         panelHeld: panel !== null && keys.indexOf(panel) >= 0,
+         panelView: seen(panel),
          views: keys.map(function (k) { return { key: k, view: seen(k) }; }),
-         storeCanSend: store.canSend,
          fieldValue: field ? field.value : null,
        });
      }, function (e) { done({ why: String(e && e.message ? e.message : e) }); });`,
@@ -1122,6 +1149,7 @@ async function retogglePhase(wd, click) {
        field.dispatchEvent(new Event('input', { bubbles: true }));
        return { ok: true, value: field.value }`,
     )
+    out.panel = await rememberPanelKey(wd, 'probe')
     const at = await fitReading(wd)
     out.kind = at.action?.kind ?? null
     out.disabled = at.action?.disabled ?? null
@@ -1279,6 +1307,7 @@ async function fitPhase(wd) {
            }
            return { ok: true, value: field.value };`,
         ),
+        panel: await rememberPanelKey(wd, 'probe'),
       }
       const at = await fitReading(wd)
       const before = await buttonCalls(wd)

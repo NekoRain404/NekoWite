@@ -142,29 +142,28 @@ function mountRepointable(vault: Ref<string | null>): void {
   mounted.push(app)
 }
 
-/** The state a live panel mounts its composer in: a session attached with its record in front of
- *  the store. Nothing below depends on it — that is the subject of the divergence case — and it is
- *  kept because it is the state the composer is really mounted in. */
+/** The state a live panel mounts its composer in: a session attached to the store, under its own
+ *  key. Nothing below depends on it — that is the subject of the divergence case — and it is kept
+ *  because it is the state the composer is really mounted in. */
 async function withSession(): Promise<void> {
   const store = useAgentSessionStore()
   await store.attach(gateway, session)
-  store.focus(sessionKey(session))
   await settle()
 }
 
 /**
- * A session in *another* vault, put in front of the store.
+ * A session in *another* vault, held by this window the way the rail holds one it has left.
  *
- * This is the pet's task link, and it is the one production case where the store's active record
- * and the session a panel is showing disagree: the click focuses the session its task names
- * (`app/pet-task-link.ts`, `store.focus(target)`) while the rail keeps the session it was on, so
- * the store's pointer lands on a session whose panel is not mounted.
+ * This used to be built by moving the store's pointer to it (`focus`) — the state a pet task click
+ * left the window in — and the store no longer has one (`stores/agent-session.ts`). What is left is
+ * the state these cases were always really about: the window holds another session, in another
+ * vault, and the composer must still resolve everything against the session it was handed.
  */
-async function focusAnotherVault(): Promise<void> {
+async function anotherVaultInTheWindow(): Promise<void> {
   const elsewhere = await gateway.openSession({ vaultId: '/somewhere/else', cwd: '/somewhere/else' })
   const store = useAgentSessionStore()
   await store.attach(gateway, elsewhere)
-  store.focus(sessionKey(elsewhere))
+  store.detach(sessionKey(elsewhere))
   await settle()
 }
 
@@ -223,13 +222,13 @@ describe('with a session in a folder', () => {
     expect(rows()).toEqual([])
   })
 
-  it('lists the session’s own vault, not the one the store is pointed at', async () => {
-    // Correct by construction rather than by the store's focus: the folder listed is the one the
+  it('lists the session’s own vault, not the one another session in the window works in', async () => {
+    // Correct by construction rather than by looking anything up: the folder listed is the one the
     // panel's session works in, so the two cannot disagree however the store's pointer moved.
     listMock.mockResolvedValue([entry('welcome.md')])
     mountComposer()
     await withSession()
-    await focusAnotherVault()
+    await anotherVaultInTheWindow()
 
     host.querySelector<HTMLButtonElement>('[data-action="context"]')?.click()
     await settle()

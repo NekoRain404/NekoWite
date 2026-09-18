@@ -118,6 +118,10 @@ export async function followSwitchPhase(wd, run) {
  * leaves the composer offering a *stop*, so the send this phase needs would not be there. The
  * ending frame can be refused (`closed-run`, if the run is already over) and that is expected —
  * which is why the phase judges nothing by it.
+ *
+ * The prompt is typed into the composer's field (rather than written into the store's record, as
+ * it used to be) because the store no longer names a session: the record the panel is bound to is
+ * the one the composer writes the draft to, and that is what this phase reads back.
  */
 export async function elapsedPhase(wd, run) {
   const out = { before: null, after: null }
@@ -159,21 +163,29 @@ export async function elapsedPhase(wd, run) {
     `const seen = window.__nkwInvokes || [];
      return seen.filter(function (e) { return e.cmd === 'agent_prompt'; }).length`,
   )
+  // **Typed through the field, not poked into the store.** The text has to become one the store
+  // holds for the session this panel is bound to, and the field is the seam that fact travels
+  // through: the composer writes its draft to the record it was mounted with. Writing the record
+  // directly needed the store to say which record that is, and the store no longer answers that
+  // (`stores/agent-session.ts` — the pointer is gone) — so the probe resolves the panel's own key
+  // from the draft the typing produced, exactly as the send button's own state does.
   out.typed = await wd.execute(
     `const field = document.querySelector('.agent-composer-field');
      if (!field) return { ok: false, why: 'no composer field' };
      field.focus();
+     field.value = 'elapsed probe';
+     field.dispatchEvent(new Event('input', { bubbles: true }));
      return { ok: true, value: field.value };`,
   )
-  await wd.executeAsync(
+  out.panel = await wd.executeAsync(
     `const done = arguments[arguments.length - 1];
      import('/src/features/agent/stores/agent-session.ts').then(function (m) {
        const store = m.useAgentSessionStore();
-       const key = store.activeKey;
-       const before = store.recordFor(key) ? store.recordFor(key).draft : null;
-       if (store.recordFor(key)) store.recordFor(key).draft = 'elapsed probe';
-       done({ ok: true, draftBefore: before });
-     }, function (e) { done({ ok: false, why: String(e && e.message ? e.message : e) }); })`,
+       const records = store.records || {};
+       const keys = Object.keys(records);
+       window.__nkwPanelKey = keys.filter(function (k) { return records[k].draft === 'elapsed probe'; })[0] ?? null;
+       done({ keys: keys, panel: window.__nkwPanelKey });
+     }, function (e) { done({ why: String(e && e.message ? e.message : e) }); })`,
   )
   await settle(wd, 2)
   out.sendClick = await clickSelector(wd, '.agent-composer [data-action="send"]')
@@ -226,7 +238,10 @@ function readStore(wd) {
     `const done = arguments[arguments.length - 1];
      import('/src/features/agent/stores/agent-session.ts').then(function (m) {
        const store = m.useAgentSessionStore();
-       const record = store.recordFor(store.activeKey);
+       // The panel's own key, remembered where this phase typed its prompt: the store holds no
+       // "active" key any more, and the text in the field is what named the record the composer
+       // was bound to (see elapsedPhase).
+       const record = store.recordFor(window.__nkwPanelKey ?? null);
        done(record ? {
          state: record.view.state,
          sequence: record.view.sequence,
@@ -238,7 +253,7 @@ function readStore(wd) {
          timeline: record.view.timeline.length,
          dropped: record.dropped,
          lastDrop: record.lastDrop,
-       } : { why: 'the store holds no record for the active key' });
+       } : { why: 'the store holds no record for the panel key this phase typed into' });
      }, function (e) { done({ why: String(e && e.message ? e.message : e) }); })`,
   )
 }

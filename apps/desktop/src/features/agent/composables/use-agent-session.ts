@@ -136,7 +136,10 @@ export function useAgentSession(options: UseAgentSessionOptions): AgentSessionBi
   const owns = options.subscribe ?? true
 
   onMounted(() => {
-    store.focus(key)
+    // No pointer is moved here, and there is none to move: the panel's own key is the only address
+    // this binding uses, and the store keeps no second answer to "which session is in front" (see
+    // `stores/agent-session.ts`). What puts a session on screen is the rail's `live` state, which
+    // mounts this panel under it — one owner, and nothing a click elsewhere can re-point.
     if (owns) void store.attach(options.gateway, options.session)
   })
 
@@ -163,10 +166,9 @@ export function useAgentSession(options: UseAgentSessionOptions): AgentSessionBi
     draft,
     canSend: computed(() => view.value !== null && !isRunLive(view.value)),
     // Every action here is addressed by `key` — this binding's own session, the one the component
-    // draws — and never by whatever session is in front. The two are usually the same and not
-    // always: `focus` is also called by the pet's task link (`app/pet-task-link.ts`), which names
-    // a session the rail may have moved past, and a send addressed from there lands in another
-    // conversation or in none. `stores/agent-session.ts` carries the whole argument.
+    // draws — and there is no other key it could be addressed by: the store holds no "session in
+    // front" for a caller to read, so a control can only act on the session it belongs to.
+    // `stores/agent-session.ts` carries the argument and the state it replaced.
     //
     // The default is the composer's own subject: the panel hands over the words, and the document
     // they are about is the one the editor has open. See `openNoteTargets` for why an unnamed

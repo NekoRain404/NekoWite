@@ -209,7 +209,9 @@ async function mountPanel(script: MemoryRunScript): Promise<Harness> {
   mounted.push(app)
 
   const store = useAgentSessionStore()
-  const record = () => store.recordFor(store.activeKey)
+  // The panel's own key, from the session it was mounted with: the store keeps no "active" key,
+  // and a harness that read one would be asking the very question these cases are about.
+  const record = () => store.recordFor(sessionKey(session))
   const el = (selector: string): HTMLElement | null => host.querySelector(selector)
   const settle = async (): Promise<void> => {
     for (let i = 0; i < 4; i += 1) {
@@ -495,8 +497,7 @@ describe('AgentPanel — the frames this window refused', () => {
     expect(harness.el('[data-agent-dropped]')).toBeNull()
 
     const store = useAgentSessionStore()
-    const key = store.activeKey
-    if (key === null) throw new Error('the panel is not bound to a session')
+    const key = sessionKey(session)
     gateway.emit(session, { kind: 'commands-changed', payload: { commands: [] } })
     await harness.settle()
     const applied = store.records[key].view.sequence
@@ -527,8 +528,7 @@ describe('AgentPanel — the frames this window refused', () => {
     const harness = await mountPanel({ chunks: ['done. '] })
 
     const store = useAgentSessionStore()
-    const key = store.activeKey
-    if (key === null) throw new Error('the panel is not bound to a session')
+    const key = sessionKey(session)
     gateway.emit(session, { kind: 'commands-changed', payload: { commands: [] } })
     await harness.settle()
     const applied = store.records[key].view.sequence
@@ -625,48 +625,36 @@ describe('AgentPanel — what the last turn took', () => {
 })
 
 /**
- * The store, put in the state a pet task click leaves it in: a session this window still holds a
- * record for is the one in front, while the panel on screen is mounted for a different one.
+ * A second session this window holds: the state the rail reaches by leaving this panel for another
+ * one, and the state a pet task click used to leave the store in.
  *
- * `app/pet-task-link.ts` is the whole of that path — the pet's row calls `desktop_pet_open_task`,
- * the host raises this window and emits on `pet-open-task`, and the link focuses the session that
- * key names as long as this window holds a record for it. The rail it opens keeps the session it
- * was on (that file says so in as many words: "the rail still shows what it has"), so whenever
- * the pet's task is older than the session on screen, the store's active key and the key the
- * panel was mounted with are two different sessions.
- *
- * The record outlives the subscription, which is the second half of the state: the rail moving
- * past a session unmounts its panel, and `useAgentSession`'s `onBeforeUnmount` detaches. The
- * record stays — and `recordFor` is exactly what the pet's own guard reads.
+ * It used to be built by moving the store's *pointer* to that session (`focus`) while the panel on
+ * screen stayed mounted for a different one — which is the shape this file's describe block is
+ * about. The pointer is gone (`stores/agent-session.ts`): what remains is what these cases are
+ * really holding down — a window that holds two sessions must still act on the one the panel was
+ * mounted with — and it is built the way the window really holds the second one, through the same
+ * `attach`/`detach` pair a panel's mount and unmount run. The record outlives the subscription, so
+ * `recordFor` still answers for the session whose panel is gone.
  */
-async function focusBehindThePanel(vaultId = 'vault'): Promise<string> {
+async function anotherSessionInTheWindow(vaultId = 'vault'): Promise<string> {
   const store = useAgentSessionStore()
   const elsewhere = await gateway.openSession({ vaultId, cwd: `/${vaultId}` })
   await store.attach(gateway, elsewhere)
   const key = sessionKey(elsewhere)
   store.detach(key)
-  store.focus(key)
   return key
 }
 
 describe('AgentPanel — which session its controls address', () => {
-  /**
-   * The state of the session the panel is mounted on — deliberately not `harness.state()`, which
-   * reads the store's *active* key. That is the whole subject of these two tests: by the time
-   * they have set the state up, the active key is the other session's.
-   */
-  const onScreen = (): string =>
-    useAgentSessionStore().recordFor(sessionKey(session))?.view.state ?? 'none'
-
-  it('sends to the session it is mounted on, not to the one in front behind it', async () => {
+  it('sends to the session it is mounted on, not to another one this window holds', async () => {
     const harness = await mountPanel({ chunks: ['done. '] })
-    const elsewhere = await focusBehindThePanel()
+    const elsewhere = await anotherSessionInTheWindow()
 
     await harness.send('the message')
 
     // The press reached the engine, for the conversation the reader is looking at.
     expect(harness.prompts).toEqual(['the message'])
-    expect(onScreen()).toBe('completed')
+    expect(harness.state()).toBe('completed')
     // …and the field gave the message up, because it went somewhere.
     expect((harness.el('.agent-composer-field') as HTMLTextAreaElement).value).toBe('')
     // The other session's record is untouched: no draft of its own, no row in its transcript.
@@ -681,26 +669,26 @@ describe('AgentPanel — which session its controls address', () => {
       permission: { title: 'Read notes/plan.md', options: [...OPTIONS] },
     })
     await harness.send('read the plan')
-    expect(onScreen()).toBe('waiting-permission')
+    expect(harness.state()).toBe('waiting-permission')
 
-    await focusBehindThePanel()
+    await anotherSessionInTheWindow()
     await harness.click('.agent-perm-options button')
 
     expect(harness.answers).toHaveLength(1)
-    expect(onScreen()).toBe('completed')
+    expect(harness.state()).toBe('completed')
     expect(harness.el('.agent-perm')).toBeNull()
   })
 
-  it('lists the folder of the session it is mounted on, not the one in front behind it', async () => {
+  it('lists the folder of the session it is mounted on, not one another session works in', async () => {
     const harness = await mountPanel({ chunks: [] })
     // A second session, in another vault: the `+` lists files an engine running in *this* panel's
     // folder can resolve, so the two vaults have to be told apart rather than compared.
-    await focusBehindThePanel('another-vault')
+    await anotherSessionInTheWindow('another-vault')
 
     await harness.click('[data-action="context"]')
 
     // The folder asked for is the panel's own session's, which is the one its words would be sent
-    // to — not the workspace the store's pointer names.
+    // to — not the one the window's other session works in.
     expect(listMock).toHaveBeenCalledWith('vault', '')
     expect(harness.el('[data-action="context"]')?.getAttribute('aria-expanded')).toBe('true')
   })
