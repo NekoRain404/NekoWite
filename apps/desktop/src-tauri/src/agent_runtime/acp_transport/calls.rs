@@ -223,8 +223,16 @@ impl EngineConnection {
             // says nothing about why. The attachment is a no-op for the bound's own
             // reason above, which is a sentence the host wrote rather than one the
             // engine did.
+            //
+            // It is awaited because attaching waits for the engine's end of stderr to
+            // close before it quotes the log: an engine that has just died is a task
+            // hop away from having said its last word, and a sentence built before then
+            // would carry nothing.
             Ok(Err(error)) => {
-                Err(self.with_engine_stderr(self.trip_reason().unwrap_or_else(|| classify(error))))
+                let error = self
+                    .with_engine_stderr(self.trip_reason().unwrap_or_else(|| classify(error)))
+                    .await;
+                Err(error)
             }
             Err(_) => Err(TransportError::Timeout {
                 method: method.to_string(),

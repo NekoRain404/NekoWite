@@ -25,6 +25,7 @@ use std::time::Duration;
 
 use agent_client_protocol::AcpAgentConfig;
 use futures_util::io::{AsyncRead, AsyncReadExt};
+use tokio::sync::watch;
 
 use super::secret::Secret;
 
@@ -79,6 +80,21 @@ const MAX_STDERR_LINE_BYTES: usize = 2048;
 /// Lines of stderr kept before the oldest are dropped. §6.2 keeps stderr
 /// outside the protocol and gives it its own bound.
 const MAX_STDERR_LINES: usize = 200;
+
+/// How long a failure sentence waits for the pump to reach the end of the engine's stderr.
+///
+/// The wait is normally no wait at all, because the condition it waits for is already true: the
+/// engine's death closes its end of the pipe, and the pump's work *ends* there — everything
+/// written before that close is in the buffer and is read before the pump sees EOF — so a failure
+/// that arrives after the engine is gone is waiting on a task that is already finishing rather
+/// than on a delay.
+///
+/// The bound is for the case where the condition cannot become true soon: stderr stays open while
+/// the connection does not when the engine closed its stdout and kept running, or when a wrapper
+/// such as `npx` left a grandchild holding the write end past the engine's own exit. A failure
+/// that hangs is worse than a failure with a short log, and a second is several thousand times
+/// the drain of a pipe the engine has already let go of — on a loaded machine as on an idle one.
+const STDERR_EOF_BOUND: Duration = Duration::from_secs(1);
 
 /// Shortest injected value treated as a secret. Redaction is textual, so a
 /// two-character value like `1` would replace every `1` in every line and shred
@@ -290,6 +306,74 @@ pub async fn pump_stderr<R: AsyncRead + Unpin>(
     }
 }
 
+/// The engine's stderr as a failure reads it: the pump, the log it fills, and the end of both.
+///
+/// The two travel together because one without the other is what the sample problem was.
+/// [`StderrLog::tail`] on its own answers with whatever the pump happens to have stored, and the
+/// pump runs as a task of its own — so a failure noticed the instant the engine dies can arrive
+/// before that task has been polled even once, and the sentence is built with nothing under it.
+/// [`Self::tail`] waits for the pump to reach EOF first, which is the one moment at which the log
+/// is known to hold everything the engine wrote.
+pub struct EngineStderr {
+    log: Arc<Mutex<StderrLog>>,
+    /// Set once the pump has stopped, at the end of the pipe.
+    ///
+    /// A `watch` rather than a notification because it is level-triggered: a reader that arrives
+    /// after the pump is done — which is every reader, once the engine is gone — reads the state
+    /// instead of having missed a wake-up, and the second failure reads it as well as the first.
+    ended: watch::Receiver<bool>,
+}
+
+impl EngineStderr {
+    /// Drains `reader` on a task of its own and returns the reading end.
+    ///
+    /// The log is built *here*, before the spawn, and the handle to it comes back. A log that
+    /// exists only as an argument to `tokio::spawn` is one no failure can read: written,
+    /// bounded, redacted, and dropped with the task that filled it — which is what this was
+    /// before a start failure had a reader, and why the constructor is the only way to get one.
+    pub fn drain<R>(reader: R, secrets: Vec<String>) -> Self
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+    {
+        let log = Arc::new(Mutex::new(StderrLog::default()));
+        let (ended_tx, ended) = watch::channel(false);
+        let pumped = Arc::clone(&log);
+        tokio::spawn(async move {
+            pump_stderr(reader, pumped, secrets).await;
+            // Sent after the pump has returned, so the reading side cannot see `true` while a
+            // line is still on its way into the log. A pump that panics drops the sender
+            // instead, which ends the wait the same way: nothing more is coming.
+            let _ = ended_tx.send(true);
+        });
+        Self { log, ended }
+    }
+
+    /// The engine's own last words, once the pump that reads them has finished.
+    ///
+    /// Every line has been through [`redact`] on its way in — `pump_stderr` is this log's only
+    /// writer — so this reads the log and is never a second path to the pipe.
+    ///
+    /// Waits, bounded by [`STDERR_EOF_BOUND`], for the pump to stop: see that constant for why
+    /// the wait is normally nothing, and for the case it is there to cut short. What is shown is
+    /// bounded by [`MAX_STDERR_LINES`] and [`MAX_STDERR_LINE_BYTES`] either way, and a log that
+    /// hit the bound still says so.
+    pub async fn tail(&self) -> Option<String> {
+        self.await_end().await;
+        self.log.lock().unwrap().tail()
+    }
+
+    /// Waits for the pump to stop, for at most [`STDERR_EOF_BOUND`].
+    async fn await_end(&self) {
+        if *self.ended.borrow() {
+            return;
+        }
+        let mut ended = self.ended.clone();
+        // `Ok` and `Err` both mean the pump is done: it either said so or dropped the sender on
+        // its way out, and neither leaves a line behind for a reader to wait for.
+        let _ = tokio::time::timeout(STDERR_EOF_BOUND, ended.changed()).await;
+    }
+}
+
 fn keep_line(log: &Arc<Mutex<StderrLog>>, secrets: &[String], line: &[u8]) {
     let line = &line[..line.len().min(MAX_STDERR_LINE_BYTES)];
     let text = redact(String::from_utf8_lossy(line).trim_end(), secrets);
@@ -437,14 +521,19 @@ impl<R: AsyncRead + Unpin> AsyncRead for BoundedFrameReader<R> {
 mod stderr_tests {
     use super::*;
 
-    /// One sample of an engine's stderr, drained by the transport's own pump and read
+    /// One reading of an engine's stderr, drained by the transport's own pump and read
     /// back the way a failure reads it — the whole path from the pipe to the sentence,
     /// rather than the formatter alone.
     async fn tail_of(text: &str, secrets: Vec<String>) -> Option<String> {
-        let log = Arc::new(Mutex::new(StderrLog::default()));
-        pump_stderr(text.as_bytes(), Arc::clone(&log), secrets).await;
-        let held = log.lock().unwrap();
-        held.tail()
+        EngineStderr::drain(pipe_of(text), secrets).tail().await
+    }
+
+    /// The engine's end of stderr, as the pump takes it: bytes that are already there and a
+    /// pipe that is already closed, with nothing left to wait for but the reading. The pump
+    /// owns it for as long as it runs, which is why this is an owned reader rather than a
+    /// borrow of the caller's text.
+    fn pipe_of(text: &str) -> futures_util::io::AllowStdIo<std::io::Cursor<Vec<u8>>> {
+        futures_util::io::AllowStdIo::new(std::io::Cursor::new(text.as_bytes().to_vec()))
     }
 
     /// What a line is printed as, once the pump has taken it and the tail renders it.
@@ -452,6 +541,72 @@ mod stderr_tests {
     /// that recomputed it would only restate the implementation.
     fn shown(index: usize) -> String {
         format!("engine line {index}")
+    }
+
+    /// An engine's end of stderr that never closes: the bytes it wrote are handed over, and
+    /// after that there is simply nothing — the state a process that closed its stdout and
+    /// kept running leaves its reader in, and the one no pump can finish on its own.
+    struct HeldOpen(Vec<u8>);
+
+    impl HeldOpen {
+        fn with(text: &str) -> Self {
+            Self(text.as_bytes().to_vec())
+        }
+    }
+
+    impl AsyncRead for HeldOpen {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &mut [u8],
+        ) -> Poll<io::Result<usize>> {
+            let this = self.get_mut();
+            if this.0.is_empty() {
+                // Not EOF and not an error: the engine is still holding the pipe, and a
+                // reader can only wait. No waker is registered because nothing will ever
+                // wake it — which is the shape the bound exists for.
+                return Poll::Pending;
+            }
+            let read = this.0.len().min(buf.len());
+            buf[..read].copy_from_slice(&this.0[..read]);
+            this.0.drain(..read);
+            Poll::Ready(Ok(read))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_line_the_engine_wrote_before_it_died_is_read_even_when_nothing_waited() {
+        // The race, at the scale of the two tasks it is between and with no machine load in
+        // it. The bytes are already in the pipe and the engine has already let go of it, so
+        // the pump has nothing to wait for — but it is a task of its own, and the failure
+        // that reads the log can be built before that task has been polled even once. The
+        // reading is taken here without yielding to the runtime first, which is what makes
+        // the interleaving a fact of this test rather than a hope about the machine: an
+        // implementation that samples the log instead of waiting for the pump sees `None`.
+        let engine = EngineStderr::drain(pipe_of("Error: no provider is configured\n"), Vec::new());
+        let tail = engine
+            .tail()
+            .await
+            .expect("the engine's last line is quoted, whenever the failure was noticed");
+        assert!(
+            tail.contains("no provider is configured"),
+            "and it is the line the engine wrote: {tail}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pipe_the_engine_kept_open_does_not_hold_a_failure_forever() {
+        // The other end of the same wait: an engine that is alive but no longer answering
+        // leaves stderr open, so waiting for the pump to finish is waiting for something that
+        // is not going to happen. A failure that hangs is worse than one with a short log, so
+        // the wait is bounded and what has been written so far is quoted as it stands.
+        let engine = EngineStderr::drain(HeldOpen::with("still starting\n"), Vec::new());
+
+        let tail = tokio::time::timeout(STDERR_EOF_BOUND * 4, engine.tail())
+            .await
+            .expect("a reader must not wait on a pipe the engine has not closed")
+            .expect("the line written so far is still quoted");
+        assert!(tail.contains("still starting"), "{tail}");
     }
 
     #[tokio::test]

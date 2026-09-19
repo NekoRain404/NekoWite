@@ -133,6 +133,24 @@ if [ "$BEHAVIOUR" = startup-refusal ]; then
     fi
 fi
 
+# An engine whose last words arrive *after* the failure was noticed. Its stdout closes first —
+# the moment the host learns the engine is gone — and only then does the process explain itself
+# on stderr and exit. The pause is the point rather than decoration: without it the host's reader
+# and this process's write are a race whose winner depends on load, and with it the ordering is a
+# fact. A reader that samples its log at the instant it notices can only show nothing here, and
+# one that waits for the pipe to end shows the engine's own account.
+if [ "$BEHAVIOUR" = late-refusal ]; then
+    exec 1>&-
+    sleep 0.3
+    # Same reason as `startup-refusal`'s echo: the redaction is measured on the text a failure
+    # surfaces on this path too, not assumed from the code that fills the log.
+    if [ -n "$NWK_TEST_API_KEY" ]; then
+        printf 'refusing provider credential %s\n' "$NWK_TEST_API_KEY" >&2
+    fi
+    printf 'Error: no provider is configured\n' >&2
+    exit 1
+fi
+
 # The group-kill test needs a grandchild that inherited the group, and needs it
 # before any request is sent: this behaviour never answers, so it cannot wait
 # for one. A sleeping shell is a stand-in for the tool subprocess the engine

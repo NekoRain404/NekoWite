@@ -168,7 +168,8 @@ pub enum TransportError {
     /// closed. Every request still outstanding fails with this.
     ///
     /// `detail` is the host's own sentence, and the transport appends the engine's last
-    /// lines of stderr after it when it has any (`process::StderrLog::tail`): an engine
+    /// lines of stderr after it when it has any (`process::EngineStderr::tail`, which
+    /// waits for the engine's end of the pipe to close before it reads): an engine
     /// that is gone has no other way left to say why. The appended text has been through
     /// `redact` before it is attached — it is read out of the log the pump filled, not
     /// off the pipe — so a failure sentence is still a place a credential cannot appear.

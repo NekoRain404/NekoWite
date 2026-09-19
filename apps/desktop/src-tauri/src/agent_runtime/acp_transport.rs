@@ -40,8 +40,8 @@ use tokio::sync::{mpsc, oneshot};
 use super::events::{classify, TransportError};
 use super::fs_capability::FsRequest;
 use super::process::{
-    pump_stderr, secrets_of, signal_group, BoundedFrameReader, EngineLaunch, StderrLog,
-    MAX_FRAME_BYTES, SHUTDOWN_GRACE,
+    secrets_of, signal_group, BoundedFrameReader, EngineLaunch, EngineStderr, MAX_FRAME_BYTES,
+    SHUTDOWN_GRACE,
 };
 
 // Declared by path rather than by name, for the reason `agent_runtime/skills.rs` gives about its
@@ -76,15 +76,15 @@ pub struct EngineConnection {
     stop: Mutex<Option<(oneshot::Sender<()>, oneshot::Sender<()>)>>,
     /// Why the bounded reader stopped reading, when it was the bound.
     trip: std::sync::Arc<Mutex<Option<String>>>,
-    /// The engine's stderr, sampled and redacted by the pump task — the same log, not
-    /// a copy of it.
+    /// The engine's stderr, drained and redacted by the pump task — the same log, not
+    /// a copy of it, and the signal that says the pipe has ended.
     ///
     /// Held on the connection so that a *later* failure can quote it: an engine that
     /// dies mid-run leaves "the connection closed" and nothing else, and its own last
     /// lines are the only account of why. It is read through
     /// [`EngineConnection::with_engine_stderr`], which is the one place it becomes
     /// text.
-    stderr: std::sync::Arc<Mutex<StderrLog>>,
+    stderr: EngineStderr,
 }
 
 /// What the engine says, as opposed to what it is asked.
@@ -136,19 +136,14 @@ impl EngineConnection {
         // stderr must always be drained: a full pipe blocks the engine on its
         // own logging. It is bounded and redacted on the way in.
         //
-        // **The log is built here and shared with the task, not built inside its
-        // argument list.** A log that exists only as an argument is one no failure can
-        // read: it is written, bounded and redacted, and then dropped with the task
-        // that filled it — which is exactly the state this line was in until a start
-        // failure had a reader. The handle stays here, one clone goes to the pump, and
-        // a clone of the same `Arc` travels on the connection for the failures that
-        // arrive after this call (see `with_engine_stderr`).
-        let stderr_log = std::sync::Arc::new(Mutex::new(StderrLog::default()));
-        tokio::spawn(pump_stderr(
-            stderr,
-            std::sync::Arc::clone(&stderr_log),
-            secrets_of(launch),
-        ));
+        // **The handle comes back from the spawn, and it is what a failure reads.**
+        // A log that exists only as an argument to `tokio::spawn` is one no failure can
+        // read: written, bounded, redacted, and then dropped with the task that filled
+        // it — which is exactly the state this line was in until a start failure had a
+        // reader. `EngineStderr` carries the same log the pump writes *and* the pump's
+        // end of the pipe, so the failures `with_engine_stderr` attaches this to can
+        // wait for the pump to finish rather than sampling it.
+        let stderr = EngineStderr::drain(stderr, secrets_of(launch));
 
         // The child's own supervisor. It owns the child, so nothing here has to
         // name the SDK's stream types, and it is what makes teardown §6.2's
@@ -265,7 +260,7 @@ impl EngineConnection {
                     None => "the connection could not be established".to_string(),
                 };
                 return Err(TransportError::Disconnected {
-                    detail: with_stderr_tail(detail, &stderr_log),
+                    detail: with_stderr_tail(detail, &stderr).await,
                 });
             }
         };
@@ -275,7 +270,7 @@ impl EngineConnection {
                 connection,
                 stop: Mutex::new(Some((stop, child_stop))),
                 trip,
-                stderr: stderr_log,
+                stderr,
             },
             EngineEvents {
                 updates,
@@ -317,12 +312,13 @@ impl EngineConnection {
     /// logging behind it that explains nothing — and [`TransportError::Engine`] is
     /// already the engine's own answer, said in its own words.
     ///
-    /// What this can be is bounded by what the pump had read: see
-    /// [`with_stderr_tail`].
-    fn with_engine_stderr(&self, error: TransportError) -> TransportError {
+    /// It waits for the engine's end of stderr to close before it reads — see
+    /// [`with_stderr_tail`] — so what it attaches is the engine's last line rather than
+    /// whatever the pump had stored when the failure was noticed.
+    async fn with_engine_stderr(&self, error: TransportError) -> TransportError {
         match error {
             TransportError::Disconnected { detail } => TransportError::Disconnected {
-                detail: with_stderr_tail(detail, &self.stderr),
+                detail: with_stderr_tail(detail, &self.stderr).await,
             },
             other => other,
         }
@@ -331,19 +327,22 @@ impl EngineConnection {
 
 /// `detail` with the engine's own last words appended, when there are any to show.
 ///
-/// The text comes out of [`StderrLog`] and nowhere else, so everything shown here has
-/// already passed through `redact` on its way in: this is a reader of the log, never a
-/// second path to the pipe, and there is no route by which raw engine output could
-/// reach a sentence a person reads.
+/// The text comes out of [`super::process::StderrLog`] and nowhere else, so everything
+/// shown here has already passed through `redact` on its way in: this is a reader of the
+/// log, never a second path to the pipe, and there is no route by which raw engine output
+/// could reach a sentence a person reads.
 ///
-/// **What the sample can be.** The pump drains on a task of its own, so this is what it
-/// had read at the instant the failure was built — not a claim about the last line the
-/// engine ever wrote. The engine's death closes stderr at the same moment it closes
-/// stdout, and the call that noticed is several task hops behind the pump that was
-/// sitting in `read`, so a line written before the process died is in practice already
-/// here; the honest bound is that it is a sample taken at a moment.
-fn with_stderr_tail(detail: String, log: &Mutex<StderrLog>) -> String {
-    match log.lock().unwrap().tail() {
+/// **What the reading is.** [`EngineStderr::tail`] waits for the pump to reach the end
+/// of the engine's stderr before it reads the log, and that is what turns this from a
+/// sample into the engine's last line. The engine's death closes its end of the pipe, so
+/// the pump's work is finished at the moment the engine is — everything written before
+/// that close is in the buffer and is read before EOF — and a failure that arrives after
+/// the engine is gone waits for a task that is already finishing rather than for a
+/// delay. An engine that is alive but no longer answering keeps stderr open, which is
+/// why that wait is bounded rather than absolute: see
+/// [`super::process::STDERR_EOF_BOUND`].
+async fn with_stderr_tail(detail: String, stderr: &EngineStderr) -> String {
+    match stderr.tail().await {
         Some(tail) => format!("{detail}\n\n{tail}"),
         None => detail,
     }

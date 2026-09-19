@@ -345,9 +345,11 @@ async fn an_engine_that_dies_the_moment_it_starts_still_gets_to_say_why() {
     // close together and the failure may be noticed by the connect or by the handshake. Both
     // are covered here because either may be what a reader gets.
     //
-    // The claim being measured is the honest bound `with_stderr_tail` states: a line written
-    // before the process died is in practice already read by the pump, which is a task of its
-    // own sitting in `read` while the call that notices is several hops behind.
+    // What the failure carries is the `with_stderr_tail` reading, which waits for the pump to
+    // reach the end of the pipe: this process's end of it is closed the moment it exits, so the
+    // line it wrote before dying is read rather than raced for. This case first failed on a
+    // loaded machine, where the pump task had not been polled when the failure was built; the
+    // test below pins that ordering instead of waiting for a busy machine to produce it again.
     let launch = EngineLaunch {
         program: PathBuf::from("/bin/sh"),
         args: vec![
@@ -377,6 +379,51 @@ async fn an_engine_that_dies_the_moment_it_starts_still_gets_to_say_why() {
     assert!(
         message.contains("no provider is configured"),
         "the engine's last line must survive an exit that gives nothing a head start: {message}"
+    );
+}
+
+#[tokio::test]
+async fn an_engine_that_speaks_only_after_the_failure_was_noticed_still_gets_to_say_why() {
+    // The same failure with the ordering pinned instead of raced: the fixture closes its stdout
+    // first — which is all the host ever learns about a dead engine — and writes its explanation
+    // on stderr a third of a second later. The failure's sentence is therefore built before the
+    // line it has to carry exists, on an idle machine or a loaded one, and the difference between
+    // a reader that waits for the engine's end of stderr to close and one that samples its log at
+    // the moment it notices is the whole of what this asserts.
+    //
+    // The credential rides along because this is a sentence a person reads: whichever arm notices
+    // the failure, what it shows has been through the redactor.
+    const SECRET: &str = "sk-test-9d41f7c2ab3e";
+    let mut launch = fixture("late-refusal", None);
+    launch.env.extend(env_pairs([(
+        "NWK_TEST_API_KEY".to_string(),
+        SECRET.to_string(),
+    )]));
+
+    let (error, noticed_by) = match EngineConnection::connect(&launch).await {
+        Err(error) => (error, "connect"),
+        Ok((connection, _events)) => (
+            connection
+                .initialize(INITIALIZE_BOUND)
+                .await
+                .expect_err("an engine that closed its stdout never answers the handshake"),
+            "handshake",
+        ),
+    };
+    eprintln!("an engine that spoke late was noticed by the {noticed_by}");
+
+    let message = error.failure_message();
+    assert!(
+        message.contains("no provider is configured"),
+        "a line the engine wrote after its transport closed is still its last word: {message}"
+    );
+    assert!(
+        !message.contains(SECRET),
+        "and what is shown must be the redacted text, never the stream: {message}"
+    );
+    assert!(
+        message.contains("<redacted>"),
+        "with the marker standing where the credential was: {message}"
     );
 }
 
