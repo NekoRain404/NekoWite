@@ -116,6 +116,76 @@ async function landing(page: Page, selector: string, rail: string): Promise<Land
   )
 }
 
+/**
+ * Wait until nothing under the settings content is still moving a page into place.
+ *
+ * A landing is where the reader *ends up*, and a reading taken while the swap's own transition is
+ * still running is a reading of the motion. Measured in Chromium at the 1280x800 window this file
+ * uses, pressing the pet rail's `care` row from `bubble` with the container at 16px, the page
+ * root's offset from the container is:
+ *
+ *   252ms after the press:  108.49520874023438   → `Math.round` 108
+ *   294ms and after:        108.5                → `Math.round` 109
+ *
+ * with the swap's transition still `running` at 336ms — and every press in this file is read on a
+ * fixed wait (350ms, 650ms, 250ms). So the pair of readings one case compares can come back
+ * `(108, 109)` for a page that never moved: the whole difference is 0.0048px of an unfinished 6px
+ * entry translate, and `Math.round`'s half-up rule turns that into a pixel of verdict. This is the
+ * failure the pet case was red with, and it reproduces on this tree: a run during this repair came
+ * back `character: 0/108 (at rest 109)` with the product untouched.
+ *
+ * **Why the condition is the motion, and not two equal readings.** Comparing consecutive samples
+ * was the first attempt and it is not proof: 25ms apart, two of them can be the same main thread
+ * frame, or both inside the flat tail before the last frame of a spring lands — and a run took the
+ * `108` above through exactly that gap. What has to be true is that the swap has *finished*, so
+ * the question is asked of the animations themselves. The fixed wait before each call stays: it is
+ * what makes the swap having happened certain, so a reading is never of the page being left.
+ *
+ * **Why an endless animation cannot hold a reading back.** Only a running animation that has an
+ * end counts, so a spinner or a blinking caret somewhere under the content is not a landing this
+ * waits for — and a perpetual one can never stall it. A CSS transition and a finite keyframe
+ * animation both end, so the wait is bounded by the swap's own duration.
+ *
+ * The pet rail's own geometry is read through this too, and needs it for the same reason: its
+ * `reach` measures 15.735076904296875 while the section is still entering and exactly 16 once
+ * still, so a run that read it early took an offset one pixel smaller than the rail's geometry.
+ */
+async function settled(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const content = document.querySelector('.dialog-content') as HTMLElement
+      return content.getAnimations({ subtree: true }).every((animation) => {
+        if (animation.playState !== 'running') return true
+        const timing = animation.effect instanceof KeyframeEffect ? animation.effect.getTiming() : null
+        return timing !== null && timing.iterations === Infinity
+      })
+    },
+    undefined,
+    { timeout: 5000 },
+  )
+}
+
+/**
+ * The same reading, taken only once the swap has stopped moving the page.
+ *
+ * **Why every case that compares a landing reads through this, and not only the pet's.** The pet
+ * rail is where the race shows: its page root settles on exactly 108.5 — half a pixel, because the
+ * note above the body is 11px text on a 1.5 line height, 16.5px — so `Math.round`'s answer is
+ * decided by whether the transition's last frame has landed. The other two settle clear of a
+ * boundary, at 16 for the dialog's `editor` and 266.96875 for the agents' `runtime`, and they
+ * passed by luck rather than by being settled: the agents rail read 266.8288269042969 when
+ * `openAgents`'s wait was still inside its entry, against 266.96875 once still. One reader for one
+ * question is what keeps the file's numbers comparable.
+ *
+ * The row-by-row case for the dialog's rail is the one that does not use it, because it reads only
+ * the container's own offset: the reset sets that in the same tick as the swap, so there is no
+ * landing in it to wait for.
+ */
+async function landed(page: Page, selector: string, rail: string): Promise<Landing> {
+  await settled(page)
+  return landing(page, selector, rail)
+}
+
 /** Put the container at the bottom and answer what it landed on, so a case can prove the page it
  *  started from really was taller than the box. */
 async function scrollToBottom(page: Page): Promise<{ top: number; max: number }> {
@@ -166,7 +236,7 @@ test.describe('the settings dialog, when its content is swapped', () => {
     // own `scrollTop` is the other.
     await page.locator('.dialog-nav .nav-row').nth(SECTIONS.indexOf('editor')).click()
     await page.waitForTimeout(650)
-    const rest = await landing(page, '.settings-section', '.dialog-nav .nav-row')
+    const rest = await landed(page, '.settings-section', '.dialog-nav .nav-row')
     expect(rest.scrollTop).toBe(0)
 
     // A page that really is taller than the box, scrolled as far as it goes. Without this the case
@@ -180,7 +250,7 @@ test.describe('the settings dialog, when its content is swapped', () => {
     await page.locator('.dialog-nav .nav-row').nth(SECTIONS.indexOf('editor')).click()
     await page.waitForTimeout(650)
 
-    const to = await landing(page, '.settings-section', '.dialog-nav .nav-row')
+    const to = await landed(page, '.settings-section', '.dialog-nav .nav-row')
     // Reported, so a run says which page was left and where the reader was put down.
     console.log(
       `editor after the swap: ${to.scrollTop}/${to.scrollMax} of ${to.contentHeight}px, first line at ${to.firstLineOffset} (at rest ${rest.firstLineOffset})`,
@@ -218,7 +288,7 @@ test.describe('the settings dialog, when its content is swapped', () => {
 
     // Where a page stands when the container is at rest: the section has just opened on `runtime`
     // and nothing has been scrolled, so this number cannot be the thing under test.
-    const rest = await landing(page, '[data-test="agents-pages"] > [data-page]', '.agents-rail [role="tab"]')
+    const rest = await landed(page, '[data-test="agents-pages"] > [data-page]', '.agents-rail [role="tab"]')
     expect(rest.scrollTop).toBe(0)
 
     const seen: string[] = []
@@ -234,7 +304,7 @@ test.describe('the settings dialog, when its content is swapped', () => {
       expect(from.max, `the page before ${id} had nothing to scroll`).toBeGreaterThan(0)
       await page.locator(`.agents-rail [role="tab"][data-page="${id}"]`).click()
       await page.waitForTimeout(250)
-      const to = await landing(page, '[data-test="agents-pages"] > [data-page]', '.agents-rail [role="tab"]')
+      const to = await landed(page, '[data-test="agents-pages"] > [data-page]', '.agents-rail [role="tab"]')
       seen.push(`${id}:${to.scrollTop}/${to.firstLineOffset}`)
       // Two measurements that must agree, the same pair the first case takes: the container's own
       // offset, and where the page that was opened actually landed. Before the fix the first of
@@ -263,6 +333,17 @@ test.describe('the settings dialog, when its content is swapped', () => {
    * beside them rather than instead of them: the magnitude is a property of where this rail sits,
    * not of the rule the other two now follow. It is asserted to be non-zero so the case cannot
    * pass on a layout where a reader could never have scrolled at all.
+   *
+   * **Why this rail is the one that failed, and what was done about it.** Its page root settles on
+   * exactly `108.5` — half a pixel, from the note above the body being 11px text on a 1.5 line
+   * height, 16.5px — so `Math.round`'s answer is decided by whether the swap's last frame has
+   * landed. Measured, the same landing reads `108.49520874023438` (→ 108) 252ms after the press
+   * and `108.5` (→ 109) from 294ms, with the transition still `running` at 336ms while this case
+   * read at 350ms: a 0.0048px difference reported as a whole pixel. The other two rails run the
+   * same race and settle clear of a boundary (16 and 266.96875), which is why the repair is a
+   * reader that waits for the page to stop moving — `settled`, called by `landed`, which every
+   * case that compares a landing reads through — rather than a looser comparison here. Nothing
+   * about the comparison was widened.
    */
   test('does the same for every row of the pet’s own rail', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 })
@@ -277,6 +358,10 @@ test.describe('the settings dialog, when its content is swapped', () => {
       { timeout: 5000 },
     )
     await page.waitForTimeout(300)
+
+    // The offset is read off settled boxes: the section's own entry is still moving the rail when
+    // the wait above ends, and the reach measured inside it is 15.735076904296875 rather than 16.
+    await settled(page)
 
     // How far the container can be scrolled while the whole rail is still inside it, read off the
     // two boxes rather than assumed.
@@ -339,5 +424,5 @@ async function swap(page: Page, from: string, to: string, offset: number): Promi
   expect(before, `the container moved before ${to} was pressed`).toBe(offset)
   await page.locator(`.pet-settings__tab[data-page="${to}"]`).click()
   await page.waitForTimeout(350)
-  return landing(page, '.pet-settings__content', '.pet-settings__tab')
+  return landed(page, '.pet-settings__content', '.pet-settings__tab')
 }
