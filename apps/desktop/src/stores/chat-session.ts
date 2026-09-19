@@ -100,6 +100,9 @@ export const useChatSessionStore = defineStore('chatSession', () => {
     persist()
   }
 
+  /** Rename a session. No caller: the chat panel never offers it, and the only
+   *  rename affordance in the app is the file tree's. Exposed so a session list
+   *  can grow one without reopening this store. */
   function renameSession(id: string, title: string): void {
     const session = sessions.value.find((s) => s.id === id)
     if (!session) return
@@ -108,7 +111,9 @@ export const useChatSessionStore = defineStore('chatSession', () => {
   }
 
   /** Append a message to the active session. The session title is derived from
-   * the first non-empty user message when it has none yet. In-memory only. */
+   * the first non-empty user message when it has none yet. In-memory only.
+   *
+   * No caller either — see `updateLast` below for why both survive. */
   function appendMessage(message: ChatSessionMessage): void {
     const session = activeSession.value
     if (!session) return
@@ -120,8 +125,14 @@ export const useChatSessionStore = defineStore('chatSession', () => {
     applyImageCaps(sessions.value)
   }
 
-  /** Patch the newest message of the active session (used while streaming).
-   * In-memory only — callers persist at message boundaries. */
+  /** Patch the newest message of the active session. In-memory only.
+   *
+   * No caller. The panel streams by replacing the whole list (`setMessages`,
+   * which is what `use-chat-session.ts:92` drives), so the incremental shape
+   * this and `appendMessage` offer is unused — the specs are the only readers.
+   * Kept rather than deleted because a streaming path that appends is the
+   * cheaper shape and the decision is the maintainer's, not this file's; if it
+   * is still unused when the chat panel is next reworked, delete both. */
   function updateLast(patch: Partial<ChatSessionMessage>): void {
     const session = activeSession.value
     if (!session || session.messages.length === 0) return

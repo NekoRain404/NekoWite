@@ -313,7 +313,11 @@ export const useAppearanceStore = defineStore('appearance', () => {
     systemAccentState,
     effectiveTheme,
     effectiveAccent,
-    refreshSystemAccent,
+    // `refreshSystemAccent` is deliberately not here. The store calls it itself when the
+    // follow-the-system switch moves (`:125`) and when the scheme changes under it (`:284`), and
+    // no page ever asked it to refresh on its own — an action on the public surface with no
+    // caller is the shape this project keeps having to hunt for, so it is not handed out until
+    // something needs it.
     setTheme,
     setColorScheme,
     setAccent,

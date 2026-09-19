@@ -86,9 +86,10 @@ const host = useAgentNoteHost({ identity: () => props.identity })
 
 /** The note the editor has in front. The surface is about this one and says so by being here. */
 const path = computed<string | null>(() => tabs.activeTab?.path ?? null)
-const record = computed(() =>
-  props.identity === null ? null : sessions.recordFor(sessionKey(props.identity)),
+const key = computed<string | null>(() =>
+  props.identity === null ? null : sessionKey(props.identity),
 )
+const record = computed(() => (key.value === null ? null : sessions.recordFor(key.value)))
 
 /** The tool calls the user has already decided about, by id: a decision is not re-offered. */
 const decided = ref<readonly string[]>([])
@@ -96,11 +97,18 @@ const decided = ref<readonly string[]>([])
 const proposals = computed(() => {
   const at = path.value
   const session = record.value
-  if (at === null || session === null) return []
+  const id = key.value
+  if (at === null || session === null || id === null) return []
   return noteProposalsFor({
     entries: session.view.timeline,
     path: at,
-    baseline: session.edits.find((baseline) => baseline.path === at) ?? null,
+    // The store's own lookup, not a second copy of it. This line used to spell
+    // `session.edits.find(…)` itself, which is the whole body of
+    // `stores/agent-session.ts`'s `editBaseline` — so the rule about which baseline a note has
+    // existed twice, and the store's copy had no caller at all. Reading it back through the store
+    // keeps one answer, and the store's version is the one that also answers null for a session
+    // it does not hold.
+    baseline: sessions.editBaseline(id, at),
   }).filter((proposal) => !decided.value.includes(proposal.toolCallId))
 })
 

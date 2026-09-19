@@ -111,8 +111,14 @@ function readPersisted(): LibraryBuckets {
  *
  * The note summaries are produced by the vault index coordinator (an application
  * service) and mirrored here via the internal `_setNotes`/`_setIndexing` setters;
- * this store never reads a file itself. Selecting (`visibleNotes`, `tagCounts`,
- * `counts`) is delegated to the pure `libraryQueries` module.
+ * this store never reads a file itself. Selecting is delegated to pure query
+ * modules, and the drawn list does not come through here: it is
+ * `features/notes/services/note-list-query.ts`'s `filter`/`sort`, driven by
+ * `use-note-list.ts`. The `visibleNotes` computed below is the store's own
+ * older copy of that job and no longer has a reader; `tagCounts`/`counts` are
+ * still consumed. Left in place rather than deleted because removing a store's
+ * public surface is the maintainer's call — see the same note in
+ * `stores/chat-session.ts`.
  */
 export const useDocumentListStore = defineStore('documentList', () => {
   const buckets = readPersisted()

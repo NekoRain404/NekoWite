@@ -477,6 +477,11 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
    * reason this returns a baseline rather than a revision — what the apply path needs is the
    * whole of what the request was made against, and half of it would be a second thing to keep
    * in step.
+   *
+   * No caller: the apply path walks `record.edits` itself, so the data below is read and this
+   * accessor is not. It is the shape a caller would reach for, which is why it is documented
+   * rather than removed — but "documented" is not "used", and nothing here should be read as a
+   * claim that the apply path goes through it.
    */
   function editBaseline(key: string, path: string): AgentEditBaseline | null {
     const record = recordFor(key)
