@@ -175,6 +175,10 @@ pub fn env_pairs(pairs: impl IntoIterator<Item = (String, String)>) -> Vec<(Stri
 /// retained text. What it does NOT do is throttle the engine: stderr is always
 /// drained, because a full pipe would block the engine on its own logging and
 /// deadlock a run that has nothing to do with the message.
+///
+/// Its reader is a *failure*: [`Self::tail`] is what the transport appends to the
+/// engine's side of a broken connection, so a log that used to be written and then
+/// dropped by nobody's hand is now the engine's own account of why it is gone.
 #[derive(Debug, Default)]
 pub struct StderrLog {
     lines: VecDeque<String>,
@@ -199,6 +203,39 @@ impl StderrLog {
     /// of looking complete.
     pub fn dropped(&self) -> u64 {
         self.dropped
+    }
+
+    /// The engine's own last words, as the text a failure carries.
+    ///
+    /// `None` when nothing was captured: a launch failure with an empty log has
+    /// nothing to add to its sentence, and a heading with no lines under it would
+    /// be worse than silence.
+    ///
+    /// Two of the three properties here come from the way the text arrived rather
+    /// than from this method. Every line has already been through [`redact`] —
+    /// `pump_stderr` is the only writer of a log and it redacts each line on the way
+    /// in — and what is left is bounded by [`MAX_STDERR_LINE_BYTES`] per line and
+    /// [`MAX_STDERR_LINES`] lines. The third is this method's: a log the bound
+    /// truncated *says so*, so a partial sample is never presentable as the whole of
+    /// what the engine said.
+    pub fn tail(&self) -> Option<String> {
+        let lines = self.lines();
+        if lines.is_empty() {
+            return None;
+        }
+        let mut text = format!("the engine's own stderr, last {} lines:", lines.len());
+        for line in &lines {
+            text.push_str("\n  ");
+            text.push_str(line);
+        }
+        let dropped = self.dropped();
+        if dropped > 0 {
+            text.push_str(&format!(
+                "\n({dropped} earlier lines were discarded by this app's {MAX_STDERR_LINES}-line \
+                 bound, so this is not the whole of what the engine said)"
+            ));
+        }
+        Some(text)
     }
 }
 
@@ -393,5 +430,87 @@ impl<R: AsyncRead + Unpin> AsyncRead for BoundedFrameReader<R> {
             )));
         }
         Poll::Ready(Ok(read))
+    }
+}
+
+#[cfg(test)]
+mod stderr_tests {
+    use super::*;
+
+    /// One sample of an engine's stderr, drained by the transport's own pump and read
+    /// back the way a failure reads it — the whole path from the pipe to the sentence,
+    /// rather than the formatter alone.
+    async fn tail_of(text: &str, secrets: Vec<String>) -> Option<String> {
+        let log = Arc::new(Mutex::new(StderrLog::default()));
+        pump_stderr(text.as_bytes(), Arc::clone(&log), secrets).await;
+        let held = log.lock().unwrap();
+        held.tail()
+    }
+
+    /// What a line is printed as, once the pump has taken it and the tail renders it.
+    /// Written out because the rendering is the thing being asserted on, and a helper
+    /// that recomputed it would only restate the implementation.
+    fn shown(index: usize) -> String {
+        format!("engine line {index}")
+    }
+
+    #[tokio::test]
+    async fn an_empty_log_says_nothing_rather_than_heading_a_failure() {
+        // A launch that failed before the engine wrote anything: `None` leaves the
+        // failure's own sentence alone. A heading over no lines would read as an
+        // engine that said nothing, which is not the same as one nothing was kept from.
+        assert!(tail_of("", Vec::new()).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_surfaced_line_has_been_through_the_redactor() {
+        // The non-negotiable property of showing stderr at all: what is shown is the
+        // already-redacted text, never the stream. The credential here is the launch's
+        // own injected value, which is the one secret this process can be certain of.
+        const SECRET: &str = "sk-test-9d41f7c2ab3e";
+        let tail = tail_of(
+            &format!("provider credential {SECRET} was refused\n"),
+            vec![SECRET.to_string()],
+        )
+        .await
+        .expect("the line was captured");
+        assert!(
+            !tail.contains(SECRET),
+            "an injected credential must not reach a failure sentence: {tail}"
+        );
+        assert!(
+            tail.contains("<redacted>"),
+            "and what replaces it is the marker, not an omission: {tail}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_truncated_log_says_that_it_is_one() {
+        // More lines than the bound holds. The tail must keep the newest, drop the
+        // oldest, and *say* that it dropped them: `dropped` exists so a partial sample
+        // is never presentable as the whole of what the engine said.
+        let mut text = String::new();
+        for index in 0..MAX_STDERR_LINES + 3 {
+            text.push_str(&shown(index));
+            text.push('\n');
+        }
+        let tail = tail_of(&text, Vec::new())
+            .await
+            .expect("lines were captured");
+
+        assert!(
+            tail.contains(&shown(MAX_STDERR_LINES + 2)),
+            "the newest line is what an engine's failure is read for: {tail}"
+        );
+        assert!(
+            !tail.contains(&shown(0)),
+            "the oldest lines are what the bound is for, and they are gone: {tail}"
+        );
+        assert!(
+            tail.contains(&format!(
+                "3 earlier lines were discarded by this app's {MAX_STDERR_LINES}-line bound"
+            )),
+            "and the sample says it is one rather than looking complete: {tail}"
+        );
     }
 }

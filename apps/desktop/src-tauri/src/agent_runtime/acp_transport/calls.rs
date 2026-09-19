@@ -216,7 +216,16 @@ impl EngineConnection {
             Ok(Ok(response)) => Ok(response),
             // The bound reports through the closed connection, so its own
             // reason is preferred over whatever the closure looked like.
-            Ok(Err(error)) => Err(self.trip_reason().unwrap_or_else(|| classify(error))),
+            //
+            // A closed connection is also the one failure the engine's own stderr is
+            // attached to (`with_engine_stderr`): this is the path a handshake takes
+            // when the engine will not start, and "the connection closed" on its own
+            // says nothing about why. The attachment is a no-op for the bound's own
+            // reason above, which is a sentence the host wrote rather than one the
+            // engine did.
+            Ok(Err(error)) => {
+                Err(self.with_engine_stderr(self.trip_reason().unwrap_or_else(|| classify(error))))
+            }
             Err(_) => Err(TransportError::Timeout {
                 method: method.to_string(),
             }),

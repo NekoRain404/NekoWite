@@ -119,6 +119,20 @@ capture "ca=${NODE_EXTRA_CA_CERTS:-<unset>}"
 capture "home=${HOME:-<unset>}"
 capture "cred=${NWK_TEST_API_KEY:-<unset>}"
 
+# The engine that cannot start: a configuration document it rejects, a provider credential it will
+# not use. It explains itself on stderr and then refuses the handshake by exiting without answering
+# it — which is the shape a real engine takes, and the one the app used to have nothing to show for.
+if [ "$BEHAVIOUR" = startup-refusal ]; then
+    printf 'Error: the configuration file is not valid: unknown key "provider"\n' >&2
+    printf '  at /home/user/.config/opencode/config.json:3:5\n' >&2
+    # Only when one was injected: this is the engine echoing back a value the transport
+    # redacts, so that "what a failure shows has been through the redactor" is measured on
+    # the surfaced text rather than assumed from the code that fills the log.
+    if [ -n "$NWK_TEST_API_KEY" ]; then
+        printf 'refusing provider credential %s\n' "$NWK_TEST_API_KEY" >&2
+    fi
+fi
+
 # The group-kill test needs a grandchild that inherited the group, and needs it
 # before any request is sent: this behaviour never answers, so it cannot wait
 # for one. A sleeping shell is a stand-in for the tool subprocess the engine
@@ -166,6 +180,13 @@ while IFS= read -r line; do
                     # future can be left parked forever, which turns a crash
                     # into a hang — the worse failure of the two.
                     exit 0
+                    ;;
+                startup-refusal)
+                    # Declines to negotiate, having already said why on stderr at
+                    # startup (see the block above the read loop). The exit code is
+                    # non-zero because that is what an engine that refused to run
+                    # does, and nothing here reads it.
+                    exit 1
                     ;;
                 malformed)
                     printf 'this stdout line is not json\n'

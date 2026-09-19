@@ -95,8 +95,8 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::v1::{
-    ClientCapabilities, Error, FileSystemCapabilities, ReadTextFileRequest,
-    ReadTextFileResponse, SessionId, WriteTextFileRequest, WriteTextFileResponse,
+    ClientCapabilities, Error, FileSystemCapabilities, ReadTextFileRequest, ReadTextFileResponse,
+    SessionId, WriteTextFileRequest, WriteTextFileResponse,
 };
 use agent_client_protocol::Responder;
 use sha2::{Digest, Sha256};

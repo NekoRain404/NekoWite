@@ -166,6 +166,12 @@ pub enum TransportError {
     Timeout { method: String },
     /// The connection is over: the engine exited, or its side of the transport
     /// closed. Every request still outstanding fails with this.
+    ///
+    /// `detail` is the host's own sentence, and the transport appends the engine's last
+    /// lines of stderr after it when it has any (`process::StderrLog::tail`): an engine
+    /// that is gone has no other way left to say why. The appended text has been through
+    /// `redact` before it is attached — it is read out of the log the pump filled, not
+    /// off the pipe — so a failure sentence is still a place a credential cannot appear.
     Disconnected { detail: String },
     /// The engine negotiated a protocol this host does not implement.
     ProtocolIncompatible { found: u16 },

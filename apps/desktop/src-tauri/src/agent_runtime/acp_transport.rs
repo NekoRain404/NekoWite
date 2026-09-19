@@ -76,6 +76,15 @@ pub struct EngineConnection {
     stop: Mutex<Option<(oneshot::Sender<()>, oneshot::Sender<()>)>>,
     /// Why the bounded reader stopped reading, when it was the bound.
     trip: std::sync::Arc<Mutex<Option<String>>>,
+    /// The engine's stderr, sampled and redacted by the pump task — the same log, not
+    /// a copy of it.
+    ///
+    /// Held on the connection so that a *later* failure can quote it: an engine that
+    /// dies mid-run leaves "the connection closed" and nothing else, and its own last
+    /// lines are the only account of why. It is read through
+    /// [`EngineConnection::with_engine_stderr`], which is the one place it becomes
+    /// text.
+    stderr: std::sync::Arc<Mutex<StderrLog>>,
 }
 
 /// What the engine says, as opposed to what it is asked.
@@ -126,9 +135,18 @@ impl EngineConnection {
 
         // stderr must always be drained: a full pipe blocks the engine on its
         // own logging. It is bounded and redacted on the way in.
+        //
+        // **The log is built here and shared with the task, not built inside its
+        // argument list.** A log that exists only as an argument is one no failure can
+        // read: it is written, bounded and redacted, and then dropped with the task
+        // that filled it — which is exactly the state this line was in until a start
+        // failure had a reader. The handle stays here, one clone goes to the pump, and
+        // a clone of the same `Arc` travels on the connection for the failures that
+        // arrive after this call (see `with_engine_stderr`).
+        let stderr_log = std::sync::Arc::new(Mutex::new(StderrLog::default()));
         tokio::spawn(pump_stderr(
             stderr,
-            std::sync::Arc::new(Mutex::new(StderrLog::default())),
+            std::sync::Arc::clone(&stderr_log),
             secrets_of(launch),
         ));
 
@@ -246,7 +264,9 @@ impl EngineConnection {
                     },
                     None => "the connection could not be established".to_string(),
                 };
-                return Err(TransportError::Disconnected { detail });
+                return Err(TransportError::Disconnected {
+                    detail: with_stderr_tail(detail, &stderr_log),
+                });
             }
         };
 
@@ -255,6 +275,7 @@ impl EngineConnection {
                 connection,
                 stop: Mutex::new(Some((stop, child_stop))),
                 trip,
+                stderr: stderr_log,
             },
             EngineEvents {
                 updates,
@@ -283,5 +304,47 @@ impl EngineConnection {
         // Both senders go at once: the connection closes and the supervisor
         // starts counting, so the grace window is the engine's, not ours.
         self.stop.lock().unwrap().take();
+    }
+
+    /// The failure with the engine's own account of itself attached — where that is
+    /// the engine's account to give.
+    ///
+    /// Only [`TransportError::Disconnected`] is touched, and the reason is the
+    /// condition rather than the wording: it is the arm that means *the engine is
+    /// gone*, so its stderr is the last thing anyone will hear from it and there will
+    /// be no second chance to quote it. [`TransportError::Timeout`] can arrive from an
+    /// engine that is alive and healthy — a long prompt that outgrew its bound has
+    /// logging behind it that explains nothing — and [`TransportError::Engine`] is
+    /// already the engine's own answer, said in its own words.
+    ///
+    /// What this can be is bounded by what the pump had read: see
+    /// [`with_stderr_tail`].
+    fn with_engine_stderr(&self, error: TransportError) -> TransportError {
+        match error {
+            TransportError::Disconnected { detail } => TransportError::Disconnected {
+                detail: with_stderr_tail(detail, &self.stderr),
+            },
+            other => other,
+        }
+    }
+}
+
+/// `detail` with the engine's own last words appended, when there are any to show.
+///
+/// The text comes out of [`StderrLog`] and nowhere else, so everything shown here has
+/// already passed through `redact` on its way in: this is a reader of the log, never a
+/// second path to the pipe, and there is no route by which raw engine output could
+/// reach a sentence a person reads.
+///
+/// **What the sample can be.** The pump drains on a task of its own, so this is what it
+/// had read at the instant the failure was built — not a claim about the last line the
+/// engine ever wrote. The engine's death closes stderr at the same moment it closes
+/// stdout, and the call that noticed is several task hops behind the pump that was
+/// sitting in `read`, so a line written before the process died is in practice already
+/// here; the honest bound is that it is a sample taken at a moment.
+fn with_stderr_tail(detail: String, log: &Mutex<StderrLog>) -> String {
+    match log.lock().unwrap().tail() {
+        Some(tail) => format!("{detail}\n\n{tail}"),
+        None => detail,
     }
 }

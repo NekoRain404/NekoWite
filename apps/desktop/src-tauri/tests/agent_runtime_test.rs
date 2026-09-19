@@ -30,6 +30,7 @@ use agent_runtime::live_notes::{LiveNoteQuestion, LiveNoteTable, LiveNoteWindows
 use agent_runtime::{
     env_pairs, isolated_profile_env, AgentEventEnvelope, AgentEventKind, AgentFailureCode,
     AgentIdentity, AgentRuntime, AgentRuntimeEvents, EngineConnection, EngineLaunch, VaultFiles,
+    INITIALIZE_BOUND,
 };
 
 /// The transport tests touch no vault: the fixture engine sends no `fs/*`
@@ -292,6 +293,91 @@ async fn an_endless_frame_aborts_the_run_and_reports_the_bound() {
         "the failure must name the bound, got: {message}"
     );
     runtime.shutdown();
+}
+
+#[tokio::test]
+async fn a_start_that_fails_carries_the_engines_own_last_words() {
+    // The commonest way this app fails in front of its owner: the engine will not start — a
+    // configuration document it rejects, a credential the provider refuses — and its one line
+    // of explanation goes to stderr. The log was already captured, bounded and redacted, and
+    // nothing could read it: the engine's own sentence was dropped in the same moment it was
+    // produced, and the window showed "the engine connection closed" and no more.
+    //
+    // The credential is part of the measurement rather than decoration. What a failure sentence
+    // may show is the redacted text and never the stream, and an engine echoing back an injected
+    // value is exactly how a credential would otherwise reach a person through this path.
+    const SECRET: &str = "sk-test-9d41f7c2ab3e";
+    let mut launch = fixture("startup-refusal", None);
+    launch.env.extend(env_pairs([(
+        "NWK_TEST_API_KEY".to_string(),
+        SECRET.to_string(),
+    )]));
+
+    let error = match EngineConnection::connect(&launch).await {
+        // Which of the two this is depends on how fast the fixture's exit is noticed after the
+        // handshake goes out, and the two are the same failure to a reader.
+        Err(error) => error,
+        Ok((connection, _events)) => connection
+            .initialize(INITIALIZE_BOUND)
+            .await
+            .expect_err("this fixture never answers the handshake"),
+    };
+
+    let message = error.failure_message();
+    assert!(
+        message.contains("unknown key \"provider\""),
+        "the engine's own sentence is what a start failure is read for: {message}"
+    );
+    assert!(
+        !message.contains(SECRET),
+        "and what is shown must be the redacted text, never the stream: {message}"
+    );
+    assert!(
+        message.contains("<redacted>"),
+        "with the marker standing where the credential was: {message}"
+    );
+}
+
+#[tokio::test]
+async fn an_engine_that_dies_the_moment_it_starts_still_gets_to_say_why() {
+    // The harsher shape of the same failure, and the one the sample could be empty in: this
+    // engine waits for nothing. It writes its line and exits at once, so stderr and stdout
+    // close together and the failure may be noticed by the connect or by the handshake. Both
+    // are covered here because either may be what a reader gets.
+    //
+    // The claim being measured is the honest bound `with_stderr_tail` states: a line written
+    // before the process died is in practice already read by the pump, which is a task of its
+    // own sitting in `read` while the call that notices is several hops behind.
+    let launch = EngineLaunch {
+        program: PathBuf::from("/bin/sh"),
+        args: vec![
+            "-c".to_string(),
+            "printf 'Error: no provider is configured\\n' >&2; exit 1".to_string(),
+        ],
+        env: Vec::new(),
+        ca_bundle: None,
+    };
+
+    let (error, noticed_by) = match EngineConnection::connect(&launch).await {
+        Err(error) => (error, "connect"),
+        Ok((connection, _events)) => (
+            connection
+                .initialize(INITIALIZE_BOUND)
+                .await
+                .expect_err("a process that has already exited never answers the handshake"),
+            "handshake",
+        ),
+    };
+    // Printed rather than merely asserted: which of the two noticed is the fact that says
+    // whether this shape reaches the reader through the connection's own failure or through a
+    // call's, and both are `Disconnected` arms carrying the same log.
+    eprintln!("an engine that exits at once was noticed by the {noticed_by}");
+
+    let message = error.failure_message();
+    assert!(
+        message.contains("no provider is configured"),
+        "the engine's last line must survive an exit that gives nothing a head start: {message}"
+    );
 }
 
 // ---------------------------------------------------------------------------
