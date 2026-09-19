@@ -9,10 +9,16 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 // Group the large, rarely-changing vendor libs into their own chunks so the
 // initial HTML/graph stays small and each vendor chunk can be cached and
 // loaded on demand. The per-frame editor work (Milkdown/ProseMirror), the
-// heavyweight on-demand helpers (MathLive, citation-js, KaTeX, CodeMirror),
-// the Vue runtime/i18n, and the unified/markdown parse stack are split apart
-// so a hot reload does not re-evaluate a megabyte of unrelated code and
-// hashes stay stable across app-only edits.
+// heavyweight on-demand helpers (MathLive, KaTeX), the Vue runtime/i18n, and
+// the unified/markdown parse stack are split apart so a hot reload does not
+// re-evaluate a megabyte of unrelated code and hashes stay stable across
+// app-only edits.
+//
+// "On demand" is a claim about the *graph*, not about the grouping: a chunk
+// only stays out of startup while nothing in the startup graph imports it.
+// Chatty groupings hide that — see the `@codemirror/state` rule below, where
+// an over-broad "the CodeMirror stack" was what kept a 512 kB editor in the
+// entry's preload list long after the pane that uses it was made async.
 //
 // Chunk membership is derived deterministically from the module's package name
 // (the path segment(s) right after `node_modules/`), so the grouping never
@@ -54,7 +60,21 @@ function manualChunks(id: string): string | undefined {
     return 'vendor-prosemirror'
   }
 
-  // CodeMirror / Lezer highlighting.
+  // CodeMirror, split at the seam that decides what startup pays for. Grouping
+  // "the CodeMirror stack" as one chunk made the codec inseparable from the
+  // editor it belongs to, and one small value import then bought the whole
+  // 512 kB: `services/source-commands.ts` imports `EditorSelection` from
+  // `@codemirror/state` as a *value*, four editor services import that module
+  // eagerly, and so startup pulled in a chunk whose bulk is `view`, `language`,
+  // `lang-markdown`, `search` and `commands` — all of which are reached only
+  // through `SourcePane.vue`'s `defineAsyncComponent`.
+  //
+  // `@codemirror/state` is the codec: `EditorState`, `Transaction`,
+  // `EditorSelection`, `ChangeSet`, plain values with no DOM and no view layer
+  // (its sole dependency is `@marijn/find-cluster-break`). Everything else
+  // under `@codemirror`/`@lezer` is the editor and stays in `vendor-codemirror`,
+  // where only the async source pane can reach it.
+  if (pkg === '@codemirror/state') return 'vendor-codemirror-state'
   if (pkg.startsWith('@codemirror') || pkg.startsWith('@lezer')) return 'vendor-codemirror'
 
   // App framework: Vue + its runtime helpers, Pinia, the i18n runtime, and the
