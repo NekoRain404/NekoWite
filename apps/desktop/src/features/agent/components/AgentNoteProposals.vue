@@ -329,6 +329,19 @@ watchEffect(() => {
           >
             {{ t('agent.note.svg.insert') }}
           </button>
+          <!-- §7.3 clause 5's second answer, drawn only where there is one to give: the reader
+               pressed while another note was in front, so the offer's own sentence says which note
+               it was prepared for and this is the explicit "put it here instead". A silent
+               retarget would be the app deciding for them which note they meant. -->
+          <button
+            v-if="artifact.canReconfirm.value"
+            type="button"
+            class="btn btn-secondary btn-sm"
+            data-action="agent-artifact-reconfirm"
+            @click="artifact.confirm()"
+          >
+            {{ t('agent.note.svg.reconfirm') }}
+          </button>
         </div>
       </template>
 

@@ -58,6 +58,9 @@ const VAULT = '/vault'
 const PATH = `${VAULT}/notes/a.md`
 const AT_SEND = '# A\n\nas it was when the question went out'
 const AGENT_TEXT = '# A\n\nthe version the agent produced'
+/** The note the reader moves to while the artifact is on offer. */
+const SECOND = `${VAULT}/notes/b.md`
+const SECOND_TEXT = '# B\n\nthe note the reader is in now'
 
 const IDENTITY: AgentIdentity = {
   agentId: 'opencode',
@@ -399,6 +402,103 @@ describe('the proposal the editor pane draws', () => {
     expect(host.querySelector('[data-artifact-preview]')).toBeNull()
     expect(host.querySelector('[data-artifact-refused]')?.textContent).toContain('doctype')
     expect(byAction(host, 'agent-artifact-insert')).toBeNull()
+  })
+
+  /**
+   * The offer on screen while `a.md` is in front, and the reader in `b.md` by the time they press.
+   *
+   * The move is the whole of the case: the artifact is offered for the note the editor had in
+   * front when it arrived, and §7.3 clause 5 is about what the press means after that note is no
+   * longer the one on screen. Both notes live in `notes/`, so a reference measured from either
+   * reads the same — which is what makes "it went into `b.md` and not `a.md`" an assertion about
+   * the note rather than about a string that happens to differ.
+   */
+  async function standingAfterNoteSwitch(entry: AgentToolEntry): Promise<HTMLElement> {
+    disk.set(SECOND, SECOND_TEXT)
+    await standing(atSend(), entry)
+    const tabs = useTabsStore()
+    // The offer appears with `a.md` in front: this is the note it is offered *for*, and the one
+    // the surface has to be able to name after the reader has left it.
+    tabs.activeId = tabs.tabs.find((tab) => tab.path === PATH)!.id
+    const host = await mountWithInsertions(compositionOverTabs())
+    await tabs.openTab(SECOND)
+    await nextTick()
+    expect(tabs.activeTab?.path, 'the reader did not end up in the other note').toBe(SECOND)
+    return host
+  }
+
+  const SVG_STAGE = `${VAULT}/attachments/${attachmentMonthDir()}/diagram.svg`
+  const SVG_MARKUP =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="#123"/></svg>'
+  const svgWrite = () => diffCall({ toolCallId: 'call-svg', paths: [SVG_STAGE], content: [] })
+
+  it('writes nothing when the press comes from a note the artifact was not offered for', async () => {
+    disk.set(SVG_STAGE, SVG_MARKUP)
+    const host = await standingAfterNoteSwitch(svgWrite())
+
+    await click(byAction(host, 'agent-artifact-insert'))
+
+    // Neither half of clause 4 ran: no file went into the vault, and neither note gained a link.
+    // An insert here would be 「插到新活动文档」 — a document the offer was never about, and one the
+    // reader confirmed nothing about.
+    expect(saveAttachmentMock).not.toHaveBeenCalled()
+    expect(disk.get(PATH)).toBe(AT_SEND)
+    expect(disk.get(SECOND)).toBe(SECOND_TEXT)
+    // The sentence names the note the offer *was* about: the reader is looking at the other one,
+    // so which one they have left is the fact they cannot read off their own screen.
+    expect(host.querySelector('[data-agent-artifact-outcome]')?.textContent)
+      .toContain(t('agent.note.svg.outcome.noteSwitched', { planned: PATH }))
+  })
+
+  it('puts the artifact in the note the reader is in when they answer again', async () => {
+    disk.set(SVG_STAGE, SVG_MARKUP)
+    const host = await standingAfterNoteSwitch(svgWrite())
+
+    await click(byAction(host, 'agent-artifact-insert'))
+
+    // The first press is a refusal and nothing else: the note is untouched and the second answer
+    // is the only thing that can write. Without this step the case below cannot tell "the reader
+    // answered twice" from "the first press went through" — both end with the link in `b.md`.
+    expect(disk.get(SECOND)).toBe(SECOND_TEXT)
+    expect(saveAttachmentMock).not.toHaveBeenCalled()
+    await click(byAction(host, 'agent-artifact-reconfirm'))
+
+    // The note the reader is in gained the link, and the note the offer was about is untouched.
+    expect(disk.get(SECOND)).toContain(`![diagram](../attachments/${attachmentMonthDir()}/diagram.svg)`)
+    expect(disk.get(PATH)).toBe(AT_SEND)
+    // The attachment half ran once, and once only — the refusal saved nothing, and the plan it
+    // kept is the one that was placed, so the file the note links is the file that was written.
+    expect(saveAttachmentMock).toHaveBeenCalledTimes(1)
+    expect(host.textContent).toContain(t('agent.note.svg.outcome.inserted'))
+    expect(host.querySelector('[data-action="agent-artifact-reconfirm"]')).toBeNull()
+  })
+
+  it('takes the spot the note has when the reader answers, not the one it had at the press', async () => {
+    disk.set(SVG_STAGE, SVG_MARKUP)
+    const host = await standingAfterNoteSwitch(svgWrite())
+
+    await click(byAction(host, 'agent-artifact-insert'))
+    // The reader types in the note they are about to answer about. An insertion is bound to a
+    // *spot* — an offset plus the text around it — so this is the edit that makes the press's own
+    // spot stale; the answer is about the note as it is now, which is why the confirmation takes
+    // the spot again instead of reusing the plan's.
+    const tabs = useTabsStore()
+    const second = tabs.tabs.find((tab) => tab.path === SECOND)!
+    second.content = `${SECOND_TEXT}\n\ntyped while the question was on screen`
+    await nextTick()
+
+    await click(byAction(host, 'agent-artifact-reconfirm'))
+
+    // The link is at the end *the note has now*: after what the reader typed while the question was
+    // on screen, not before it. That order is the whole difference the second capture makes — a
+    // spot that survives the edit and one that does not are both "an insertion happened", and only
+    // the text says which one the reader asked for.
+    const written = disk.get(SECOND)!
+    expect(written).toContain('typed while the question was on screen')
+    expect(written).toContain(`![diagram](../attachments/${attachmentMonthDir()}/diagram.svg)`)
+    expect(written.indexOf('typed while the question was on screen'))
+      .toBeLessThan(written.indexOf('![diagram]'))
+    expect(host.textContent).toContain(t('agent.note.svg.outcome.inserted'))
   })
 
   it('applies under the session it was handed, not the one another surface is on', async () => {

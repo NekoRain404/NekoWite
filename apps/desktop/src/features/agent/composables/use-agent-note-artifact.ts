@@ -32,6 +32,24 @@
  * approximately where the reader was looking is exactly the "it went in near where you meant"
  * outcome the service refuses. The end is a real anchor with a real fingerprint (the last 32
  * characters), it needs no mapping, and it is stated rather than implied.
+ *
+ * ## The note the offer is about, and §7.3 clause 5's re-confirmation
+ *
+ * 「插入绑定原文档 revision 和锚点；用户已经切换笔记或移动编辑位置时重新确认，不插到新活动文档」. The binding
+ * half of that is the service's, and it is real: a plan is checked against the editor's account of
+ * its own note at the commit, so an edit during the save refuses rather than landing near where the
+ * reader meant. The half that is *this* file's is which note the reader was answering about: the
+ * artifact is offered while one note is in front, and a press made while another one is in front is
+ * not a confirmation of that insertion — it would put the picture in a document the offer was never
+ * about, and (because clause 4 saves the file only after the reader confirms) it would do so before
+ * they had confirmed anything about the note they are in.
+ *
+ * So the offer remembers the note it was made for, the press from another note writes nothing, and
+ * {@link AgentNoteArtifact.confirm} is the second, explicit answer: the plan is *retargeted* onto
+ * the note in front. {@link retargetSvgInsertion} is that primitive, and placing the kept plan is
+ * not the same thing as planning again: a second plan resolves the vault name against a listing
+ * read later — so a name taken in the meantime would put one picture in the vault under two names —
+ * and it re-decides a name the reader has already been shown.
  */
 
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
@@ -45,6 +63,8 @@ import { readStagedSvg, savePlannedAttachment, type StagedSvgRead } from '../ser
 import { writeNoteText } from '../services/agent-note-write'
 import {
   inspectStagedSvg,
+  retargetSvgInsertion,
+  type AgentSvgInsertionPlan,
   type AgentSvgInspection,
   type AgentSvgRefusal,
 } from '../services/agent-svg-insertion'
@@ -74,11 +94,28 @@ export interface AgentNoteArtifact {
   readonly refusalSentence: ComputedRef<string | null>
   /** What became of the last placement, or null while there is nothing to say. */
   readonly sentence: ComputedRef<string | null>
+  /**
+   * Whether the last press was refused because the reader is in another note than the one the
+   * artifact was offered for — the state §7.3 clause 5's re-confirmation is the answer to, and the
+   * condition the second control is drawn on.
+   */
+  readonly canReconfirm: ComputedRef<boolean>
   /** The artifact's own name, without the extension the plan adds. */
   stem(stagedPath: string): string
   insert(): Promise<void>
+  /**
+   * The reader's second, explicit answer: put the artifact in the note they are in now.
+   *
+   * Only does anything after {@link AgentNoteArtifact.canReconfirm} — there is no plan to place
+   * otherwise, and a confirmation with nothing behind it would be a control that writes nothing.
+   */
+  confirm(): Promise<void>
   discard(): void
 }
+
+/** The artifact as the disk had it, which is the arm both presses need: every guard above has
+ *  already refused the unreadable one, so a plan is only ever placed for bytes that were read. */
+type StagedArtifact = Extract<StagedSvgRead, { readonly status: 'read' }>
 
 /** The verified preview of an inspection, or null. Split out so the two computeds below read as
  *  one question each. */
@@ -93,6 +130,22 @@ export function useAgentNoteArtifact(deps: AgentNoteArtifactDeps): AgentNoteArti
   const fileName = ref('')
   /** What happened to the last placement. A code the sentences below are keyed by. */
   const outcome = ref<string | null>(null)
+  /**
+   * The note the artifact on offer was offered *for*: the one the editor had in front when the
+   * offer appeared. Whatever the reader does later, this is what the press has to be judged
+   * against — see this file's header for why the alternative (the note in front at the press) is
+   * the one §7.3 clause 5 forbids.
+   */
+  const offeredFor = ref<string | null>(null)
+  /**
+   * The plan the refused press made, kept for the re-confirmation.
+   *
+   * Kept for its **attachment half** — the vault name resolved against the month directory and the
+   * staged artifact — which is the half a second plan would resolve again. Its target is not kept:
+   * the confirmation captures a fresh spot in the note in front, because the spot is the one thing
+   * this side of the refusal may have moved.
+   */
+  const pending = ref<AgentSvgInsertionPlan | null>(null)
 
   /** The file's own name, from the path the engine gave — no extension, which the plan adds. */
   function stem(stagedPath: string): string {
@@ -109,6 +162,11 @@ export function useAgentNoteArtifact(deps: AgentNoteArtifactDeps): AgentNoteArti
       // in the same breath as recording it. Only a different artifact starts a new story.
       if (stagedPath === null) return
       outcome.value = null
+      pending.value = null
+      // Read before the await below, and it is the whole of the "which note is this offer about"
+      // record: the read is asynchronous, and a reader who moved while it ran is one this surface
+      // would otherwise take the note they moved *to* for the note they were in.
+      offeredFor.value = deps.path()
       fileName.value = stem(stagedPath)
       const vault = tabs.vault
       if (vault === null) return
@@ -162,6 +220,53 @@ export function useAgentNoteArtifact(deps: AgentNoteArtifactDeps): AgentNoteArti
   }
 
   /**
+   * From a decided plan to the note edit: the one sequence both presses run.
+   *
+   * Save, commit, then write — in that order, and written once. The two callers differ in the plan
+   * they hand it (the offer's own, or that plan retargeted onto the note the reader is in now) and
+   * in nothing else, which is what keeps 「用户确认插入后走现有附件保存和 Markdown 链接能力」 one path
+   * rather than two that would drift apart.
+   */
+  async function place(
+    binding: ReturnType<AgentInsertionSource['connectSvgInsertion']>,
+    plan: AgentSvgInsertionPlan,
+    read: StagedArtifact,
+    vault: string,
+    toolCallId: string,
+  ): Promise<void> {
+    const saved = await savePlannedAttachment(vault, plan, read.staged.text, fsService)
+    if (saved.status !== 'saved') {
+      // Refused through the service's own commit so the outcome carries the same shape as every
+      // other refusal, and so nothing here decides on its own that a broken link is acceptable.
+      binding.commit(plan, false)
+      outcome.value = saved.status === 'elsewhere' ? 'move-elsewhere' : 'move-failed'
+      return
+    }
+
+    const committed = binding.commit(plan, true)
+    if (committed.status !== 'inserted') {
+      outcome.value = committed.refusal.reason
+      return
+    }
+
+    // The note as it is NOW, after the commit that re-checked its revision and its anchor: an edit
+    // that landed elsewhere in the document while the image was being placed is carried, not
+    // dropped by splicing the text this was planned against.
+    const after = tabs.lookUpLiveNote(plan.path)
+    if (after.kind !== 'held') {
+      outcome.value = 'note-not-open'
+      return
+    }
+    const text = after.note.buffer.text
+    const next = text.slice(0, committed.change.from) + committed.change.insert + text.slice(committed.change.to)
+    // The note's own save transaction, the same one the edit half uses: the link is a change to a
+    // document, and there is one path into a document's file.
+    const wrote = await writeNoteText(plan.path, next)
+    outcome.value = wrote.status === 'saved' ? 'inserted' : 'note-write-failed'
+    deps.onDecided(toolCallId)
+  }
+
+  /**
    * Place the verified artifact, or say why not.
    *
    * Every early return sets `outcome` to a code, because "nothing happened" is the one answer the
@@ -211,40 +316,69 @@ export function useAgentNoteArtifact(deps: AgentNoteArtifactDeps): AgentNoteArti
       return
     }
 
-    const saved = await savePlannedAttachment(vault, planned.plan, read.staged.text, fsService)
-    if (saved.status !== 'saved') {
-      // Refused through the service's own commit so the outcome carries the same shape as every
-      // other refusal, and so nothing here decides on its own that a broken link is acceptable.
-      binding.commit(planned.plan, false)
-      outcome.value = saved.status === 'elsewhere' ? 'move-elsewhere' : 'move-failed'
+    // §7.3 clause 5's refusal, and it is taken BEFORE the attachment is saved: clause 4 saves the
+    // file once the reader has confirmed the insertion, and a reader who has moved to another note
+    // has not confirmed this one — so a save here would leave a file in the vault for a note
+    // nothing was inserted into. What the press produces instead is the plan, kept for
+    // {@link AgentNoteArtifact.confirm}, and a sentence naming the note it was prepared for.
+    const forNote = offeredFor.value
+    if (forNote !== null && forNote !== at) {
+      pending.value = planned.plan
+      outcome.value = 'note-switched'
       return
     }
 
-    const committed = binding.commit(planned.plan, true)
-    if (committed.status !== 'inserted') {
-      outcome.value = committed.refusal.reason
+    await place(binding, planned.plan, read, vault, offered.toolCallId)
+  }
+
+  /**
+   * The reader's second answer, from the note they are in now.
+   *
+   * Everything here is the ordinary sequence one press later: a fresh spot in the note in front
+   * (the spot is what may have moved while they were reading the sentence), the kept plan placed
+   * on it, and the same save-commit-write tail the first press runs when it is not refused. The
+   * plan keeps its attachment half — the vault name resolved once, against the directory listing
+   * this surface read — which is exactly what {@link retargetSvgInsertion} exists for.
+   */
+  async function confirm(): Promise<void> {
+    const offered = deps.proposal()
+    const source = deps.insertions
+    const identity = deps.identity
+    const plan = pending.value
+    const at = deps.path()
+    const vault = tabs.vault
+    const read = artifact.value
+    if (
+      offered === null || source === null || identity === null || plan === null ||
+      at === null || vault === null || read === null || read.status !== 'read'
+    ) {
       return
     }
 
-    // The note as it is NOW, after the commit that re-checked its revision and its anchor: an edit
-    // that landed elsewhere in the document while the image was being placed is carried, not
-    // dropped by splicing the text this was planned against.
-    const after = tabs.lookUpLiveNote(at)
-    if (after.kind !== 'held') {
+    const binding = source.connectSvgInsertion(identity)
+    const live = tabs.lookUpLiveNote(at)
+    if (live.kind !== 'held') {
       outcome.value = 'note-not-open'
       return
     }
-    const text = after.note.buffer.text
-    const next = text.slice(0, committed.change.from) + committed.change.insert + text.slice(committed.change.to)
-    // The note's own save transaction, the same one the edit half uses: the link is a change to a
-    // document, and there is one path into a document's file.
-    const wrote = await writeNoteText(at, next)
-    outcome.value = wrote.status === 'saved' ? 'inserted' : 'note-write-failed'
-    deps.onDecided(offered.toolCallId)
+    const end = live.note.buffer.text.length
+    const captured = binding.capture(at, end, end)
+    if (captured.status !== 'captured') {
+      outcome.value = captured.refusal.reason
+      return
+    }
+
+    // Spent before the awaits below, so a second press of the same control is not a second insert:
+    // the outcome is what the button is drawn on, and a plan already being placed is not one.
+    pending.value = null
+    await place(binding, retargetSvgInsertion(plan, captured.target), read, vault, offered.toolCallId)
   }
 
   function discard(): void {
     const offered = deps.proposal()
+    // The plan a refusal kept goes with the answer, whichever way the reader answered: what it
+    // would have placed is the insertion they have just said no to.
+    pending.value = null
     if (offered !== null) deps.onDecided(offered.toolCallId)
   }
 
@@ -272,8 +406,26 @@ export function useAgentNoteArtifact(deps: AgentNoteArtifactDeps): AgentNoteArti
     if (code === 'move-failed') return t('agent.note.svg.outcome.moveFailed')
     if (code === 'move-elsewhere') return t('agent.note.svg.outcome.moveElsewhere')
     if (code === 'note-write-failed') return t('agent.note.svg.outcome.noteWriteFailed')
+    if (code === 'note-switched') return t('agent.note.svg.outcome.noteSwitched', { planned: offeredFor.value ?? '' })
     return placementSentence(code)
   })
 
-  return { artifact, fileName, preview, previewRefusal, refusalSentence, sentence, stem, insert, discard }
+  /** The re-confirmation is drawn while there is a plan the refusal kept, and no longer. Both
+   *  halves are asked: the code is what the reader is being asked about, and the plan is what the
+   *  answer would place. */
+  const canReconfirm = computed<boolean>(() => outcome.value === 'note-switched' && pending.value !== null)
+
+  return {
+    artifact,
+    fileName,
+    preview,
+    previewRefusal,
+    refusalSentence,
+    sentence,
+    canReconfirm,
+    stem,
+    insert,
+    confirm,
+    discard,
+  }
 }

@@ -1159,6 +1159,10 @@ export const agent = {
           where: 'It will be placed at the end of this note.',
           name: 'File name',
           insert: 'Put it in this note',
+          /* The second answer §7.3 clause 5 asks for, drawn only after a press made from another
+             note. It says "the note I have open" rather than "this note" because the whole reason
+             it is on screen is that the reader and the offer disagree about which note that is. */
+          reconfirm: 'Put it in the note I have open now',
           discard: 'Leave it out',
           previewAlt: 'Preview of {name}',
           /* Why the artifact may not be previewed. Codes in, sentences out: each names the thing
@@ -1187,6 +1191,11 @@ export const agent = {
             noteWriteFailed: 'The image is in the vault, but the note could not be saved with the link in it.',
             noteNotOpen: 'No tab holds this note any more, so there was nowhere to put it.',
             targetChanged: 'The editor answered about a different note than the one asked about.',
+            /* §7.3 clause 5's own case, and the sentence names the note the offer was about: the
+               reader is looking at the other one, so which one they have left is the fact they
+               cannot read off the screen. Nothing was written — the control beside this sentence
+               is what writes, and only if they press it. */
+            noteSwitched: 'This insertion was prepared for {planned}, and you are in another note now. Nothing has been written: put it in the note you have open and it goes there instead.',
             vaultMismatch: 'This note belongs to another vault than the session the plan was made under.',
             anchorOutOfRange: 'The spot this was being placed at is not in the note.',
             identityChanged: 'The session that produced this artifact is not the session this window is on any more.',
@@ -2185,6 +2194,7 @@ export const agent = {
           where: '它会被放在这篇笔记的末尾。',
           name: '文件名',
           insert: '放进这篇笔记',
+          reconfirm: '放进我现在打开的这篇笔记',
           discard: '不放进',
           previewAlt: '{name} 的预览',
           unreadable: '读不到智能体写出的那个文件，因此不为它提供任何操作。',
@@ -2208,6 +2218,7 @@ export const agent = {
             noteWriteFailed: '图片已经在库里，但这篇笔记没能带着链接保存成功。',
             noteNotOpen: '已经没有标签页打开这篇笔记了，无处可放。',
             targetChanged: '编辑器回答的是另一篇笔记，不是被问的那一篇。',
+            noteSwitched: '这次插入是为 {planned} 准备的，而你现在在另一篇笔记里。什么都没有写入：确认之后它会放进你现在打开的这篇。',
             vaultMismatch: '这篇笔记属于另一个库，与该计划产生时的会话不是同一个。',
             anchorOutOfRange: '要放置的位置不在这篇笔记里。',
             identityChanged: '产出这个文件的会话已经不是这个窗口当前所在的会话。',
