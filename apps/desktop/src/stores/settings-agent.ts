@@ -17,22 +17,31 @@
  * path is off, and the app must not be in a state that pretends the feature is
  * merely unavailable.
  *
- * ## Why the default is off
+ * ## Why the default is on (and the argument for off, which it overruled)
  *
- * Two facts, and they point the same way.
+ * This section said 「Why the default is off」 and gave two facts for it. Both
+ * were real, and neither was wrong; the maintainer's own report is what settled
+ * it the other way, and the reasoning is kept here because a reader deserves to
+ * know what the change costs rather than only what it bought.
  *
- * The panel needs an engine to be *there*, and whether one is depends on the
- * build: `program_to_launch` refuses with a sentence when the sidecar was not
- * carried by the package, and the refusal is correct — a build without the
- * bundled engine cannot run an agent at all. Defaulting the switch on would put
- * that sentence in front of every user of such a build in place of the chat they
- * had, which is the arrival §12 calls a rollout rather than a regression.
+ * **For off.** The panel needs an engine to be *there*, and whether one is
+ * depends on the build: `program_to_launch` refuses with a sentence when the
+ * sidecar was not carried by the package, and the refusal is correct — a build
+ * without the bundled engine cannot run an agent at all. And the chat panel was
+ * the surface that worked for every user, so §12's 分阶段替换 had the change
+ * opted into by the person who wanted the panel rather than by everyone.
  *
- * And the release this task belongs to is M1's first visible slice, not the end
- * of §12's 分阶段替换: the chat panel is the surface that works today for every
- * user, so the change is opted into by the person who wants the panel and not by
- * everyone who did not ask. Rolling back is then the same click in the other
- * direction — the value is persisted, so it survives the restart that would
+ * **For on, which won.** §5.1 already requires the panel to state a missing
+ * engine in the backend's own words and offer a way back — that requirement is
+ * below, under the constant — so a wrong guess about a build costs a stated
+ * refusal, not a lost chat panel. Against that, the cost of being off was
+ * measured rather than argued: the maintainer could not find the `/` menu and
+ * reported it as a feature that was never built. A surface nobody can reach looks
+ * exactly like a surface nobody wired, and only one of the two shows up in a test
+ * run.
+ *
+ * The rollback is unchanged and is what keeps this cheap to be wrong about: one
+ * click in the other direction, persisted, so it survives the restart that would
  * otherwise decide the question again.
  *
  * `createAgentSettings()` is invoked by the store in `stores/settings.ts`, which

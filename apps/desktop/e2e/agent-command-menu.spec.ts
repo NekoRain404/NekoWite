@@ -214,6 +214,27 @@ test('the `/` menu is drawn over the composer and settles on a row without sendi
     .toEqual([])
 })
 
+test('a reader who never opened a switch reaches the agent rail, not the chat panel', async ({ page }) => {
+  // The hop this case guards was the whole of the maintainer's report: 「AI 界面没有 / 命令提示」.
+  // Everything about the menu was wired and covered — this file's other two cases walk to it — but
+  // the rail drew `ChatPanel` until `agentPanel` was switched on, and the chat panel has no `/`
+  // menu. So the two cases above passed while the reader saw nothing, because both of them mount
+  // the panel into `.rail-body` themselves. This one presses the same button and mounts nothing:
+  // whatever is in the rail afterwards is what a fresh profile gets.
+  //
+  // No `localStorage` is written and none is needed — a page Playwright opened has never stored
+  // this key — so the assertion is about the *default* and nothing else.
+  await openNote(page)
+  await page.locator('.status-btn').first().click()
+  await page.locator('.rail-body').waitFor({ state: 'visible', timeout: 5000 })
+
+  await expect(page.locator('.chat-panel')).toHaveCount(0)
+  // The browser path has no Tauri, so `AgentRailBody` cannot reach `'live'` and states the refusal
+  // instead — which is the panel's own answer, and the point: the rail is the agent's, and it is
+  // the agent that cannot start here, not a chat panel that replaced it.
+  await expect(page.locator('[data-agent-rail]')).toHaveCount(1)
+})
+
 test('the menu closes on anything that is no longer an unfinished `/token`', async ({ page }) => {
   await openNote(page)
   await page.locator('.status-btn').first().click()
