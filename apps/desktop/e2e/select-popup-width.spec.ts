@@ -56,6 +56,7 @@
  */
 import { expect, test, type Page } from '@playwright/test'
 import { openNote } from './support/editorHarness'
+import { settled } from './support/settled'
 
 /**
  * The tolerance on the equality, and it is 1px rather than exact: the list's width is written as
@@ -112,8 +113,24 @@ async function widths(page: Page, id: string): Promise<Widths> {
   await page.locator(`#${id}`).click()
   await page.locator('.select-popup').waitFor({ state: 'visible', timeout: 5000 })
   // The arrival is a translate and a scale (`SelectPopup`'s own rungs), and a rectangle read
-  // through a transform is not the box the engine laid out. One rung is 200ms.
+  // through a transform is not the box the engine laid out. The rung is `--app-motion`, **300ms**
+  // — not the 200ms this comment used to claim, and the wait below is therefore exactly as long as
+  // the arrival itself, so what every reading in this file lands on is whatever the frame
+  // scheduling costs on top of it. Measured in Chromium at this file's 1280x800 window, the
+  // popup's rectangle through that arrival is `515.48` — 526 × the 0.98 of
+  // `--app-motion-scale-pop`, on the frame it is inserted — then `525.06` at 91% of the eased
+  // travel, and `526` only once still. The tolerance is 1px, so a read that lands more than ~165ms
+  // before the arrival's own start is red on a layout that never moved: a run of this file has
+  // already reported `525.06/526` for a list whose laid-out width is exactly `526`.
   await page.waitForTimeout(300)
+  // So the reading waits for the arrival to have *finished* rather than for a duration that
+  // happens to equal it. `settled` asks the animations, and asks too that no box it is about to
+  // read is being carried by a transform — which is what covers the frame Vue holds the popup in
+  // its `-enter-from` state before the transition exists, where `getAnimations()` has nothing to
+  // report and the rectangle above is already 10.52px short. The dialog's content is named as well
+  // as the list: the trigger this is compared against is inside it, and the settings page swap
+  // carries the whole section on a `scale` for `--app-motion-slow`.
+  await settled(page, ['.dialog-content', '.select-popup'])
   const read = await page.evaluate((triggerId: string) => {
     const trigger = document.querySelector(`#${triggerId}`) as HTMLElement
     const popup = document.querySelector('.select-popup') as HTMLElement

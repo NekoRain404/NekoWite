@@ -34,6 +34,7 @@
  */
 import { expect, test, type Page } from '@playwright/test'
 import { openNote } from './support/editorHarness'
+import { settled } from './support/settled'
 
 /** Every page id the agents rail must offer, in `AGENT_SETTINGS_SECTIONS`'s order. */
 const AGENT_PAGES = ['runtime', 'provider', 'configuration', 'skills', 'permission', 'registry', 'catalogue']
@@ -117,12 +118,16 @@ async function landing(page: Page, selector: string, rail: string): Promise<Land
 }
 
 /**
- * Wait until nothing under the settings content is still moving a page into place.
+ * The roots every landing in this file is read through: the settings content, whose own page swap
+ * is the arrival that decides where a landing is.
  *
- * A landing is where the reader *ends up*, and a reading taken while the swap's own transition is
- * still running is a reading of the motion. Measured in Chromium at the 1280x800 window this file
- * uses, pressing the pet rail's `care` row from `bubble` with the container at 16px, the page
- * root's offset from the container is:
+ * The reader itself is `support/settled.ts`'s — the same one the select's width, the panel's picker
+ * and the pet's bubble page read through, because it is one question: *has the arrival finished?*
+ *
+ * It was written here, and the numbers it was written from are these. A landing is where the reader
+ * *ends up*, and a reading taken while the swap's own transition is still running is a reading of
+ * the motion. Measured in Chromium at the 1280x800 window this file uses, pressing the pet rail's
+ * `care` row from `bubble` with the container at 16px, the page root's offset from the container is:
  *
  *   252ms after the press:  108.49520874023438   → `Math.round` 108
  *   294ms and after:        108.5                → `Math.round` 109
@@ -131,7 +136,7 @@ async function landing(page: Page, selector: string, rail: string): Promise<Land
  * fixed wait (350ms, 650ms, 250ms). So the pair of readings one case compares can come back
  * `(108, 109)` for a page that never moved: the whole difference is 0.0048px of an unfinished 6px
  * entry translate, and `Math.round`'s half-up rule turns that into a pixel of verdict. This is the
- * failure the pet case was red with, and it reproduces on this tree: a run during this repair came
+ * failure the pet case was red with, and it reproduces on this tree: a run during that repair came
  * back `character: 0/108 (at rest 109)` with the product untouched.
  *
  * **Why the condition is the motion, and not two equal readings.** Comparing consecutive samples
@@ -149,21 +154,12 @@ async function landing(page: Page, selector: string, rail: string): Promise<Land
  * The pet rail's own geometry is read through this too, and needs it for the same reason: its
  * `reach` measures 15.735076904296875 while the section is still entering and exactly 16 once
  * still, so a run that read it early took an offset one pixel smaller than the rail's geometry.
+ *
+ * It asks one thing more now than it did here — that no box about to be read is *carried* by a
+ * transform — which the three files that share it need for the frame before an arrival exists;
+ * `support/settled.ts` carries that measurement and the reason it exists.
  */
-async function settled(page: Page): Promise<void> {
-  await page.waitForFunction(
-    () => {
-      const content = document.querySelector('.dialog-content') as HTMLElement
-      return content.getAnimations({ subtree: true }).every((animation) => {
-        if (animation.playState !== 'running') return true
-        const timing = animation.effect instanceof KeyframeEffect ? animation.effect.getTiming() : null
-        return timing !== null && timing.iterations === Infinity
-      })
-    },
-    undefined,
-    { timeout: 5000 },
-  )
-}
+const SETTLES = ['.dialog-content'] as const
 
 /**
  * The same reading, taken only once the swap has stopped moving the page.
@@ -182,7 +178,7 @@ async function settled(page: Page): Promise<void> {
  * landing in it to wait for.
  */
 async function landed(page: Page, selector: string, rail: string): Promise<Landing> {
-  await settled(page)
+  await settled(page, SETTLES)
   return landing(page, selector, rail)
 }
 
@@ -361,7 +357,7 @@ test.describe('the settings dialog, when its content is swapped', () => {
 
     // The offset is read off settled boxes: the section's own entry is still moving the rail when
     // the wait above ends, and the reach measured inside it is 15.735076904296875 rather than 16.
-    await settled(page)
+    await settled(page, SETTLES)
 
     // How far the container can be scrolled while the whole rail is still inside it, read off the
     // two boxes rather than assumed.

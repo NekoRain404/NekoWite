@@ -492,10 +492,34 @@ test('the bubble page draws the layout and phrase controls, and they write where
   await page.locator('#e2e-pet-settings [data-test="pet-bubble-token-elapsed"]').check()
 
   // Read back out of the `message` domain the pet window's appearance read comes from — the same
-  // store, so what is asserted here is what `desktop_pet_appearance` would hand a window.
+  // store, so what is asserted here is what `desktop_pet_appearance` would hand a window — and read
+  // it once the store holds the write the **last** of the five controls made.
+  //
+  // Five gestures are five edits on one session, and `usePetSettings` debounces a write by
+  // `PET_SETTINGS_DEBOUNCE_MS` (400ms) from the *last* of them — so on an idle machine there is one
+  // write and any field in it is a witness that it landed. A gap longer than that window between
+  // two gestures closes it early and makes **two**, and the first one already carries
+  // `layoutMode`, the *first* gesture: measured in Chromium with a 600ms gap after the rows slider,
+  // the store held `compact/3/dot/[]/0` at the instant a poll on `layoutMode` alone would have
+  // returned, and `compact/3/arrow/[2]/7` 400ms later — so the three assertions below read a record
+  // the user's last three gestures were not in, and this case was red with `Expected: "arrow" /
+  // Received: "dot"` on two runs of two. A gap that long is what a loaded machine does to a
+  // Playwright action, which is why the wait names every field the controls drive: one field is not
+  // a witness that the write carrying it is the last one.
   await expect
-    .poll(async () => (await values(page, 'message'))?.layoutMode)
-    .toBe('compact')
+    .poll(async () => {
+      const record = await values(page, 'message')
+      return record === null || record === undefined
+        ? null
+        : [
+            record.layoutMode,
+            record.layoutMaxRows,
+            record.separator,
+            (record.quickBubbles as unknown[]).length,
+            (record.tokens as unknown[]).length,
+          ]
+    }, { message: 'the store holds the write the last of the five controls made' })
+    .toEqual(['compact', 3, 'arrow', 2, 7])
   const stored = await values(page, 'message')
   expect(stored?.layoutMaxRows).toBe(3)
   expect(stored?.separator).toBe('arrow')

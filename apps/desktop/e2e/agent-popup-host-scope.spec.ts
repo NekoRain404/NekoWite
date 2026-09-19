@@ -400,6 +400,28 @@ test('the agent panel’s three popups resolve the shell’s appearance', async 
 })
 
 /**
+ * The remaining travel, in pixels, that says a press landed inside the draw rather than after it.
+ *
+ * Below this the control had already come to rest and the attempt measured nothing: it is the
+ * guard the case below ends on, and the number the re-take there is taken on.
+ */
+const MISSED = 10
+
+/** How many attempts the measurement gets before a missed press is believed. See the case below. */
+const ATTEMPTS = 3
+
+/** Where the list and its trigger came to rest, read in one round trip from the engine. */
+interface PlacementRead {
+  gap: number
+  dx: number
+  side: string
+  inside: boolean
+  rect: { top: number, left: number, right: number, bottom: number }
+  triggerRect: { top: number, left: number, bottom: number }
+  viewport: { width: number, height: number }
+}
+
+/**
  * The panel's controls, pressed **while the rail carrying them is still arriving** — the placement
  * half of the same recipe, which the three cases above never measure because they read at rest.
  *
@@ -434,6 +456,18 @@ test('the agent panel’s three popups resolve the shell’s appearance', async 
  * own left edge, read at the press and again at rest, is the number that says the press was inside
  * the movement.
  *
+ * **The measurement is taken again when the press missed the draw, and that half is the machine's
+ * speed rather than the product's.** The mount stands between the rail's press and this one, and
+ * every hop of that path is a round trip whose cost is the machine's: measured in Chromium with the
+ * box fully loaded (24 busy cores beside four workers), the press returns anywhere from **48ms to
+ * 590ms** after the rail was pressed — against a 300ms drawer — and the control's remaining travel
+ * read below fell from **75 to 0** across forty runs of it, four of them at or under the guard's
+ * 10. Those four are presses that measured nothing, which is what the guard exists to report; what
+ * they must not become is a verdict about the product, because the same forty runs read `dx = 0`,
+ * `gap = 4` and `inside = true` every time. So the attempt is taken again rather than read — up to
+ * {@link ATTEMPTS} of them — and nothing about the guard moves: it is the *same* threshold, and a
+ * machine that cannot catch the drawer in any attempt still fails here rather than passing.
+ *
  * ## The click path, hop by hop
  *
  *   `AppShell.vue:488-490` the status bar's rail button → `App.vue:42`'s `railOpen`
@@ -455,64 +489,91 @@ test('the config picker’s list follows its trigger while the rail is still arr
     await mountPanel(page)
   }
 
-  await openRailAndMount()
+  /** Close the rail and wait for it to be gone, so the next open runs the drawer again. */
+  const closeRail = async (): Promise<void> => {
+    await page.locator('.status-btn').first().click()
+    await page.locator('.rail-body').waitFor({ state: 'detached', timeout: 5000 })
+    await page.waitForTimeout(600)
+  }
+
+  /**
+   * One measurement of one press: the rail opened, the panel mounted into it, and the control
+   * pressed the moment it is on screen — with the drawer still carrying it, if the machine allows.
+   *
+   * `ahead` is the control's *remaining* travel read as the press returns, not the distance it
+   * moved overall: a press made after the drawer finished leaves nothing ahead of it, and one made
+   * inside the draw leaves most of the drawer. Read at the press rather than at the end because a
+   * control that moved and then moved back would satisfy the total too. `seen` carries the three
+   * readings, so a run that misses says where the control was at each of them.
+   */
+  const measure = async (): Promise<{ ahead: number, seen: string, read: PlacementRead }> => {
+    await openRailAndMount()
+    const atPress = await page.evaluate(() => {
+      const trigger = document.querySelector<HTMLElement>('.agent-config-trigger')
+      return { left: trigger?.getBoundingClientRect().left ?? null }
+    })
+    // Read once more the instant the press returns: the two together are what say the press landed
+    // while the control was still moving, which the placement assertions below cannot say themselves.
+    // The reader's press: the moment the control is on screen, with nothing waited for.
+    await page.locator('.agent-config-trigger').first().click({ force: true })
+    const justAfter = await page.evaluate(() => {
+      const trigger = document.querySelector<HTMLElement>('.agent-config-trigger')
+      return { left: trigger?.getBoundingClientRect().left ?? null }
+    })
+    await page.locator('.agent-config-popup').waitFor({ state: 'visible', timeout: 5000 })
+    await page.waitForTimeout(1200)
+
+    const read: PlacementRead = await page.evaluate(() => {
+      const popup = document.querySelector('.agent-config-popup') as HTMLElement | null
+      const trigger = document.querySelector('.agent-config-trigger') as HTMLElement | null
+      if (!popup || !trigger) throw new Error('the list or its trigger is not in the document')
+      const a = trigger.getBoundingClientRect()
+      const b = popup.getBoundingClientRect()
+      const side = b.top + b.height / 2 < a.top + a.height / 2 ? 'above' : 'below'
+      return {
+        gap: side === 'above' ? a.top - b.bottom : b.top - a.bottom,
+        dx: b.left - a.left,
+        side,
+        inside: b.left >= 0 && b.right <= window.innerWidth && b.top >= 0
+          && b.bottom <= window.innerHeight,
+        rect: { top: b.top, left: b.left, right: b.right, bottom: b.bottom },
+        triggerRect: { top: a.top, left: a.left, bottom: a.bottom },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      }
+    })
+    return {
+      ahead: Math.abs((justAfter.left ?? 0) - (read.triggerRect.left ?? 0)),
+      seen: `${atPress.left} → ${justAfter.left} → ${read.triggerRect.left}`,
+      read,
+    }
+  }
+
   // Warm: every dynamic import above resolved, and the components compiled. The measurement below
   // is a race against a 300ms drawer and this is the half that makes the race winnable.
+  await openRailAndMount()
   await page.waitForTimeout(800)
   await unmountPanel(page)
-  await page.locator('.status-btn').first().click()
-  await page.locator('.rail-body').waitFor({ state: 'detached', timeout: 5000 })
-  await page.waitForTimeout(600)
+  await closeRail()
 
-  await openRailAndMount()
-  const atPress = await page.evaluate(() => {
-    const trigger = document.querySelector<HTMLElement>('.agent-config-trigger')
-    return { left: trigger?.getBoundingClientRect().left ?? null }
-  })
-  // Read once more the instant the press returns: the two together are what say the press landed
-  // while the control was still moving, which the placement assertions below cannot say themselves.
-  // The reader's press: the moment the control is on screen, with nothing waited for.
-  await page.locator('.agent-config-trigger').first().click({ force: true })
-  const justAfter = await page.evaluate(() => {
-    const trigger = document.querySelector<HTMLElement>('.agent-config-trigger')
-    return { left: trigger?.getBoundingClientRect().left ?? null }
-  })
-  await page.locator('.agent-config-popup').waitFor({ state: 'visible', timeout: 5000 })
-  await page.waitForTimeout(1200)
-
-  const read = await page.evaluate(() => {
-    const popup = document.querySelector('.agent-config-popup') as HTMLElement | null
-    const trigger = document.querySelector('.agent-config-trigger') as HTMLElement | null
-    if (!popup || !trigger) throw new Error('the list or its trigger is not in the document')
-    const a = trigger.getBoundingClientRect()
-    const b = popup.getBoundingClientRect()
-    const side = b.top + b.height / 2 < a.top + a.height / 2 ? 'above' : 'below'
-    return {
-      gap: side === 'above' ? a.top - b.bottom : b.top - a.bottom,
-      dx: b.left - a.left,
-      side,
-      inside: b.left >= 0 && b.right <= window.innerWidth && b.top >= 0
-        && b.bottom <= window.innerHeight,
-      rect: { top: b.top, left: b.left, right: b.right, bottom: b.bottom },
-      triggerRect: { top: a.top, left: a.left, bottom: a.bottom },
-      viewport: { width: window.innerWidth, height: window.innerHeight },
-    }
-  })
+  let taken = await measure()
+  for (let again = 1; again < ATTEMPTS && taken.ahead <= MISSED; again += 1) {
+    // The press landed after the drawer had come to rest, so this attempt measured nothing — which
+    // is the machine's doing, not the product's, and is why the attempt is taken again rather than
+    // read. A list left open from it would make the next press its own dismissal, so the mount goes
+    // first and the rail is closed and opened afresh.
+    await unmountPanel(page)
+    await page.locator('.agent-config-popup').waitFor({ state: 'detached', timeout: 5000 })
+    await closeRail()
+    taken = await measure()
+  }
+  const { ahead, seen, read } = taken
 
   // The instrument first: without this the placement assertions below are satisfied by a press that
   // landed after the rail had come to rest, on any tree at all.
-  //
-  // The number that says so is the control's *remaining* travel read as the press returns, not the
-  // distance it moved overall: a press made after the drawer finished leaves nothing ahead of it,
-  // and one made inside the draw leaves most of the drawer. Read at the press rather than at the
-  // end because a control that moved and then moved back would satisfy the total too. It is a
-  // threshold rather than an equality — the drawer is still running while this is read, and the
-  // first version of this guard compared two readings of a moving element for equality and flaked.
-  const ahead = Math.abs((justAfter.left ?? 0) - (read.triggerRect.left ?? 0))
   expect(
     ahead,
-    `the press landed inside the draw: the control still had ${ahead}px to travel when it was pressed (${atPress.left} → ${justAfter.left} → ${read.triggerRect.left}), and a press made after the drawer settles measures nothing`,
-  ).toBeGreaterThan(10)
+    `the press landed inside the draw: the control still had ${ahead}px to travel when it was pressed (${seen}), and a press made after the drawer settles measures nothing`,
+  ).toBeGreaterThan(MISSED)
   expect(
     read.gap,
     `the list hangs ${read.gap}px off its trigger on the ${read.side}, list ${JSON.stringify(read.rect)} of trigger ${JSON.stringify(read.triggerRect)} in a ${read.viewport.width}x${read.viewport.height} window`,
