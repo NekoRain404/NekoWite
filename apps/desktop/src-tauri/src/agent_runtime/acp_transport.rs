@@ -41,7 +41,7 @@ use super::events::{classify, TransportError};
 use super::fs_capability::FsRequest;
 use super::process::{
     pump_stderr, secrets_of, signal_group, BoundedFrameReader, EngineLaunch, StderrLog,
-    FRAME_TOO_LARGE_MARKER, MAX_FRAME_BYTES, SHUTDOWN_GRACE,
+    MAX_FRAME_BYTES, SHUTDOWN_GRACE,
 };
 
 // Declared by path rather than by name, for the reason `agent_runtime/skills.rs` gives about its

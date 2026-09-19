@@ -95,7 +95,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::v1::{
-    ClientCapabilities, Error, ErrorCode, FileSystemCapabilities, ReadTextFileRequest,
+    ClientCapabilities, Error, FileSystemCapabilities, ReadTextFileRequest,
     ReadTextFileResponse, SessionId, WriteTextFileRequest, WriteTextFileResponse,
 };
 use agent_client_protocol::Responder;
