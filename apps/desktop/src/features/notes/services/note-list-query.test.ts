@@ -4,9 +4,10 @@
  * `filter`, `sort` and `count` are the only things the list projection is built
  * from, so these cases pin what the panel shows: which notes survive the filter
  * and the query, in what order, and the count the meta row reports. They are the
- * same rules the store's own `visibleNotes` was built on — both delegate to the
- * shared `note-query` primitives — which is what makes the panel's move
- * to its own projection behaviour-preserving.
+ * same `note-query` primitives the store's `visibleNotes` computed was once built
+ * on; that computed, and the `queryVisibleNotes` wrapper beside it, are gone — the
+ * panel's projection is the only one now, so this file covers the rules outright
+ * rather than by comparison with a second implementation.
  */
 import { describe, expect, it } from 'vitest'
 import type { FilterOptions } from './note-query'

@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { LibraryCounts, LibraryFilter, NoteSummary, SortBy } from '../features/notes'
 import type { IndexState } from '../features/search'
-import { queryCounts, queryTagCounts, queryVisibleNotes } from '../features/vault'
+import { queryCounts, queryTagCounts } from '../features/vault'
 import { persistence } from '../services/persistence'
 
 /** 列表栏整体视图：notes 模式下列表内容 = filter + query（notes/outline/links 子模式）。 */
@@ -112,13 +112,12 @@ function readPersisted(): LibraryBuckets {
  * The note summaries are produced by the vault index coordinator (an application
  * service) and mirrored here via the internal `_setNotes`/`_setIndexing` setters;
  * this store never reads a file itself. Selecting is delegated to pure query
- * modules, and the drawn list does not come through here: it is
+ * modules, and **the drawn list does not come through here**: it is
  * `features/notes/services/note-list-query.ts`'s `filter`/`sort`, driven by
- * `use-note-list.ts`. The `visibleNotes` computed below is the store's own
- * older copy of that job and no longer has a reader; `tagCounts`/`counts` are
- * still consumed. Left in place rather than deleted because removing a store's
- * public surface is the maintainer's call — see the same note in
- * `stores/chat-session.ts`.
+ * `use-note-list.ts`. This store used to hold its own `visibleNotes` computed for
+ * that job — a second answer to the same question, over the same two functions,
+ * whose only reader was its own spec. It is gone: `tagCounts`/`counts` are the
+ * halves of this store's selection surface that something actually draws with.
  */
 export const useDocumentListStore = defineStore('documentList', () => {
   const buckets = readPersisted()
@@ -179,16 +178,6 @@ export const useDocumentListStore = defineStore('documentList', () => {
   // The vault recorded at startup is enough to show its entries before the index
   // coordinator reports; `resetForVault` re-activates the real one.
   activateBucket(persistence.get(VAULT_LS_KEY))
-
-  const visibleNotes = computed(() =>
-    queryVisibleNotes(notes.value, {
-      filter: filter.value,
-      query: query.value,
-      favorites: new Set(favorites.value),
-      recents: recents.value,
-      sortBy: sortBy.value,
-    }),
-  )
 
   const tagCounts = computed(() => queryTagCounts(notes.value, 8))
 
@@ -288,7 +277,6 @@ export const useDocumentListStore = defineStore('documentList', () => {
     indexing,
     indexState,
     indexProgress,
-    visibleNotes,
     tagCounts,
     counts,
     toggleFavorite,

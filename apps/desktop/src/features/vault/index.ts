@@ -34,7 +34,6 @@ export {
   outlinksOf,
   queryCounts,
   queryTagCounts,
-  queryVisibleNotes,
   resolveLinkPath,
 } from './services/library-queries'
 

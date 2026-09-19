@@ -15,26 +15,17 @@
 import {
   aggregateTagCounts,
   computeLibraryCounts,
-  filterAndSortNotes,
   type LibraryCounts,
-  type LibraryFilter,
-  type SortBy,
 } from '../../notes/services/note-query'
 import { extractOutlinks, type MdLink, type NoteSummary } from '../../notes/services/note-summary'
 import { relPathOf, resolveLinkTarget } from '../../notes/services/note-paths'
 
-export interface NoteListQuery {
-  filter: LibraryFilter
-  query: string
-  favorites: ReadonlySet<string>
-  recents: readonly string[]
-  sortBy: SortBy
-}
-
-/** Filter + sort the notes shown in the note list. */
-export function queryVisibleNotes(notes: readonly NoteSummary[], opts: NoteListQuery): NoteSummary[] {
-  return filterAndSortNotes([...notes], opts)
-}
+// `queryVisibleNotes` and its `NoteListQuery` were here, and are gone. They were a second spelling
+// of the list the note panel draws — `features/notes/services/note-list-query.ts`'s `filter`/`sort`,
+// driven by `use-note-list.ts` — over the very same `filterAndSortNotes`. Their only caller was
+// `stores/document-list.ts`'s `visibleNotes` computed, which nothing read either; both went in the
+// same change. What is left in this module is the aggregating half (tag counts, nav counts, link
+// resolution), which is what a store actually mirrors.
 
 /** Aggregate tag → count for the sidebar/frontmatter suggestions. */
 export function queryTagCounts(

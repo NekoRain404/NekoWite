@@ -5,7 +5,6 @@ import {
   outlinksOf,
   queryCounts,
   queryTagCounts,
-  queryVisibleNotes,
   resolveLinkPath,
 } from './library-queries'
 
@@ -27,22 +26,11 @@ function note(path: string, over: Partial<NoteSummary> = {}): NoteSummary {
 const VAULT = '/vault'
 
 describe('libraryQueries (pure selectors)', () => {
-  it('queryVisibleNotes filters and sorts deterministically', () => {
-    const notes = [
-      note('/vault/alpha.md', { title: 'Alpha', mtime: 100 }),
-      note('/vault/sub/beta.md', { title: 'Beta', tags: ['t1'], mtime: 300, dir: 'sub' }),
-      note('/vault/gamma.md', { title: 'gamma', mtime: 200 }),
-    ]
-    expect(
-      queryVisibleNotes(notes, { filter: 'all', query: '', favorites: new Set(), recents: [], sortBy: 'mtime' }).map((n) => n.name),
-    ).toEqual(['beta.md', 'gamma.md', 'alpha.md'])
-    expect(
-      queryVisibleNotes(notes, { filter: 'tag:t1', query: '', favorites: new Set(), recents: [], sortBy: 'mtime' }).map((n) => n.name),
-    ).toEqual(['beta.md'])
-    expect(
-      queryVisibleNotes(notes, { filter: 'all', query: '', favorites: new Set(), recents: [], sortBy: 'title' }).map((n) => n.title),
-    ).toEqual(['Alpha', 'Beta', 'gamma'])
-  })
+  // A case for `queryVisibleNotes` stood here, and it was the same three assertions — same fixture,
+  // same filters, same expected order — as the one that stood in `stores/document-list.test.ts` for
+  // the store's `visibleNotes`. Both the function and the computed are gone; the rules they drove
+  // are `filter`/`sort` over `filterAndSortNotes`, covered in
+  // `features/notes/services/note-list-query.test.ts` where the drawn list reads them.
 
   it('queryTagCounts and queryCounts aggregate', () => {
     const notes = [note('/vault/a.md', { tags: ['x'] }), note('/vault/b.md', { tags: ['x', 'y'] }), note('/vault/sub/c.md', { dir: 'sub' })]

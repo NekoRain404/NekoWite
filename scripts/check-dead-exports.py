@@ -50,12 +50,19 @@ def main() -> int:
     texts = {p: p.read_text(encoding='utf-8', errors='replace') for p in files}
 
     # Controls. The first two are called from another production file and must NOT be reported; the
-    # third is a known real instance and MUST be, so the run proves it can still fail. `diffRows`
-    # was the first negative control and it was a bad choice: nothing outside its own module calls
-    # it — it is exported so its spec can reach it, which is the ordinary idiom and the reason the
-    # report separates `own` mentions instead of treating every hit as a finding.
-    must_be_absent = {'applyAgentEvent', 'useAgentCommands'}
-    must_be_present = {'retargetSvgInsertion'}
+    # rest are known real instances and MUST be, so the run proves it can still fail. `diffRows` was
+    # the first negative control and it was a bad choice: nothing outside its own module calls it —
+    # it is exported so its spec can reach it, which is the ordinary idiom and the reason the report
+    # separates `own` mentions instead of treating every hit as a finding.
+    #
+    # `retargetSvgInsertion` was the positive control until 2026-09-19 and is now a *negative* one.
+    # It was the case that made this script worth writing — §7.3's re-confirm half, built, covered
+    # and called only by its own spec — and it has a caller now (`116fa61`), so the control failed
+    # and said the run was blind. That is the control doing its job: a sweep whose "known dead"
+    # example has been fixed is a sweep nobody has re-read. Its replacement is the next real
+    # instance off the list, and the same thing will happen to it.
+    must_be_absent = {'applyAgentEvent', 'useAgentCommands', 'retargetSvgInsertion'}
+    must_be_present = {'actOnDesktopPetMenu'}
 
     dead: list[tuple[Path, str, int, int]] = []
     checked = 0

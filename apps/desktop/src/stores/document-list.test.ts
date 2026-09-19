@@ -39,26 +39,12 @@ describe('useDocumentListStore', () => {
     localStorage.clear()
   })
 
-  it('filters and sorts visibleNotes by filter, query and sort key', () => {
-    const store = useDocumentListStore()
-    store.setNotes([
-      note('/vault/alpha.md', { title: 'Alpha', mtime: 100, summary: '包含 beta 词' }),
-      note('/vault/sub/beta.md', { title: 'Beta', tags: ['t1'], mtime: 300, dir: 'sub' }),
-      note('/vault/gamma.md', { title: 'gamma', mtime: 200 }),
-    ])
-    expect(store.visibleNotes.map((n) => n.name)).toEqual(['beta.md', 'gamma.md', 'alpha.md'])
-    store.setSortBy('title')
-    expect(store.visibleNotes.map((n) => n.title)).toEqual(['Alpha', 'Beta', 'gamma'])
-    store.setFilter('tag:t1')
-    expect(store.visibleNotes.map((n) => n.name)).toEqual(['beta.md'])
-    store.setFilter('uncategorized')
-    expect(store.visibleNotes.map((n) => n.name)).toEqual(['alpha.md', 'gamma.md'])
-    store.setFilter('all')
-    store.setQuery('beta 词')
-    expect(store.visibleNotes.map((n) => n.name)).toEqual(['alpha.md'])
-    store.setQuery('  ')
-    expect(store.visibleNotes).toHaveLength(3)
-  })
+  // The list this store used to compute (`visibleNotes`) is gone, and its case with it. The rules it
+  // covered — filter, query and sort over the same two functions — are the ones the drawn list uses,
+  // and they are covered where that list lives: `features/notes/services/note-list-query.test.ts`
+  // (the rules themselves) and `features/notes/composables/use-note-list.test.ts` (the list that
+  // consumes them). A case that drove them a third time through a store member nothing read was
+  // coverage of a path the product did not have.
 
   it('aggregates tag counts and nav counts', () => {
     const store = useDocumentListStore()
