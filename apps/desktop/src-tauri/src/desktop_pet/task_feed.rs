@@ -485,29 +485,51 @@ impl PetTaskFeed {
     }
 }
 
-/// The sentence a read of the ledger owes the log, or `None` when nothing a user could miss was
-/// lost.
+/// The sentences a read of the ledger owes the log — one per cause, and none at all when nothing a
+/// user could miss was dropped.
 ///
 /// Split from the printing the way `instance_guard`'s probe is split from its report, and for the
-/// same reason: what counts as a loss, and how it is spelled, is a rule — and a rule that can only
-/// be read off a terminal is one no test holds. Two things about the spelling are decisions. It
-/// counts **rows**, so a read that dropped nothing but stream marks owes no sentence at all (that
-/// sentence used to be the sum of rows, aged-out rows and marks, and it was printed — by this app,
-/// on this machine — as 「2 rows … did not survive」 for a file holding no missing row). And the
-/// plural is written out, because the same line really was printed as 「1 rows」.
-pub fn loss_report(loaded: &super::history::Loaded) -> Option<String> {
-    if loaded.dropped_rows == 0 {
-        return None;
-    }
-    let rows = if loaded.dropped_rows == 1 {
-        "row"
+/// same reason: what counts as a loss, and how it is spelled, is a rule, and a rule that can only be
+/// read off a terminal is one no test holds. It counts **rows**, so a read that dropped nothing but
+/// stream marks owes no sentence at all (that sentence used to be the sum of rows, aged-out rows and
+/// marks, and it was printed — by this app, on this machine — as 「2 rows … did not survive」 for a
+/// file holding no missing row); the plural is written out, because the same line really was printed
+/// as 「1 rows」.
+///
+/// **A second sentence, because the two row counts are two pieces of news.** They were one number
+/// once, and that sentence had to be about the sum — so a row that *had* been read back and was then
+/// let go by `store`'s age rule was announced as 「did not survive the restart」, pointing its reader
+/// at a data-loss bug that is not there. `dropped_records` — bytes the file held and this build could
+/// not keep — keeps that sentence; `aged_out_rows` gets one naming the row's state and the bound,
+/// which a reader can act on where 「the restart ate it」 is a bug report.
+pub fn loss_report(loaded: &super::history::Loaded) -> Vec<String> {
+    let lost = (loaded.dropped_records > 0).then(|| {
+        format!(
+            "nekowite: {} {} of the pet's reminder ledger did not survive the restart",
+            loaded.dropped_records,
+            spelled(loaded.dropped_records, "row", "rows")
+        )
+    });
+    let aged = (loaded.aged_out_rows > 0).then(|| {
+        format!(
+            "nekowite: {} unread {} {} dropped on load, older than the day a reminder is still \
+             worth showing",
+            loaded.aged_out_rows,
+            spelled(loaded.aged_out_rows, "reminder", "reminders"),
+            spelled(loaded.aged_out_rows, "was", "were")
+        )
+    });
+    [lost, aged].into_iter().flatten().collect()
+}
+
+/// The word that agrees with `count`: the `1 rows` this app really printed is why agreement is a
+/// named function rather than an inline `if` in each arm.
+fn spelled(count: usize, one: &'static str, many: &'static str) -> &'static str {
+    if count == 1 {
+        one
     } else {
-        "rows"
-    };
-    Some(format!(
-        "nekowite: {} {rows} of the pet's reminder ledger did not survive the restart",
-        loaded.dropped_rows
-    ))
+        many
+    }
 }
 
 /// The rows the ledger's file held, or an empty ledger when there is no readable one.
@@ -517,21 +539,24 @@ pub fn loss_report(loaded: &super::history::Loaded) -> Option<String> {
 /// is how much did not survive — the count is printed rather than dropped, because a bound that
 /// quietly forgets a reminder is the 漏提示 this whole path is graded against.
 ///
-/// **The sentence is about rows, and only rows reach it.** It used to be the sum of three different
-/// things — rows, rows that aged out, and *stream marks* — which made the app tell its user that
-/// 「2 rows of the pet's reminder ledger did not survive the restart」 for a file whose two missing
-/// entries were marks: a position in a stream, forgotten on every load by design, and never a
-/// reminder. Marks have their own count now (`Loaded::forgotten_marks`) and no sentence: they are
-/// dropped on every restart, and a line that always appears is one nobody reads. The plural is
-/// spelled rather than left as `1 rows`, which is what the message said before — a real log line,
-/// from this app, on this machine.
+/// **The sentences are about rows, and only rows reach them.** They used to be one sentence, and
+/// the count behind it was the sum of three different things — rows, rows that aged out, and
+/// *stream marks* — which made the app tell its user that 「2 rows of the pet's reminder ledger did
+/// not survive the restart」 for a file whose two missing entries were marks: a position in a
+/// stream, forgotten on every load by design, and never a reminder. Marks have their own count now
+/// (`Loaded::forgotten_marks`) and no sentence: they are dropped on every restart, and a line that
+/// always appears is one nobody reads. The plural is spelled rather than left as `1 rows`, which is
+/// what the message said before — a real log line, from this app, on this machine.
+///
+/// **A row that aged out is not a row that failed to be read**: `loss_report` argues the split, and
+/// this prints one line each so a reader who sees both sees which is which.
 fn restored_history(store: &HistoryStore, now_ms: i64) -> TaskHistory {
     let loaded = store.load(now_ms);
     if let Some(detail) = &loaded.detail {
         eprintln!("nekowite: the pet's reminder ledger was not restored: {detail}");
     }
-    if let Some(loss) = loss_report(&loaded) {
-        eprintln!("{loss}");
+    for sentence in loss_report(&loaded) {
+        eprintln!("{sentence}");
     }
     loaded.history
 }

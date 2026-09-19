@@ -27,12 +27,15 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 
 use nekowite_lib::agent_runtime::events::{AgentEventEnvelope, AgentEventKind, AgentIdentity};
-use nekowite_lib::desktop_pet::history::MarkOutcome;
+use nekowite_lib::desktop_pet::history::{
+    MarkOutcome, DEFAULT_MARK_CAPACITY, DEFAULT_RECORD_CAPACITY,
+};
 use nekowite_lib::desktop_pet::notification_delivery::DeliveryFailure;
 use nekowite_lib::desktop_pet::settings::values::defaults;
 use nekowite_lib::desktop_pet::settings::{
     PetSettingsDomain, PetSettingsStore, PetSettingsUpdate, PetSettingsWrite,
 };
+use nekowite_lib::desktop_pet::task_feed::loss_report;
 use nekowite_lib::desktop_pet::task_projection::{PetTaskState, SessionKey};
 use nekowite_lib::desktop_pet::{
     DeliveryState, HistoryStore, NoChannel, NotificationDelivery, NotificationOutcome,
@@ -794,17 +797,21 @@ fn a_reminder_older_than_the_bound_does_not_come_back() {
     );
 }
 
-/// The sentence about a lost reminder counts rows and only rows, and says one row as one row.
+/// The sentences about a lost reminder count rows, name the bound that dropped them, and say one row
+/// as one row.
 ///
-/// The app prints this line at startup, so it is the one place a user is told that something they
-/// were going to be shown is gone — which makes it the worst place in this feature to be wrong. It
-/// was wrong twice: the count was rows + aged-out rows + *stream marks*, and a ledger whose only
-/// missing entries were marks was announced as 「2 rows … did not survive the restart」 on this
-/// machine (the marks were the two sessions the previous instance had watched); and a single row
-/// was announced as 「1 rows」, which a log from the real-window harness shows. Both arms are
-/// asserted here, from the store's own read rather than from a number handed to the formatter.
+/// The app prints these lines at startup, so they are the one place a user is told that something
+/// they were going to be shown is gone — which makes them the worst place in this feature to be
+/// wrong. They were wrong twice. The count was rows + aged-out rows + *stream marks*, and a ledger
+/// whose only missing entries were marks was announced as 「2 rows … did not survive the restart」 on
+/// this machine (the marks were the two sessions the previous instance had watched); and a single row
+/// was announced as 「1 rows」, which a log from the real-window harness shows. Then the count was
+/// still two row-shaped causes under the one sentence, so a row the *age* rule had let go — read back
+/// perfectly, then dropped on purpose — was announced as a restart failure, which is a bug report
+/// about a data loss that never happened. Every arm is asserted here, from the store's own read
+/// rather than from a number handed to the formatter.
 #[test]
-fn the_loss_sentence_counts_rows_and_spells_one_row_as_one_row() {
+fn the_loss_sentences_count_rows_and_name_the_bound_that_dropped_them() {
     let row = |run: &str, at_ms: i64| TaskRecord {
         key: nekowite_lib::desktop_pet::PetTaskKey {
             agent_id: AGENT.to_string(),
@@ -840,34 +847,93 @@ fn the_loss_sentence_counts_rows_and_spells_one_row_as_one_row() {
     );
     let loaded = write(&data, &marks_only);
     assert_eq!(loaded.forgotten_marks, 1, "the mark was forgotten");
-    assert_eq!(
-        nekowite_lib::desktop_pet::task_feed::loss_report(&loaded),
-        None,
+    assert!(
+        loss_report(&loaded).is_empty(),
         "a forgotten mark is not a lost reminder, and the app must not say it is"
     );
 
-    // One row too old to be a reminder: a real loss, reported, and reported in the singular.
-    let data = data_dir("report-one-row");
-    let mut one_stale = TaskHistory::new();
-    let _ = one_stale.record(row("run-old", now - UNREAD_MAX_AGE_MS - 1));
-    let loaded = write(&data, &one_stale);
-    assert_eq!(loaded.dropped_rows, 1);
+    // One row too old to be a reminder: dropped by the age bound, and the sentence says so. It is
+    // not a restart failure — the row was read back and then let go — so the sentence may not say
+    // that, and may not be silent either.
+    let data = data_dir("report-one-aged");
+    let mut one_aged = TaskHistory::new();
+    let _ = one_aged.record(row("run-old", now - UNREAD_MAX_AGE_MS - 1));
+    let loaded = write(&data, &one_aged);
+    assert_eq!((loaded.dropped_records, loaded.aged_out_rows), (0, 1));
     assert_eq!(
-        nekowite_lib::desktop_pet::task_feed::loss_report(&loaded).as_deref(),
-        Some("nekowite: 1 row of the pet's reminder ledger did not survive the restart"),
-        "one row is one row — the line this replaced read `1 rows`"
+        loss_report(&loaded),
+        vec![
+            "nekowite: 1 unread reminder was dropped on load, older than the day a reminder is \
+             still worth showing"
+        ],
+        "the row was read and then aged out, which is what the sentence has to say"
     );
 
     // And two, so the plural arm is measured rather than assumed from a suffix rule.
-    let data = data_dir("report-two-rows");
-    let mut two_stale = TaskHistory::new();
-    let _ = two_stale.record(row("run-old-a", now - UNREAD_MAX_AGE_MS - 1));
-    let _ = two_stale.record(row("run-old-b", now - UNREAD_MAX_AGE_MS - 2));
-    let loaded = write(&data, &two_stale);
-    assert_eq!(loaded.dropped_rows, 2);
+    let data = data_dir("report-two-aged");
+    let mut two_aged = TaskHistory::new();
+    let _ = two_aged.record(row("run-old-a", now - UNREAD_MAX_AGE_MS - 1));
+    let _ = two_aged.record(row("run-old-b", now - UNREAD_MAX_AGE_MS - 2));
+    let loaded = write(&data, &two_aged);
+    assert_eq!((loaded.dropped_records, loaded.aged_out_rows), (0, 2));
     assert_eq!(
-        nekowite_lib::desktop_pet::task_feed::loss_report(&loaded).as_deref(),
-        Some("nekowite: 2 rows of the pet's reminder ledger did not survive the restart")
+        loss_report(&loaded),
+        vec![
+            "nekowite: 2 unread reminders were dropped on load, older than the day a reminder is \
+             still worth showing"
+        ]
+    );
+
+    // A ledger longer than the bound this build reads with: `decode` keeps the newest 200 and the
+    // rest never become rows. That is the other cause — bytes that were there and could not be
+    // kept — and it keeps the sentence it has always had, both arms of the plural.
+    //
+    // The rows the reader cannot keep go at the *front*, because that is the end `decode` drops
+    // from; a row that is to age out instead has to survive the read to reach the age rule, so it
+    // goes last.
+    let over_bound = |label: &str, ancient: usize, aged: bool| {
+        let data = data_dir(label);
+        let mut history =
+            TaskHistory::with_capacity(DEFAULT_RECORD_CAPACITY + ancient, DEFAULT_MARK_CAPACITY);
+        for index in 0..ancient {
+            let _ = history.record(row(
+                &format!("run-dropped-{index}"),
+                now - 3 * UNREAD_MAX_AGE_MS,
+            ));
+        }
+        for index in 0..(DEFAULT_RECORD_CAPACITY - usize::from(aged)) {
+            let _ = history.record(row(
+                &format!("run-fresh-{index}"),
+                now - 1_000 + index as i64,
+            ));
+        }
+        if aged {
+            let _ = history.record(row("run-aged", now - UNREAD_MAX_AGE_MS - 1));
+        }
+        write(&data, &history)
+    };
+
+    let loaded = over_bound("report-over-bound", 1, false);
+    assert_eq!((loaded.dropped_records, loaded.aged_out_rows), (1, 0));
+    assert_eq!(
+        loss_report(&loaded),
+        vec!["nekowite: 1 row of the pet's reminder ledger did not survive the restart"],
+        "one row is one row — the line this replaced read `1 rows`"
+    );
+
+    // Both causes in one read: two sentences, and a reader who sees both can tell which bound cost
+    // them what. The maintainer's own ledger produced the *second* of these alone — one row, read
+    // back and then aged out — which is the reading this split exists to get right, and which the
+    // one sentence used to report as a restart failure.
+    let loaded = over_bound("report-both-causes", 2, true);
+    assert_eq!((loaded.dropped_records, loaded.aged_out_rows), (2, 1));
+    assert_eq!(
+        loss_report(&loaded),
+        vec![
+            "nekowite: 2 rows of the pet's reminder ledger did not survive the restart",
+            "nekowite: 1 unread reminder was dropped on load, older than the day a reminder is \
+             still worth showing"
+        ]
     );
 }
 
@@ -913,8 +979,9 @@ fn a_mark_from_a_previous_run_does_not_swallow_this_runs_ending() {
         "the mark the previous run left is forgotten rather than carried"
     );
     assert_eq!(
-        loaded.dropped_rows, 0,
-        "a forgotten mark is not a row, so no row-loss is reported for this file"
+        (loaded.dropped_records, loaded.aged_out_rows),
+        (0, 0),
+        "a forgotten mark is not a row, so neither row count has anything to report here"
     );
 
     // And the same through the feed, which is where it matters: the ending this run produces at

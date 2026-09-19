@@ -27,9 +27,10 @@
 //!    written for the human who opens it, not for the reader.
 //!  - **An unread row ages out.** A reminder is about work the user is still in a position to act
 //!    on; a row from before a night, a weekend or a holiday is not, and §6.3's unread list is not an
-//!    archive. [`UNREAD_MAX_AGE_MS`] is the bound, the drop is counted in [`Loaded::dropped`] and
-//!    the caller says so — a bound that silently forgot a reminder would be the 漏提示 this whole
-//!    feature is graded against.
+//!    archive. [`UNREAD_MAX_AGE_MS`] is the bound, the drop is counted in [`Loaded::aged_out_rows`]
+//!    and the caller says so — in a sentence of its own, because a reminder this rule let go of and
+//!    a row the reader could not keep are two different pieces of news. A bound that silently forgot
+//!    a reminder would be the 漏提示 this whole feature is graded against.
 //!
 //! **A schema from a newer build is read-only.** The same §10.2 rule the settings store keeps, and
 //! it has to be a latch rather than a check at write time: a build that read a future ledger as
@@ -63,10 +64,19 @@ pub const UNREAD_MAX_AGE_MS: i64 = 24 * 60 * 60 * 1000;
 pub struct Loaded {
     /// The rows this build will use: the file's, minus the marks and minus what aged out.
     pub history: TaskHistory,
-    /// Rows that did not survive: the file's own beyond this build's record bound, plus unread rows
-    /// that had aged past the reminder bound. Never silent: the caller reports a non-zero count,
-    /// because a bound that quietly forgets a reminder is the 漏提示 this path is graded against.
-    pub dropped_rows: usize,
+    /// Rows the file held and this read did not keep: the file's own beyond this build's record
+    /// bound, dropped from the old end. **A loss**, and the only arm of this read that is one — the
+    /// bytes were there and this build could not make its rows out of them.
+    pub dropped_records: usize,
+    /// Unread rows the age bound dropped: reminders older than [`UNREAD_MAX_AGE_MS`] that the user
+    /// had not read.
+    ///
+    /// Counted apart from the above because it is a different piece of news, and the difference is
+    /// the point: nothing failed to be read here. The rule reached out and let the row go, on
+    /// purpose, and a reader told 「did not survive the restart」 would go looking for a data-loss
+    /// bug that does not exist. Never silent either — a bound that quietly forgets a reminder is
+    /// the 漏提示 this path is graded against — but the sentence has to be about the bound.
+    pub aged_out_rows: usize,
     /// Stream marks forgotten — every mark the file held, plus any beyond the mark bound.
     ///
     /// **Not rows, and not a loss**, which is why they are counted apart from the above: a mark is a
@@ -108,7 +118,8 @@ impl Default for Loaded {
     fn default() -> Self {
         Self {
             history: TaskHistory::new(),
-            dropped_rows: 0,
+            dropped_records: 0,
+            aged_out_rows: 0,
             forgotten_marks: 0,
             detail: None,
         }
@@ -227,7 +238,15 @@ impl HistoryStore {
         }
     }
 
-    /// Apply the two restore rules and say how much they cost — rows and marks counted apart.
+    /// Apply the two restore rules and say how much they cost — and, since the two costs are not
+    /// the same kind of thing, three counts rather than two: what the reader could not keep, what
+    /// the age bound dropped, and what was forgotten by design.
+    ///
+    /// The first two used to be one number under one sentence, and the two causes that produce it
+    /// are not the same news: it was the reader's own bounds failing to hold a row, or it was the
+    /// policy's bound letting one go. Summed, the sentence had to pick one of them to be about, and
+    /// it picked the wrong one — a row that had been read back and then aged out was announced as
+    /// 「did not survive the restart」, which points a reader at a data-loss bug that is not there.
     fn restorable(
         &self,
         mut history: TaskHistory,
@@ -236,10 +255,11 @@ impl HistoryStore {
         now_ms: i64,
     ) -> Loaded {
         let marks = history.forget_marks();
-        let stale = history.drop_unread_before(now_ms - UNREAD_MAX_AGE_MS);
+        let aged_out_rows = history.drop_unread_before(now_ms - UNREAD_MAX_AGE_MS);
         Loaded {
             history,
-            dropped_rows: dropped_records + stale,
+            dropped_records,
+            aged_out_rows,
             forgotten_marks: marks + dropped_marks,
             detail: None,
         }
