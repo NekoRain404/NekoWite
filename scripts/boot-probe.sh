@@ -27,12 +27,22 @@ LOG="${LOG:-/tmp/nkw-boot.txt}"
 }
 
 echo "booting $BIN with the engine beside it (${BUDGET}s budget)"
+# `setsid` puts the whole thing in its own process group, and the group is what gets killed.
+# Without it `timeout` reaps `xvfb-run` and leaves the app itself running — and the app it leaves
+# is the *next* run's problem, because the shell's single-instance handler sees an instance already
+# up, raises it, and exits 0 in three seconds. The probe reported that as "did not survive the
+# budget", which is the instrument inventing the failure it then measures.
 start=$(date +%s)
-timeout "$BUDGET" xvfb-run -a -s "-screen 0 1280x800x24" \
+setsid timeout "$BUDGET" xvfb-run -a -s "-screen 0 1280x800x24" \
   env GDK_BACKEND=x11 WEBKIT_DISABLE_DMABUF_RENDERER=1 "./$BIN" \
   > "$LOG" 2>&1
 code=$?
 end=$(date +%s)
+
+# Belt as well as braces: a `setsid`ed descendant can outlive its leader, and one that does would
+# be this script's fault the next time it runs.
+pkill -f "$(basename "$BIN")" 2>/dev/null
+sleep 1
 
 echo "exit=$code after $((end - start))s"
 if [ "$code" -eq 124 ]; then
