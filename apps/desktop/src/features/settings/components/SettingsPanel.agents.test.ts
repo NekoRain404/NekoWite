@@ -33,6 +33,7 @@ import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import SettingsPanel from './SettingsPanel.vue'
 import { useSettingsStore } from '../../../stores/settings'
+import { AGENT_PANEL_DEFAULT } from '../../../stores/settings-agent'
 import { setLocale } from '../../../i18n'
 
 /** The registry's answer, as `agent_registry_read` serializes it (`commands/agent_registry.rs`). */
@@ -421,7 +422,10 @@ describe('the agents section in the settings dialog', () => {
   it('is offered by the navigation, and opens on its own switch', async () => {
     await openAgents()
     expect(switchInput()).toBeTruthy()
-    expect(switchInput().checked).toBe(false)
+    // Drawn from the store, not from a local copy: the switch is whatever the setting reads, and
+    // that is the default until something stores one (it was off and is on as of 2026-09-19, which
+    // is why this reads the constant rather than a literal).
+    expect(switchInput().checked).toBe(AGENT_PANEL_DEFAULT)
   })
 
   it('writes the switch through to the store, in both directions', async () => {
@@ -793,10 +797,14 @@ describe('the agents section in the settings dialog', () => {
     expect(el('provider-loading')).toBeNull()
   })
 
-  it('is off by default, so a dialog opened once changes nothing', async () => {
+  it('leaves the switch untouched when the dialog is only opened', async () => {
+    // The case's subject is the second assertion, not the first: opening this page must not *write*
+    // the setting. What the default happens to be is `settings-agent.test.ts`'s question, and it
+    // moved to on in 2026-09-19 — but a page that wrote on mount would persist whatever it read,
+    // and from then on the reader's silence would look like a choice they never made.
     await openAgents()
     const store = useSettingsStore()
-    expect(store.agentPanel).toBe(false)
+    expect(store.agentPanel).toBe(AGENT_PANEL_DEFAULT)
     expect(localStorage.getItem('nekowite.agent.panel')).toBeNull()
   })
 })

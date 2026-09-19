@@ -159,8 +159,11 @@ afterEach(() => {
 
 describe('the rail with the agent panel switched off', () => {
   it('is the chat panel, byte for byte, and no engine is asked for', () => {
-    // The default, so this is also the assertion that an install which never touches the switch
-    // gets the surface it has always had.
+    // Switched off explicitly, and it used to rely on the default instead. The default moved to on
+    // in 2026-09-19, and this case's subject is the *off* state — a case that reaches its state by
+    // accident of a constant stops testing anything the moment that constant is tuned, and reads
+    // as a regression in whatever moved it. Every other case in this file names its state too.
+    useSettingsStore().agentPanel = false
     shell({})
     expect(chat()).not.toBeNull()
     expect(panel()).toBeNull()

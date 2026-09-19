@@ -54,8 +54,28 @@ const LS_AGENT_PANEL = 'nekowite.agent.panel'
  * not start" is a *runtime* answer, and it belongs to the surface that tried
  * (the rail states it, with the backend's own sentence and a way back) rather
  * than to the setting that asked for the attempt.
+ *
+ * **On, since 2026-09-19, and it was off before that.** The maintainer reported
+ * the symptom first and the cause turned out to be this constant: 「AI 界面没有
+ * / 命令提示」 — the `/` menu exists, is mounted by the panel and is covered end
+ * to end (`e2e/agent-command-menu.spec.ts` walks the reader's own route to it),
+ * but the rail draws `ChatPanel` until this is on, and the chat panel has no
+ * `/` menu at all. A surface nobody can find is the same defect as a surface
+ * that is not wired; the difference is only which file you fix.
+ *
+ * What makes it safe to turn on by default: everything behind it is a
+ * *runtime* answer, not an assumption. With no engine the panel states that,
+ * with the backend's own sentence and a way back, which is what the paragraph
+ * above is for. And the rollback is one click and persists — `AppShell.vue`'s
+ * `@use-chat` sets this false, and this is read from `localStorage` on the next
+ * launch like every other setting, so a reader who prefers the chat panel is
+ * not dragged back here on every start.
+ *
+ * An existing installation that never touched the switch has no stored value
+ * and therefore follows this default, which is the intended reading: the stored
+ * value records a choice, and silence is not one.
  */
-export const AGENT_PANEL_DEFAULT = false
+export const AGENT_PANEL_DEFAULT = true
 
 export function createAgentSettings() {
   const agentPanel = ref<boolean>(readBool(LS_AGENT_PANEL, AGENT_PANEL_DEFAULT))

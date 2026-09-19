@@ -21,10 +21,12 @@
  * layer of setup removed.
  *
  * The page is opened with no Tauri stub, so the application boots on its browser path and
- * nothing in it competes with the panel for the store, the runtime or the keyboard — the rail
- * draws the panel only while the `agentPanel` setting says so, and that setting is off until a
- * reader turns it on (`stores/settings-agent.ts`'s default, which is what the app is booting
- * with here).
+ * nothing in it competes with the panel for the store, the runtime or the keyboard. The rail
+ * draws the panel only while the `agentPanel` setting says so; that setting's default is on as
+ * of 2026-09-19 (it was off, and this paragraph said so), and what keeps this spec independent
+ * of it either way is that the harness below mounts the panel itself rather than going through
+ * the rail — see `agent-command-menu.spec.ts` for the file that does drive the rail's own
+ * button, and which therefore does depend on the default.
  *
  * Vue and Pinia are imported by URL rather than by name: a page has no import map, and the
  * panel has to be built by the *same* Vue instance the components it renders were compiled
