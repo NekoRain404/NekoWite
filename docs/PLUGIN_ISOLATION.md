@@ -33,6 +33,13 @@
 `blob:` 被禁止——这正是当前的执行闸门。它在**打包版**成立、在浏览器 Demo/单测里不成立，
 所以治理代码在开发环境下仍然被完整走到。
 
+> **这条闸门在真实引擎上实测过（2026-09-22）**：`apps/desktop/e2e/webkit/probe-csp-blob.mjs` 用
+> WebKitGTK（WebKitWebDriver + MiniBrowser）打开三张页面，CSP 直接取自 `tauri.conf.json`：内联脚本
+> 在策略下**没有执行**（证明这份策略确实生效）、`blob:` 模块导入被拒且页面的
+> `securitypolicyviolation` 事件指向 `script-src-elem<-blob`、而**去掉 CSP 的同一页面导入成功**
+> （证明拒绝来自 CSP，而不是 MiniBrowser 不支持 blob）。在此之前，这个结论只由 Chromium 的端到端
+> 用例支撑，而 Chromium 不是本应用内嵌的引擎。
+
 关键点：**同意对话框让用户批准的是一个摘要，不是一份可审计的能力清单**。用户批准「运行这个插件」在
 语义上等于「让这段代码拥有我的全部权限」——这正是发布版选择不加载的原因，而不是疏忽。
 

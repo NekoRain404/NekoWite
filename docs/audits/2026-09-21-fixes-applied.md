@@ -1855,3 +1855,65 @@ with the prompt side stable at 89 across every run so far.
 Two runs, both all nine steps and exit 0: the first before the example fixture existed (verify 5947), the
 second the reading above. No bundles were rebuilt: this round is five documents, a list of names in an
 existing test, and one new test file.
+
+## 19. The round after that: §4's unverified list, and one of its items measured on the shipping engine
+
+**The audit's §4 was the one section nobody had acted on** — six findings it listed explicitly so nobody
+would mistake them for checked facts. Two of them are now settled with evidence, one is settled by
+measurement, and three are restated with what would settle them.
+
+**Measured: does WebKitGTK actually refuse `import('blob:…')` under this app's CSP?** This was §4's second
+item and `docs/SECURITY.md` §2's central assertion — the reason a packaged build cannot load a vault
+plugin — resting until now on `e2e/security-csp.spec.ts`, which is Chromium with a stubbed
+`__TAURI_INTERNALS__`. `apps/desktop/e2e/webkit/probe-csp-blob.mjs` drives MiniBrowser through
+WebKitWebDriver over three pages built from the app's **own** CSP string, read out of `tauri.conf.json`
+rather than retyped:
+
+| Page | Reading | What it rules out |
+|---|---|---|
+| `control-inline` | `inline-did-not-run` | that this `<meta>` policy is ignored here — without it, a blocked import would prove nothing |
+| `with-csp` | `same-origin=ok; blob=blocked:Importing a module script failed.; violations=script-src-elem<-blob` | — the page's own `securitypolicyviolation` listener names the directive and the blocked URI |
+| `no-csp` | `same-origin=ok; blob=allowed:blob-ran` | that blob module imports simply do not work in MiniBrowser, which would have made the refusal unattributable |
+
+So the conclusion holds on the engine that ships, and its cause is identified rather than assumed. The
+probe exits non-zero if the import is *allowed* under the policy (which would falsify §2) or if the inline
+control runs (which would make the result unattributable), and it needs no window manager: it reads no
+geometry, so the `setWindowRect` limitation recorded in §18 is irrelevant to it. It is **manual by design** —
+it needs a display and the GTK example browser, and a gate step that skips on machines without them is the
+quiet-pass shape this programme keeps removing. `docs/SECURITY.md` §2 now cites the probe and its readings,
+and `docs/debug.md` says how to run it and what the controls are.
+
+**Settled with evidence, and the evidence is a test rather than a reading.** §4's first item — whether the
+AI kill switch stops the model-list refresh, which the audit could only read — is covered by
+`stores/settings-ai-list-models-gate.test.ts`, which mocks the gateway and asserts it is **not called** when
+the switch is off; 3 tests, re-run for this section. §4's last item — "the 68 unrun Rust integration
+targets" — is answered by the gate's own log from §18's run: **79 target results, 0 of them FAILED, 1409
+tests passed**, because the suite now runs with `--no-fail-fast` and `NEKOWITE_REQUIRE_PROCESS_TESTS=1`;
+the audit was reading a `cargo test` that stopped at the first failure.
+
+**Still unverified, and now stated with what would settle each.** §4's third item — whether the two
+credential-free endpoints (the pet character library and the ACP registry) are actually reached **in a
+packaged build** — remains a code reading: a constant URL fetched from an `onMounted` handler
+(`desktop_pet/resources/remote.rs`, `commands/agent_catalogue.rs`) and no packet capture, proxy or
+namespace to prove the mount fires. What would settle it: run the packaged binary with an outbound
+capture (or a proxy it is configured to use) and open 设置 → 桌面宠物 → 形象库 and the agent catalogue.
+The fourth — the PDF print dialog under WebKitGTK, and whether `asset://` images resolve in print preview —
+is not automatable here, because the dialog belongs to the OS; round 13 closed the part before it (the print
+document's content, the `@page` rules, the frame's lifecycle). The fifth — `git tag` being empty — is
+certain, and `docs/RELEASING.md` now says to create the tag rather than cite one.
+
+### The gate
+
+| Step | Result |
+|---|---|
+| `verify` | PASS — **5954 tests across 3 package runs** |
+| `fmt` | PASS |
+| `clippy` | PASS — 97 warning lines, under the 110 ceiling |
+| `instruments` | PASS |
+| `scripts` | PASS — 89 checks, 0 failed |
+| `harness` | PASS — 5 passed, 0 failed |
+| `build` | PASS |
+| `rust` | PASS — 79 targets, 1409 passed, 0 failed |
+| `e2e` (`--with-e2e`) | PASS — 297 passed |
+
+One run, all nine steps, exit 0. No bundles were rebuilt: this round adds one probe and three documents.
