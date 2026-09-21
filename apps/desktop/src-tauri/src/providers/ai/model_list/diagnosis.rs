@@ -77,9 +77,38 @@ fn proxy_in_use() -> Option<String> {
         "http_proxy",
     ];
     VARS.iter().find_map(|k| match std::env::var(k) {
-        Ok(v) if !v.trim().is_empty() => Some(format!("{k}={}", v.trim())),
+        Ok(v) if !v.trim().is_empty() => Some(proxy_line(k, v.trim())),
         _ => None,
     })
+}
+
+/// One variable's line for the note: `NAME=value`, with any userinfo taken out of the value.
+///
+/// **The userinfo is a credential, and this line crosses the IPC boundary.** A proxy URL may be
+/// spelled `http://user:pass@proxy:8080`, and the renderer cannot read the process environment
+/// itself — so embedding the value verbatim hands the window a secret it had no other way to see
+/// (finding S3 in `docs/audits/2026-09-21-code-review.md`). What the user needs from this sentence
+/// is which variable is set and where the proxy is; the `***` keeps the fact that a credential was
+/// there, which is itself worth knowing, without the credential.
+fn proxy_line(name: &str, value: &str) -> String {
+    format!("{name}={}", without_userinfo(value))
+}
+
+/// The value with its userinfo replaced by `***`, or unchanged when it has none.
+///
+/// The scheme's `//` marks where an authority begins, and the userinfo ends at the **last** `@`
+/// before the host: a password may contain `@`, a host may not. A value with no scheme (a bare
+/// `host:port`, which some clients accept) is returned as it is — there is no authority to read.
+fn without_userinfo(value: &str) -> String {
+    let Some(authority_at) = value.find("://").map(|at| at + 3) else {
+        return value.to_string();
+    };
+    let authority = &value[authority_at..];
+    let end = authority.find(['/', '?', '#']).unwrap_or(authority.len());
+    let Some(at) = authority[..end].rfind('@') else {
+        return value.to_string();
+    };
+    format!("{}***{}", &value[..authority_at], &authority[at..])
 }
 
 /// What to append to a send failure: the cause chain, and the proxy if one is in
@@ -222,4 +251,37 @@ mod tests {
     // `super::super::error_message`, which is where their tests are now: the
     // completion path's unfaithful-2xx diagnosis shares both, and a bound two
     // modules enforce is a bound one of them can drift from.
+
+    #[test]
+    fn a_proxy_password_never_reaches_the_sentence_a_window_reads() {
+        // The reported shape: credentials inside the URL. What must come out
+        // keeps the variable, the scheme, the host and the port — everything the
+        // sentence is for — and keeps *that* a credential was there, because a
+        // user who did not know their proxy carries one has learnt something.
+        assert_eq!(
+            proxy_line("HTTPS_PROXY", "http://user:pass@proxy.internal:8080"),
+            "HTTPS_PROXY=http://***@proxy.internal:8080"
+        );
+        // A password containing `@` is still one userinfo: a host may not contain
+        // one, so the last `@` before the path is where the authority's ends.
+        assert_eq!(
+            proxy_line("ALL_PROXY", "socks5://user:p@ss@host:1080"),
+            "ALL_PROXY=socks5://***@host:1080"
+        );
+        // Nothing to remove, and nothing added: the common case must not change.
+        assert_eq!(
+            proxy_line("HTTP_PROXY", "http://127.0.0.1:7890"),
+            "HTTP_PROXY=http://127.0.0.1:7890"
+        );
+        assert_eq!(
+            proxy_line("HTTPS_PROXY", "http://user@proxy.internal:8080/path?x=1"),
+            "HTTPS_PROXY=http://***@proxy.internal:8080/path?x=1"
+        );
+        // A value with no scheme has no authority to read, and is left alone
+        // rather than guessed at.
+        assert_eq!(
+            proxy_line("HTTPS_PROXY", "proxy.internal:8080"),
+            "HTTPS_PROXY=proxy.internal:8080"
+        );
+    }
 }
