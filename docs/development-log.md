@@ -2,6 +2,19 @@
 
 > 项目开发与版本管理记录。从 2026-09-08 起，本仓库统一使用 Git 管理代码、主题、文档和测试。
 
+> **这份文件是历史日志，不是现状说明（2026-09-22 核对）**。下面「Git 约定」一节写于 2026-09-08，
+> 其中几条已经不成立，读作当时的历史：
+>
+> | 它写的 | 今天的事实（核对方式） |
+> | --- | --- |
+> | 提交身份 `NekoWite Dev <dev@nekowite.local>` | `git log -1 --format='%an <%ae>'` → `NekoRain <yukathleenlxy@gmail.com>` |
+> | 主分支 `master`，功能分支用 `codex/` 前缀 | `git rev-parse --abbrev-ref HEAD` → `main`；`git branch -a` 只有 `main` 与 `origin/main` |
+> | `.npmrc` 保留国内镜像源 | 仓库里**没有** `.npmrc`（`ls .npmrc` → No such file） |
+> | 产物是 Windows `.exe` | 目标平台是 Linux，产物见 `docs/RELEASING.md`；这份日志自身前后对产物名的写法也不一致 |
+> | 「本轮结束时仍未处理」清单里的「AI 操作审计……尚未实现」 | 紧随其后的「第八批后续」就实现了它（设置 → AI →「最近的 AI 活动」）；按顺序读才是对的，单独摘一行会读错 |
+>
+> 现状请看 `README.md`、`docs/test-plan.md` 与 `docs/RELEASING.md`；本文件继续作为按时间记录的历史保留。
+
 ## Git 约定
 
 - 仓库级提交身份：`NekoWite Dev <dev@nekowite.local>`（未配置全局 user.name/email，避免污染其他项目）。

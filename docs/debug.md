@@ -1,4 +1,20 @@
 
+  本文是什么（2026-09-22 加）：这是一份给 QA 智能体的**提示词**，不是当前项目状态的说明书；
+  它描述的工作方式仍然可用，但下面这些事实以代码为准，本文其余部分若与之冲突，以本节为准：
+
+  - **一步到位的门禁**：`bash scripts/gate.sh --with-e2e`（加 `--only verify,fmt` 可跑子集）。
+    它比本文第 47-53 行列的清单更全：还包含 `cargo fmt --all --check`、`cargo clippy`
+    （**不带** `-D warnings`，改为对照 `scripts/gate.sh` 里的告警上限）、三个 Python instrument
+    （`scripts/check-reachability.py`、`check-dead-exports.py`、`check-channels.py`）、两个 shell 套件
+    （`scripts/boot-probe.test.sh`、`scripts/package-linux.test.sh`）、WebKit harness 测试
+    （`pnpm --filter @nekowite/desktop test:webkit-harness`）与 `check:export-css`。
+  - **发货的引擎是 WebKitGTK（Linux）/ WebView2（Windows），不是 Chromium**。所以「Chrome DevTools /
+    CDP」只适用于 `pnpm dev` 的浏览器模式；真实引擎要用仓库自己的 harness：
+    `node apps/desktop/e2e/webkit/measure.mjs --only <探针>`（需要 WebKitWebDriver 与 MiniBrowser）；
+    它自己的两个 `node:test` 文件已进入门禁。启动路径另有一个探针：`bash scripts/boot-probe.sh`。
+  - **测试面全景**（哪些测试真的会跑、每个功能域由哪些文件守着、哪里还没有证据）见
+    `docs/test-plan.md`。
+
   目标：对 NekoWite 进行持续、系统、可复现的 Debug、模拟测试、压力测试与质量改进。
 
   项目路径：
@@ -42,16 +58,21 @@
   一、必须执行的基础质量门禁
   --------------------------------------------------
 
-  每轮审计或修复后，按相关性执行：
+  每轮审计或修复后，按相关性执行（更全的一条命令见文首：`bash scripts/gate.sh --with-e2e`）：
 
   pnpm typecheck
   pnpm lint
   pnpm test
   cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
   pnpm build
-  pnpm test:e2e
   pnpm perf
+  pnpm --filter @nekowite/desktop check:export-css
+  cargo fmt --all --check --manifest-path apps/desktop/src-tauri/Cargo.toml
+  python3 scripts/check-reachability.py && python3 scripts/check-dead-exports.py && python3 scripts/check-channels.py
+  bash scripts/boot-probe.test.sh && bash scripts/package-linux.test.sh
 
+  端到端用 `pnpm --filter @nekowite/desktop e2e`（`scripts/run-e2e.mjs` 会先要一个空闲端口）；
+  `pnpm test:e2e` 是直接调用 playwright，用的是固定端口 1420，本地有 app 在跑时会互相抢。
   记录：
   - 通过/失败数量
   - 失败测试的完整错误信息
@@ -87,8 +108,10 @@
 
   - Rust 编译与静态检查：
     cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
-    cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml -- -D warnings
-    若 clippy 未配置或会产生已有历史噪音，要区分新增与存量问题。
+    cargo clippy --all-targets --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
+    注意：本仓库**不**用 `-- -D warnings`（clippy 的版本没有 pin，精确等于告警数会在工具链升级时
+    变红而不是在改动时变红）。替代它的是 `scripts/gate.sh` 里的 `CLIPPY_CEILING`，所以判断标准是
+    「告警行数有没有超过上限」，仍然是新增与存量分开看。
 
   - 依赖审计：
     pnpm audit
@@ -133,7 +156,9 @@
     复用浏览器已有登录态时必须谨慎，不得导出或泄露 token、cookie、API key。
 
   - Playwright：
-    pnpm test:e2e
+    pnpm --filter @nekowite/desktop e2e
+    （不要用 root 的 `pnpm test:e2e`：那是直接调用 playwright、固定 1420 端口，会和正在运行的
+    `pnpm tauri dev` 抢端口。）
     对每一个重要用户流程建立或扩展 E2E：
     - 打开 Vault
     - 新建、编辑、保存和恢复笔记
