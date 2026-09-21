@@ -15,14 +15,15 @@
 #
 # Usage:
 #   bash scripts/gate.sh                  # everything except e2e
-#   bash scripts/gate.sh --with-e2e       # …and the Playwright suite (needs a browser, ~4 minutes)
-#   bash scripts/gate.sh --only lint,fmt  # a subset; the summary still says which steps ran
+#   bash scripts/gate.sh --with-e2e       # …and the Playwright suite (needs a browser, ~2–4 minutes)
+#   bash scripts/gate.sh --only verify,fmt  # a subset; the summary still says which steps ran
 #
 # Steps, in the order they run:
 #   verify      `pnpm verify` — typecheck, lint (with its warning ceiling), tests, perf,
 #               the renderer build and the export-CSS check, in CI's order
 #   fmt         `cargo fmt --all --check`
-#   clippy      `cargo clippy --all-targets --locked` (reported, not ratcheted; see the audit ledger)
+#   clippy      `cargo clippy --all-targets --locked`, then its warning ceiling (`CLIPPY_CEILING`
+#               below; the warnings are read from the step's own log)
 #   instruments `check-reachability.py`, `check-dead-exports.py`, `check-channels.py`
 #   scripts     the suites that test this repository's own shell scripts
 #   harness     the WebKit measurement harness's own `node:test` files
