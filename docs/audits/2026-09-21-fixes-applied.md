@@ -1743,7 +1743,7 @@ after it. No bundles were rebuilt, for the reason §16 gave and this round does 
 application runs at runtime was touched — the round is eleven tests, four documents, a harness comment and
 one assertion's id list.
 
-### What remains, after §1.9 closed
+### What remains, after §1.8 and §1.9 closed
 
 The audit's §1 now has two open sections — §1.3 (`docs/PLUGIN_SDK.md`) and §1.4
 (`docs/PLUGIN_ISOLATION.md`) — plus §3's file-size row, which cannot be
@@ -1795,10 +1795,12 @@ two wrong file references are fixed: `services/plugins.ts` is a 21-line compatib
 execution gate (that is `features/plugins/services/discovery.ts`), and the blob import is in `loader.ts`'s
 `loadPlugin`, not at the comment line the document cited.
 
-**With §1.3 and §1.4 closed, the audit's §1 is finished.** Three of its ten sections were closed in §15,
-§16 and §18 respectively, and the rest across §15–§17; §3's file-size row remains by instruction (the three
-files holding the wrong numbers are read-only) and §5's architecture ledgers were reported rather than
-edited for the same reason.
+**With §1.3 and §1.4 closed, the audit's §1 is finished — all ten sections.** §15 closed §1.1
+(PRIVACY). §16 closed §1.2 (SECURITY), §1.5 (RELEASING), §1.6 (USER-GUIDE) and §1.7 (test-plan). §17 closed
+§1.8 (RECOVERY), §1.9 (A11Y) and §1.10 (debug, development-log). This round closed §1.3 (PLUGIN_SDK) and
+§1.4 (PLUGIN_ISOLATION). §3's file-size row remains by instruction — the three files holding the wrong
+numbers are read-only — and §5's three architecture ledgers were reported rather than edited for the same
+reason.
 
 **Two of my own steps are worth recording again.** I fixed one copy of the browser-demo claim and committed
 before grepping the document for the other copies — there were three more, including one in §2 that said
