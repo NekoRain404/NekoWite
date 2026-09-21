@@ -319,7 +319,9 @@ describe('AgentPanel — the options menu', () => {
       await harness.click(`[data-agent-menu-row="${id}"]`)
       expect(harness.emitted.length, `the "${id}" row emitted nothing`).toBe(before + 1)
     }
-    expect(harness.emitted.sort()).toEqual(['open-settings', 'use-chat'])
+    // Every row that was drawn, and nothing else. Sorted rather than in click order, so the walk
+    // above is free to visit them in whatever order the menu builds them.
+    expect(harness.emitted.sort()).toEqual(['open-settings', 'restart', 'use-chat'])
   })
 })
 
