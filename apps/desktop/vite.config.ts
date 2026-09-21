@@ -168,7 +168,13 @@ export default defineConfig({
   test: {
     environment: 'happy-dom',
     setupFiles: ['./src/test-setup.ts'],
-    include: ['src/**/*.test.ts'],
+    // The second pattern is the MDX demo corpus's own validation, which lives beside the fixtures it
+    // reads (`docs/mdx-demo/__validation/`). It was written and then never ran: this include listed
+    // only `src/**`, so `validate.test.ts` was outside every vitest project in the repository —
+    // `docs/DOC-AUDIT.md` §1.7 found it, and the fix is the pattern rather than moving a test away
+    // from its subject. It opens, round-trips and renders all seven demo files through
+    // `editor-core`, which nothing else in the suite does.
+    include: ['src/**/*.test.ts', '../../docs/mdx-demo/__validation/**/*.test.ts'],
     // `dangerouslyIgnoreUnhandledErrors` is NOT set, deliberately, and setting it would be the one
     // change that makes this suite lie: vitest exits non-zero on an unhandled error only while this
     // stays unset, so the flag is the switch that turns "every assertion passed" into a green
