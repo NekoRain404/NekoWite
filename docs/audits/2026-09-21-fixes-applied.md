@@ -788,6 +788,25 @@ end to end (all seven steps) and published:
 | `release/nekowite-1.0.0-1.x86_64.rpm` | `775d46dd1c6611486dc8dd5fd04541770f12410afc770946d0e3346929b0a851` |
 | `release/nekowite_1.0.0_amd64.AppImage` | `736f315c00b8f84487fc85bd3bca8d873881e7637022ad92c5eefea8b6916186` |
 
+**Rebuilt again after this round's fixes.** The table above is the build this run *replaced*, and it
+is retained at `release/superseded/build.y9W7u4/` — verified by digest, not by the directory's name:
+that file's sha256 is `7370ba73…`, which is the line above. The run published:
+
+| Artifact | sha256 |
+|---|---|
+| `release/nekowite_1.0.0_x64` | `ec7569ba78422d5528f85dd84dc9d09b924b786ef9a13ee4a10098ef64155f03` |
+| `release/opencode` | `ca6c0e1f42be3120595bf6848937e7586ec862c87fa7aa111e89c7cc6e9a4650` (unchanged: it is the pinned input, not a build product) |
+| `release/nekowite_1.0.0_amd64.deb` | `0e5839ddd28904d382c795c603903b5ca3cdd7fd726fe5b8ee12b7655d675fd8` |
+| `release/nekowite-1.0.0-1.x86_64.rpm` | `7b303062381342922d0781f1b3b92cff051c4dd58c686f927d663bc2f8c4026e` |
+| `release/nekowite_1.0.0_amd64.AppImage` | `ab52089fed367b53ba50e2c72e40912c406c854eea4f1726b410288750890dfd` |
+
+This run proves one thing the earlier one could not: the engine *inside the AppImage* was driven in
+place. It reports 1.18.29 with `PATH`, `HOME` and every credential absent, completes the ACP handshake
+with no credentials, and completes it again inside a network namespace with only loopback. The two
+things it still cannot show are the ones the pipeline names itself — a machine with no system
+`opencode` (this one has `/usr/bin/opencode`), and the engine's notice file, which
+`scripts/fetch-opencode-linux.sh` does not extract yet and which stays a distribution obligation.
+
 The files it replaced are kept at `release/superseded/build.6Pw20m/`, and the pipeline's own closing
 lines say what it does *not* claim: distribution compatibility and interactive workflows are not
 verified by it, and the citeproc notice obligation recorded in `THIRD-PARTY-NOTICES.txt` remains.
