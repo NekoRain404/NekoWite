@@ -1802,6 +1802,25 @@ execution gate (that is `features/plugins/services/discovery.ts`), and the blob 
 numbers are read-only — and §5's three architecture ledgers were reported rather than edited for the same
 reason.
 
+**The finding produced a test rather than only a paragraph.** `examples/plugins/hello` is what the SDK
+document tells a plugin author to read, and it was executed by nothing at all: no code path (both builds
+refuse vault plugins), no test, and it sits outside every tsconfig and eslint project — so the document's
+own example could drift out of the API with no red test anywhere. `apps/desktop/src/services/examples-plugin.test.ts`
+now runs it: seven cases covering the three manifest fields `loader.ts` silently requires, every SDK name
+the example imports, the definition's documented shape, the toolbar item inserting through
+`getActiveEditor`, the no-editor guard, the hooks and `onLoad`'s unload cleanup, and — as its own case,
+because it is the honest scope — the fact that a plain-JS example outside the tsconfigs cannot have its
+types checked here.
+
+Executing it took one substitution worth recording. A bare `@nekowite/plugin-host` cannot resolve from
+`examples/`: Vite resolves bare specifiers from the importing file's directory upward, and only
+`apps/desktop/node_modules` holds the workspace link (pnpm links per package). A real host does not depend
+on Node resolution either — it hands `loadPlugin` a `dynamicImport` adapter — so the test does what that
+adapter does: reads the example's bytes, replaces its single import with the SDK, evaluates the body, and
+asserts against the real barrel. Four mutations of the example — an import the barrel no longer exports, a
+drifted toolbar id, the guard removed, a documented hook renamed — each fail the intended case, with the
+file restored byte-identically (`md5 d9e7031e655d6989a644a1387967cc3c`) after every run.
+
 **Two of my own steps are worth recording again.** I fixed one copy of the browser-demo claim and committed
 before grepping the document for the other copies — there were three more, including one in §2 that said
 the same sentence in different words. And I wrote "the barrel exports 101 names" from a first count that
@@ -1813,7 +1832,7 @@ taken once and trusted, when the point was to check it.
 
 | Step | Result |
 |---|---|
-| `verify` | PASS — **5947 tests across 3 package runs**, unchanged: the round adds names to an existing test, not tests |
+| `verify` | PASS — **5954 tests across 3 package runs**: §17's 5947 plus the seven cases that now execute the reference plugin (the API-surface change adds names to an existing test, not tests) |
 | `fmt` | PASS |
 | `clippy` | PASS — 97 warning lines, under the 110 ceiling |
 | `instruments` | PASS |
@@ -1823,5 +1842,6 @@ taken once and trusted, when the point was to check it.
 | `rust` | PASS — 79 targets, 1409 passed, 0 failed |
 | `e2e` (`--with-e2e`) | PASS — 297 passed |
 
-One run, all nine steps, exit 0. No bundles were rebuilt: this round is four documents and one test file's
-list of names.
+Two runs, both all nine steps and exit 0: the first before the example fixture existed (verify 5947), the
+second the reading above. No bundles were rebuilt: this round is five documents, a list of names in an
+existing test, and one new test file.
