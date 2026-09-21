@@ -34,7 +34,11 @@ await writeFile(seed, '# Native smoke seed\n')
 const port = await freePort()
 const nativePort = await freePort()
 assert.ok(port && nativePort && port !== nativePort, 'Two distinct free ports are required')
-const driver = spawn('dbus-run-session', ['--', 'xvfb-run', '-a', '-s', '-screen 0 1280x820x24',
+// `-extension GLX` for the reason `scripts/boot-probe.sh` passes it: plain Xvfb on this workstation
+// segfaults while initialising GLX (`libEGL_nvidia` through `swrast_dri`), so no display appears and
+// the driver dies before it can be asked for anything — which reads as a smoke failure rather than
+// as a server that never started. WebKitGTK renders over X11 here and nothing below needs GLX.
+const driver = spawn('dbus-run-session', ['--', 'xvfb-run', '-a', '-s', '-screen 0 1280x820x24 -extension GLX',
   process.env.TAURI_DRIVER || 'tauri-driver', '--port', String(port), '--native-port', String(nativePort),
   '--native-driver', '/usr/bin/WebKitWebDriver'], { cwd: root, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
 let driverLog = ''

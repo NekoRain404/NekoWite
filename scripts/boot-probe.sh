@@ -54,8 +54,16 @@ trap 'exit 143' TERM
 echo "booting $BIN (${BUDGET}s budget); log: $LOG"
 # A separate bus prevents this probe from activating an existing user instance.
 # setsid gives cleanup an owned process group, including timeout and its descendants.
+#
+# **`-extension GLX`, for the reason the process-level test targets pass it too.** Measured on this
+# workstation: plain `Xvfb :N -screen 0 <size> -nolisten tcp` segfaults while initialising GLX
+# (`libEGL_nvidia` reached through `swrast_dri`), so the display never comes up, GTK cannot
+# initialise, and the app exits 1 — which this script then reports as "process exited before the
+# deadline", i.e. as a boot failure rather than as a display that never existed. The app renders
+# through WebKitGTK over X11 and nothing here needs GLX. The first run of this probe on this machine
+# failed exactly that way, with `Xvfb` "Aborted (core dumped)" in the log above the GTK panic.
 setsid timeout --kill-after=2 "$BUDGET" dbus-run-session -- \
-  xvfb-run -a -s "-screen 0 1280x800x24" \
+  xvfb-run -a -s "-screen 0 1280x800x24 -extension GLX" \
   env GDK_BACKEND=x11 WEBKIT_DISABLE_DMABUF_RENDERER=1 "$BIN" > "$LOG" 2>&1 &
 probe_pid=$!
 code=0
