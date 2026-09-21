@@ -207,22 +207,71 @@ plus the two arity assertions F1's change required (`app-lifecycle.test.ts`, `ap
   | U1 (U1a, U1b, U1b′) | **fixed** — the care ledger's producer, its file and its read-only arm |
   | T1, B | **fixed** — a skipped process case is not a pass; the engine's own end is read |
   | F4 (a pet window destroyed from outside wedges the host) | **fixed** — see the table above; the half that needs the real window system is the `Destroyed` wiring, and the case pins the contract it calls |
-  | F9 (a delegated write drops the no-history warning) | **open** — the warning is carried by the port and dropped by one destructuring; needs a decision about what a window does with it |
+  | F9 (a delegated write drops the no-history warning) | **fixed** — the port's sentence travels on the change it is about (`ChangeRecord::warning`), with the creation case pinning that a missing baseline is not a snapshot failure. What the record still lacks is a reader: the change list is T10's unbuilt surface, recorded in the bullets below |
   | F10 (`hasActiveTab` means "has text") | **fixed** — the gate is `loading` now, so an empty note is exportable and a placeholder is not |
-  | F11 (a plugin toggle can report a state the app does not hold) | **open** — a policy question about what a toggle does when the write fails |
+  | F11 (a plugin toggle can report a state the app does not hold) | **fixed** — the toggle answers with what the app holds and what the file said; an enable that cannot be applied goes back to disabled in the record *and* in the file, and a write that did not land is confirmed by reading the file back (the writer is best-effort and cannot be trusted to throw) |
   | S3 (proxy credentials copied into a window payload) | **fixed** — the value's userinfo is `***` in the sentence the window reads |
-  | S4 (`import_attachment` reads any image-named path) | **open** — needs the threat-model decision the review's §8 names; the one-shot token it suggests is a cross-language contract change, so it wants a round of its own |
+  | S4 (`import_attachment` reads any image-named path) | **fixed** — the command spends a one-shot grant that only the image dialog can mint (`commands/fs/picked.rs`), so a renderer that names a path it did not pick is refused with a sentence saying how to pick one; four IPC cases drive the real command |
   | S5 (`agent_credentials_write` accepts any environment-variable name) | **fixed** — reserved names with reasons, and the isolation roots filtered against the credentials |
   | S6 (a crash mid password change is unrecoverable) | **open** — needs the recovery decision, and the ignored tests that state their cost are the place it lands |
   | S7 (the credentials file's mode is reported, not enforced) | **fixed** — the credentials document's writer sets `0600`; the engine's own document keeps the user's mode |
-  | U2 (two more production-dead exports) | **open** — `check-dead-exports.py` lists them |
-  | U3 (`main_window::raise`'s rebuild path has no test) | **open** — needs a window-level case, not a unit one |
+  | U2 (two more production-dead exports) | **fixed** — `imageMime` deleted and `featureFor` given the call site it was written for; `check-dead-exports.py` went from 91 of 1372 to 89 of 1371 with neither name in the list |
+  | U3 (`main_window::raise`'s rebuild path has no test) | **closed as a false finding, with the gap it hid now covered** — the mock-level drive has existed since `29f58ae` added `main_window.rs` and `tests/main_window_test.rs` together: `a_missing_main_window_is_built_again` and `an_existing_main_window_is_raised_rather_than_replaced` drive both arms under `MockRuntime`, and the first reddens under the rebuild-arm mutant (measured, not read). Both the review and `docs/HANDOVER.md` §9.4 say "nothing drives it", inheriting the claim from a file that was deleted for a real reason but for a *narrower* one: what `e326a8b` killed was the **process-level** drive. What genuinely had no case is `raise`'s refusal when the config declares no window, and that case exists now (`main_window_test.rs:107`), as do seven corrected references to the deleted file |
   | T2 (§9.1a's unrun targets) | **closed by the programme** — every wave ran the whole suite with `NEKOWITE_REQUIRE_PROCESS_TESTS=1`, so no target is unread |
-  | T3 (`pnpm test` does not run `pnpm perf`; lint cannot fail on a warning) | **open** — a gate change, and it changes what "green" means for everyone after it |
+  | T3 (`pnpm test` does not run `pnpm perf`; lint cannot fail on a warning) | **half fixed, half stale** — the renderer's lint now carries a `--max-warnings 462` ceiling, and `pnpm verify` composes the CI sequence into one command; the finding's premise about perf was wrong, and `.github/workflows/ci.yml:22` is the file that disproves it (see §9) |
   | T4 (~50 `never used` warnings that are artefacts of `#[path]`-included targets) | **open** — separating them from real ones is a real improvement and a separate piece of work |
+  | D1–D11 (§5's stale comments and counts) | **fixed** — every claim read against its subject, and the sweep found more than §5 named; see the note below |
 
-  The eight open ones are open because each needs a decision this work is not entitled to take alone
-  (a policy, a product answer, or a change to what the gate means), not because they were missed.
+  **§5 was missing from this table until the D-group was worked, and that was this ledger's omission,
+  not the review's.** The review's own summary counts it (`| D1–D11 | Stale comments and counts,
+  including the two that hid F3 | doc | low |`) and its §5 lists eleven rows. The twenty-six the table
+  above accounted for are the code, security, gate and unreachable findings plus the flake; the true
+  total is **thirty-seven**, and all of them are accounted for now.
+
+  What the sweep found is more than §5 named: **ten false numbers across seven files**, not three.
+  §5 named `build.rs` (eighty-two against a real eighty-four), `lib.rs` (eight pet commands against
+  nine) and the pet count again; the tree also held `window_host/identity.rs`, `window_host.rs` (both
+  "eight", and a "sixty-odd"), `command_surface_test.rs`'s own docblock (82 beside its assertion of
+  84), `command_authorisation_test.rs`'s case, and `desktop_pet_surface.rs`'s "eight switches" over a
+  seven-boolean domain. The rule the fixes used is the one worth keeping: **a number a test asserts is
+  stated; a number nothing asserts is described instead of refreshed**, because a fresh count is the
+  next thing to go stale.
+
+  Three rows had also *moved*, because the line-budget programme split the files after the review was
+  written: D9's paragraph lives in `commands/desktop_pet/window_surface.rs` now and D10's second half
+  beside it, while D2, D4 and D5's line numbers point at pre-split text. The review is a record of the
+  tree it read, so that staleness is recorded here rather than by rewriting the review.
+
+  The rest of the group was two user-visible defects and three false claims about behaviour. The
+  attachments panel told the reader that a pasted image is saved into the vault's `attachments` folder
+  *and appears in the panel they were reading* — both halves false, since the file lands in
+  `<note>_assets` beside its note and the panel lists `attachments/`, which holds the app's own
+  insertions. One vault-switch failure was the only hard-coded English sentence in a localised
+  function. `ai-gate` claimed to be "the only place the AI permission state is read" over eight
+  production files and ten call sites. `acp_transport::connect` claimed to complete a handshake it
+  never sends. `commands/desktop_pet.rs` claimed app commands are "not ACL-gated at all" beside
+  `build.rs:172`, which declares the app manifest that gates them. And `ball.rs` claimed a capability
+  file "narrows" a window when Tauri unions by label glob and the file's own description calls its
+  grant a subset rather than a widening.
+
+  The rows still marked **open** are open because each needs a decision this work is not entitled to
+  take alone — a policy, a product answer, or a change to what the gate means. They are named as rows
+  rather than counted here on purpose: the count is the part of this file that has already gone stale
+  once.
+- **A fourth unreachable surface, found while fixing F9 and not one of §4's three.**
+  `SessionRuntime::changes` — the change list §7.2's attribution record exists for — is called only
+  from tests. No command reads it, so the records a delegated agent write produces never reach a
+  window, and the review surface that would show them is T10, which is unbuilt. F9 fixed what the
+  record *carries* (the port's own sentence about a history snapshot that could not be kept, which the
+  write arm used to drop at the destructuring); what reads it is a feature nobody has designed yet, so
+  it is recorded here rather than invented. It is the handover's §6.7 class in its purest form: built,
+  tested, documented as a promise, and unread.
+- **Clippy is deliberately not ratcheted the way eslint now is.** `cargo clippy --all-targets` runs in
+  CI without `-D warnings` and reports 100 unique warning lines, so it cannot fail — the same shape of
+  hole T3 found in `pnpm lint`. It is left alone because clippy has no `--max-warnings`, and a count
+  compared against a toolchain that moves would fail a contributor's build for something that is not
+  their change. A count *reported* on every run is the honest middle, and T4's separation of the
+  `#[path]` artefacts from real ones is what would make the number worth reading at all.
 - **`docs/HANDOVER.md` is not edited.** Its §9.1 is now stale in a second way — `cargo test` skips
   those two cases on a tree whose packaged binary is older than its sources — and correcting the
   handover is the maintainer's call, recorded in the review's §9 instead.
@@ -755,3 +804,115 @@ verified by it, and the citeproc notice obligation recorded in `THIRD-PARTY-NOTI
   directory", and because the script is otherwise perfectly happy on a normal machine.
 - This machine has a system `opencode` on `PATH`, so `verify-opencode-linux.sh` reports the §11.2
   clean-machine case as **not proven here** rather than claiming it.
+
+---
+
+## 9. The round after the programme: the leftovers, and two of the review's own findings that were wrong
+
+The programme's backlog was empty when this round began, so it took the findings §3 still had open —
+and then the ones whose *record* was wrong. Nine fixes, and they include the largest defect of the
+whole review.
+
+| # | Finding | Change | Evidence |
+|---|---|---|---|
+| **S4** | `import_attachment` copied any image-named path the renderer named | `commands/fs/picked.rs`: the native picker mints a one-shot, ten-minute, canonicalised grant and the command spends it, so a path the user did not choose is refused *before* the copy | Four IPC cases through the real command · **mutation check** kills exactly the import case · `attachment_grant_ipc_test` 14 passed |
+| **U2** | Two production-dead exports (`imageMime`, `featureFor`) | `imageMime` deleted; `featureFor` given the call site it was written for, and its parameter changed to the kind so it could be called at all | `check-dead-exports.py` **91 of 1372 → 89 of 1371**, neither name in the list · mutation makes exactly five composer cases fail |
+| **F9** | A delegated write dropped the port's "no history snapshot" warning | `ChangeRecord` carries it in a field of its own; the write arm no longer discards what it destructured | New case drives a port whose write reports a snapshot failure · **mutation check** fails that case alone (`left: None`) |
+| **F11** | A plugin toggle could report a state the app did not hold | The toggle resolves to `{ disabled, refused, saved }`; an enable that cannot be applied goes back to disabled in the record **and** the file, and `saved` is a *verified* write because the writer is best-effort by design | New spec red at 9 failed / 1 passed before · 6 specs / 85 tests green · **mutation check** on the DOM half |
+| **T3** | "`pnpm test` does not run `pnpm perf`; lint cannot fail on a warning" | `--max-warnings 462` on the renderer, and `pnpm verify` composes the CI sequence into one command | Fails at 461, passes at 462 · perf 2 files / 10 tests green in 9.1 s |
+| **S6** | A crash mid passwordless→password change left the vault unopenable | `open_snapshot_from_backups` is the one backup search and `open_vault`'s `Locked` arm asks it; a backup decides the state only by **really opening the live snapshot**, so the lock is not bypassed | RED with the exact locked sentence a user saw · GREEN 5 passed · **mutation check** fails the symptom case while the no-bypass case stays green · the ignored real-snapshot cases pass |
+| **T4** | ~50 `never used` warnings that are `#[path]` artefacts, and nothing separating them from real ones | The allow goes on the include site (never in `src/`, where the library build must keep reporting dead code), and only the lint the census showed | `cargo test --no-run \| grep -c "^warning"` **70 → 0** · control: a private unused function in `src/` still warns (0 → 1 → 0, md5 unchanged) |
+| **D1–D11** | Stale comments and counts, including the two that hid F3 | Ten false numbers across seven files corrected, plus three claims whose *location* had moved with the splits | Counts a test asserts are stated; counts nothing asserts are described instead · 6 targets / 281 tests green |
+| **U3** | "`main_window::raise`'s rebuild path still has no test" | **The finding is false** — see below — and the gap it was hiding is `raise`'s refusal arm, which now has a case | The pre-existing rebuild case reddens under a rebuild-arm mutant |
+
+### Two of the review's findings were wrong, and one of them was inherited twice
+
+- **U3 is false.** `tests/main_window_test.rs` has driven `raise`'s both arms under `MockRuntime`
+  since `29f58ae` — the same commit that added `main_window.rs` — and
+  `a_missing_main_window_is_built_again` goes red under a mutant that drops `build(app, config)`
+  from the rebuild arm. What `e326a8b` deleted was the **process-level** drive, whose premise (a
+  destroyed main window the process outlives) the change removed; the review inherited "nothing
+  drives it" from `docs/HANDOVER.md` §9.4 and marked it "confirmed, as §9.4 states" — a confirmation
+  of the *references*, which were also stale in that section, rather than of the coverage. It is
+  worth naming how this survived: §9.4's claim was about a file that had been deleted, and the file
+  that disproves it was cited two paragraphs earlier as one of the seven stale references.
+- **T3's first half is stale.** `pnpm test` does not run `pnpm perf`, but CI does
+  (`.github/workflows/ci.yml:22`, with a comment saying the harness asserts `docs/PERF.md`'s budgets
+  and so is a gate), and `docs/dev.md` §7.1 already said so. The real gap was local — a developer's
+  four commands were weaker than CI — which is what `pnpm verify` closes. The review marked this
+  finding "reported, not re-run" and did not read the CI file.
+
+### What this round found that the review did not
+
+- **§5 was missing from this ledger entirely.** The review's summary counts D1–D11 and its §5 lists
+  eleven rows; §3's table accounted for the twenty-five code findings and the flake, and the true
+  total is **thirty-seven**. That was this document's omission, and it is why the group is now a row
+  of its own rather than a silence.
+- **Ten stale numbers, not three.** §5 named `build.rs`'s eighty-two, `lib.rs`'s eight pet commands
+  and one more. The sweep found the same defect in `window_host/identity.rs`, `window_host.rs`
+  (twice), `command_surface_test.rs`'s own docblock — which claimed 82 beside an assertion of 84 —
+  `command_authorisation_test.rs`, and `desktop_pet_surface.rs`'s "eight switches" over a
+  seven-boolean domain.
+- **A fourth unreachable surface.** `SessionRuntime::changes` — the change list §7.2's attribution
+  record exists for — is called only from tests. Nothing registers a command that reads it, so the
+  records a delegated write produces never reach a window; F9 fixed what the record *carries*, and
+  what reads it is T10's unbuilt surface.
+- **T4's noise was hiding eight real findings**, in the test files themselves rather than in `src/`:
+  two dead helpers (`agent_fs_capability_test.rs`'s `request`,
+  `desktop_pet_ipc_test/support.rs`'s `resizes`), two stray imports, an inert parameter and three
+  unread bindings. Fixing them is what took the count to zero; the artefacts alone would have left
+  the stream merely shorter.
+- **F11's `failed` could not mean "the write threw".** `writeGovernanceFile` wraps its whole body in
+  a `try`/`catch` and swallows by design, so `await`ing it is not evidence that anything was written.
+  The outcome is a verified write — read the file back through the MAC-verifying reader — which
+  catches a silent no-op as well as a throw.
+- **The attachment hint was wrong in both halves, and the first correction was wrong too.** The
+  panel said a pasted image lands in the vault's `attachments` folder and appears in the list it was
+  reading. It does not: it lands in `<note>_assets` beside its note, staging in `.tmp` until the note
+  is saved, and the list shows `attachments/`, where the app's *own* insertions go. The first version
+  of the correction said a note with no usable path lands in `attachments/` — the backend's empty-dir
+  branch does mean that layout, but the intake never sends an empty dir, so the sentence would have
+  replaced one false location with another. It was caught by reading `assetsDirForNote` rather than
+  the branch.
+- **A guard whose error message did not name the file it was reading.** The round gate's first run
+  went red on `write_atomicity_test.rs`'s scan — this round's own `commands/fs/picked.rs` had put two
+  `#[cfg(test)]` accessors above its trailing test module, so the scan stopped early and the rest of
+  the file went unchecked. Finding it meant scanning twelve files by hand, because the assertion said
+  only that *a* gated item was not a trailing module; it names the file now, proven by a mutation that
+  fails with `commands/fs/picked.rs: …`.
+
+### The gate
+
+Run on the frozen tree with `apps/desktop/src-tauri/target/review-2026-09-21/final-gate.sh`, which now
+calls `pnpm verify` (so the composed script is itself gated) and stages the verified engine before the
+suite:
+
+| Reading | Result |
+|---|---|
+| `pnpm verify` | **exit 0** — typecheck; lint 0 errors / 462 warnings (at the ceiling); tests **440 files / 4815 passed**; perf 2 files / 10 passed; renderer build 7.28 s; `check-katex` OK |
+| `cargo fmt --all --check` | exit 0 |
+| `cargo clippy --all-targets --locked` | exit 0, **97** warning lines — the first time this number has moved: T4's include-site allows also silenced three clippy `dead_code` reports, and the library build still reports what is genuinely dead |
+| `tauri build --no-bundle` | exit 0; the staged engine was removed again afterwards, which is the script's own guarantee |
+| full suite, `NEKOWITE_REQUIRE_PROCESS_TESTS=1` | **79 targets · 1406 passed · 0 failed · 5 ignored · 0 skip announcements** (the five are the expensive real-snapshot cases, run separately with `--ignored` during S6) |
+| `pnpm --filter @nekowite/desktop e2e` | first run **291 passed, 2 failed**; after the copy fix below, **293 passed** on the full suite and 5 passed on the spec that caught it |
+
+**The gate earned its keep twice in one run, and both times on this round's own work.** The first run
+was red: `write_atomicity_test`'s write-surface scan had stopped early inside `commands/fs/picked.rs`,
+which the S4 commit had added hours earlier — a module that silently halved its own coverage, caught
+only because the whole suite ran (the per-file checks during the round all passed). Fixed in
+`07db5dc`, and re-run green above.
+
+The e2e suite then found what no unit test could: the attachment hint's copy spelled the folder
+`<笔记名>_assets`, and Vue I18n reads an angle-bracketed word in a message as HTML — every render of
+that panel logged `[intlify] Detected HTML in … message. Recommend not using HTML messages to avoid
+XSS`, which `e2e/console-clean.spec.ts` fails on because every other surface is held to zero console
+warnings. The panel is not an XSS risk; a console warning nobody else is allowed to emit is still a
+defect, and it was mine, introduced by the round's own D5 fix. The strings lost their decorative
+brackets in both languages, a sweep confirmed no other message in the catalogue contains one, and the
+spec is green again.
+
+That is the shape worth remembering about a gate: neither failure was reachable from the file that
+caused it. The scan's rule was in a test file two directories away, and the console rule was in a
+browser spec that only runs when a real page renders.
+
+

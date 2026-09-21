@@ -636,13 +636,23 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 pnpm --filter @nekowite/desktop e2e
 ```
 
+一次跑完上面除 e2e 以外的全部步骤（顺序与 CI 一致，另含 `check:export-css`）：
+
+```bash
+pnpm verify
+```
+
+（单独列出的命令仍然保留：某一步红了时，单独跑它比在整串里找更快。`pnpm lint` 带
+`--max-warnings 462` 上限——462 是当前渲染进程的真实告警数，只会往下走：新增告警会让 lint 失败，
+修掉告警不需要改这个数字。e2e 需要浏览器，`pnpm e2e` 是它自己的名字。）
+
 性能变更额外运行：
 
 ```bash
 pnpm perf
 ```
 
-（`pnpm perf` 是独立的 vitest 工程，`pnpm test` 到不了它，而 CI 每次都会跑它 —— 见
+（`pnpm perf` 是独立的 vitest 工程，`pnpm test` 到不了它，`pnpm verify` 与 CI 都会跑它 —— 见
 `.github/workflows/ci.yml`。Rust 侧的 `cargo fmt --all --check` / `cargo clippy` 同样在 CI 里，
 需要在 `apps/desktop/src-tauri` 目录下执行。）
 
