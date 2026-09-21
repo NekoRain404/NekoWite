@@ -175,7 +175,7 @@ fn the_sprite_fits_inside_the_window_at_every_size_the_slider_offers() {
     assert_eq!(
         (base_width, base_height),
         (160.0, 180.0),
-        "the page's sprite box moved; window_host.rs's SPRITE_ASPECT is the same pair"
+        "the page's sprite box moved; window_host/geometry.rs's SPRITE_ASPECT is the same pair"
     );
 
     for size in 64..=320 {

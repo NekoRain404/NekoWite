@@ -4,14 +4,23 @@
 //! The window system is here rather than in `switch.rs` alone because a store test needs it too:
 //! what the enable path does to a window is one of the things a settings record decides, and
 //! asserting it against a fake is the only way to see it without a compositor.
+//!
+//! The record fixtures and the refusing window system are here for the same reason: a written record
+//! and a compositor that declines are needed by more than one of the `switch_*` files, so neither can
+//! live in one of them alone.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use nekowite_lib::desktop_pet::settings::values::defaults;
+use nekowite_lib::desktop_pet::settings::{
+    PetSettingsDomain, PetSettingsRecord, PET_SETTINGS_SCHEMA_VERSION,
+};
 use nekowite_lib::desktop_pet::window_host::{
     PetSurfaces, PetWindowHost, PetWindowLabel, Placement, WindowStyle, WorkArea, BALL_LABEL,
 };
 use nekowite_lib::desktop_pet::PetSettingsStore;
+use serde_json::{json, Value};
 
 /// A store root nothing else in the process is using.
 ///
@@ -24,6 +33,41 @@ pub fn store(label: &str) -> (PetSettingsStore, PathBuf) {
     std::fs::create_dir_all(&data).expect("a temporary data directory");
     let store = PetSettingsStore::new(&data).expect("an absolute data directory is in scope");
     (store, data)
+}
+
+/// One stored record, as a write that was just applied would have produced it.
+pub fn record(domain: PetSettingsDomain, changes: &[(&str, Value)]) -> PetSettingsRecord {
+    let mut values = defaults(domain);
+    for (field, value) in changes {
+        values.insert((*field).to_string(), value.clone());
+    }
+    PetSettingsRecord {
+        domain,
+        schema_version: PET_SETTINGS_SCHEMA_VERSION,
+        revision: 1,
+        values,
+    }
+}
+
+/// One `general` record written straight to disk, at a schema version of the caller's choosing.
+///
+/// The launch cases about a record *this build did not write* need the file itself: a record put
+/// through `PetSettingsStore::apply` is stamped with this build's version and carries every field
+/// the schema declares, which is exactly what those cases must not have.
+pub fn write_record(store: &PetSettingsStore, version: i64, values: Value) {
+    let path = store.path_of(PetSettingsDomain::General);
+    std::fs::create_dir_all(path.parent().expect("a settings directory")).expect("a directory");
+    std::fs::write(
+        &path,
+        serde_json::to_string(&json!({
+            "domain": "general",
+            "schemaVersion": version,
+            "revision": 1,
+            "values": values,
+        }))
+        .expect("a JSON document"),
+    )
+    .expect("a written record");
 }
 
 /// The TypeScript file the values and record rules are a mirror of.
@@ -250,4 +294,46 @@ impl PetSurfaces for FakeSurfaces {
 pub fn host() -> (PetWindowHost, FakeSurfaces) {
     let surfaces = FakeSurfaces::new();
     (PetWindowHost::new(Box::new(surfaces.clone())), surfaces)
+}
+
+/// A window system that refuses everything, so the enable path's handling of a real failure has a
+/// way to be reached without inventing one.
+pub struct RefusingSurfaces;
+
+impl PetSurfaces for RefusingSurfaces {
+    fn open(
+        &mut self,
+        _label: &PetWindowLabel,
+        _page: &str,
+        _at: Placement,
+        _size: (f64, f64),
+        _style: WindowStyle,
+        _visible: bool,
+    ) -> Result<(), String> {
+        Err("no compositor here".to_string())
+    }
+
+    fn close(&mut self, _label: &PetWindowLabel) -> Result<(), String> {
+        Err("no compositor here".to_string())
+    }
+
+    fn set_visible(&mut self, _label: &PetWindowLabel, _visible: bool) -> Result<(), String> {
+        Err("no compositor here".to_string())
+    }
+
+    fn set_click_through(&mut self, _label: &PetWindowLabel, _ignore: bool) -> Result<(), String> {
+        Err("no compositor here".to_string())
+    }
+
+    fn set_always_on_top(&mut self, _label: &PetWindowLabel, _on_top: bool) -> Result<(), String> {
+        Err("no compositor here".to_string())
+    }
+
+    fn resize(&mut self, _label: &PetWindowLabel, _size: (f64, f64)) -> Result<(), String> {
+        Err("no compositor here".to_string())
+    }
+
+    fn work_area(&self) -> Option<WorkArea> {
+        None
+    }
 }

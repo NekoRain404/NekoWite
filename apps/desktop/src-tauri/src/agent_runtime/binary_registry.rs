@@ -27,114 +27,55 @@
 //! What a file at one of these paths *is* — an execute bit, a digest, an ELF header for the one
 //! architecture this release claims — is here too, for the same reason: those are facts about a file
 //! at a path, while *whether this app is willing to install it* is the update path's judgement.
+//!
+//! **Where the parts live.** The file passed §13.1's 600-line default, so it was split by reason to
+//! change rather than by arithmetic: the directory names and the refusals are `layout.rs`'s, the
+//! records and the retained-tree operations are `releases.rs`'s, the target this build installs for
+//! is `platform.rs`'s, and what a file at one of these paths *is* — a digest, an ELF header — is
+//! `elf.rs`'s. They are children of this file rather than siblings of it, so `binary_registry.rs`
+//! stays the root of the module's path: rustc resolves a bare `mod name;` written here to
+//! `binary_registry/<name>.rs`, and every path that named `agent_runtime::binary_registry::…` before
+//! the split still resolves through the re-exports below.
 
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-
 use super::registry::InstallSource;
 
-/// The directory §3.2 puts the runtime's own files in, under the app's data directory.
-pub const RUNTIME_DIR: &str = "agent-runtime";
-/// One directory per verified version.
-pub const RELEASES_DIR: &str = "releases";
-/// Where a download waits until it has passed (§3.2: 未验证文件不得执行).
-pub const DOWNLOADS_DIR: &str = "downloads";
-/// Where the managed roots of profiles live (T12 owns what goes in them).
-pub const PROFILES_DIR: &str = "agent-profiles";
-/// Where retained material lives, scoped and stamped.
-pub const RECOVERY_DIR: &str = "agent-recovery";
-/// The pointer file's name, as §3.2 draws it.
-pub const POINTER_FILE: &str = "active.json";
+// Bare `mod name;`, which is what finds `binary_registry/<name>.rs` beside this file — the root keeps
+// its own name rather than becoming `binary_registry/mod.rs`, so every caller that names
+// `binary_registry` still resolves through it. Deliberately *not* `#[path = "binary_registry/<name>.rs"]`:
+// `tests/module_tree_test.rs` replays rustc's walk with a comment stripper that removes string
+// literals along with comments, so a path attribute is invisible to it and its children read as
+// orphans. Nothing `#[path]`-includes `binary_registry.rs`, so the plain declaration is both
+// sufficient and what the tree check can see.
+mod elf;
+mod layout;
+mod platform;
+mod releases;
 
-/// The program's name inside a release directory, and beside the app's own executable.
-///
-/// One name for both because that is what the bundler produces: Tauri's `copy_binaries` strips the
-/// `-<target>` suffix it added at build time, so the installed sidecar is `usr/bin/opencode` next
-/// to `usr/bin/nekowite` — the same bare name this module installs a verified version under.
-pub const PROGRAM_NAME: &str = "opencode";
+// The re-exports below are what keeps every path that resolved before this split resolving after it:
+// `agent_runtime::binary_registry::X` is spelled exactly as it was, and the callers
+// (`update/{error,manifest,verify,rollback}.rs`, `state/app_state.rs`, the `tests/agent_update_test`
+// target and `tests/agent_session_ipc_test.rs`) are not this change's to rewrite. Only the items that
+// were `pub` are re-exported here; everything that was private to this file stays `pub(super)` in its
+// child, which is the narrowest scope that compiles.
+pub use elf::{check_elf, digest_of, hex, read_elf_header};
+pub use layout::{
+    mode_of, LayoutError, DOWNLOADS_DIR, POINTER_FILE, PROFILES_DIR, PROGRAM_NAME, RECOVERY_DIR,
+    RELEASES_DIR, RUNTIME_DIR,
+};
+pub use platform::{is_supported, supported_target, SUPPORTED_TARGET};
+pub use releases::{
+    bundled_program, is_newer, is_restorable, restore_tree, retain_tree, ActiveRelease, Program,
+};
 
-/// The `e_machine` value for [`SUPPORTED_TARGET`] — `EM_X86_64`, from the ELF specification.
-const EM_X86_64: u16 = 62;
-
-/// The only architecture this release claims to support (§3.2: 只声称支持实际验证的架构).
-///
-/// A second architecture is a second artifact and a second compatibility verification, so it is not
-/// a matter of adding a name here.
-pub const SUPPORTED_TARGET: &str = "x86_64-unknown-linux-gnu";
-
-/// Where a managed root may not be (§3.3: 不执行 `sudo`，不写 AppImage 挂载目录或系统包目录).
-///
-/// Held as paths rather than as a rule about permissions: the app's own data directory is what
-/// `BinaryRegistry::new` is for, and a root inside any of these is a request to write where the
-/// distribution or the mounted image owns the files.
-const SYSTEM_PREFIXES: [&str; 9] = [
-    "/usr", "/etc", "/opt", "/var", "/bin", "/sbin", "/lib", "/lib64", "/boot",
-];
-
-/// Where an AppImage mounts itself. Matching the prefix rather than the exact spelling keeps this
-/// from depending on the image's name; the mount is read-only anyway, so anything under it is a
-/// path the app could never write to and must never try (`sudo` is not a fallback, §3.3).
-const APPIMAGE_MOUNT_PREFIX: &str = "/tmp/.mount_";
-
-/// The target this host can install for.
-pub fn supported_target() -> &'static str {
-    SUPPORTED_TARGET
-}
-
-/// Whether this release claims to support `target`.
-pub fn is_supported(target: &str) -> bool {
-    target == SUPPORTED_TARGET
-}
-
-/// Why a path in the managed layout was refused. Data only — the wording a user reads belongs to
-/// the frontend, which maps these to sentences the same way it maps `registry::RegistryError`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LayoutError {
-    /// A root that is not absolute would resolve against this process's working directory — the
-    /// app's, not the user's — so it names nothing that can be reasoned about.
-    Relative { root: PathBuf },
-    /// A root the app does not own (§3.3): a system directory, or an AppImage mount point.
-    OutsideManagedScope { root: PathBuf, reason: &'static str },
-    /// A version or target this release does not install for.
-    UnsupportedTarget { target: String },
-    /// A name that cannot be a path component: empty, `.`, `..`, or carrying a separator. §3.2 puts
-    /// profile ids and versions into directory names, so this is a path traversal dressed as
-    /// configuration.
-    InvalidName { field: &'static str, value: String },
-    /// The version named is not on disk, so there is nothing to point at.
-    NotInstalled { version: String, program: PathBuf },
-    /// The pointer file is there and unreadable as a pointer.
-    MalformedPointer { path: PathBuf, detail: String },
-    /// The filesystem said no.
-    Io { path: PathBuf, detail: String },
-}
-
-/// Which release is active — §3.2's `active.json`, field for field.
-///
-/// `previous` is kept because a rollback is a normal operation (§3.3) rather than a recovery: it
-/// names where the pointer was, so returning to it is a decision about a version the app knows
-/// rather than a guess at the file system's contents.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ActiveRelease {
-    pub version: String,
-    pub target: String,
-    #[serde(default)]
-    pub previous: Option<String>,
-}
-
-/// One program this app could start, as the settings page reports it (§3.1.4).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Program {
-    pub path: PathBuf,
-    /// The version the app's own record names for it. `None` for the bundled sidecar, whose version
-    /// is the release manifest's fact (`update::shipped`) rather than a directory name.
-    pub version: Option<String>,
-    pub source: InstallSource,
-}
+// The helpers that were private when they shared this file with the table below, and are `pub(super)`
+// in their child now. Imported rather than re-exported: an item that could not be named from outside
+// `binary_registry.rs` before the split still cannot be, and `pub use` would widen it.
+use self::layout::{assert_scope, validate_component, write_private};
+use self::releases::{is_launchable, stamp, version_key};
 
 /// The managed layout, and the pointer inside it.
 ///
@@ -347,349 +288,4 @@ fn attempt() -> String {
         std::process::id(),
         COUNTER.fetch_add(1, Ordering::Relaxed)
     )
-}
-
-/// The packaged engine, from the directory the host resolved for the app's own executable.
-///
-/// §3.2 resolves the sidecar through Tauri rather than through a development path, and Tauri has two
-/// spellings for what it produced: the installed bundle carries the bare name (`copy_binaries`
-/// strips the `-<target>` suffix the build input needs, which is why the artifact on disk ends in
-/// `-x86_64-unknown-linux-gnu` and the one in the package does not), and a build tree can still have
-/// the suffixed one beside the binary. Both are checked here; neither is searched for on `PATH`,
-/// because §3.1.1 is that the user has this engine whether or not they have one of their own.
-pub fn bundled_program(directory: &Path) -> Option<Program> {
-    let candidates = [
-        directory.join(PROGRAM_NAME),
-        directory.join(format!("{PROGRAM_NAME}-{SUPPORTED_TARGET}")),
-    ];
-    candidates
-        .into_iter()
-        .find(|path| is_launchable(path))
-        .map(|path| Program {
-            path,
-            version: None,
-            source: InstallSource::Bundled,
-        })
-}
-
-/// Refuses a root the app does not own (§3.3).
-fn assert_scope(root: &Path) -> Result<(), LayoutError> {
-    if !root.is_absolute() {
-        return Err(LayoutError::Relative {
-            root: root.to_path_buf(),
-        });
-    }
-    for prefix in SYSTEM_PREFIXES {
-        if root.starts_with(prefix) {
-            return Err(LayoutError::OutsideManagedScope {
-                root: root.to_path_buf(),
-                reason:
-                    "the distribution owns this directory, and this host never installs into a \
-                         system package directory",
-            });
-        }
-    }
-    // A string comparison rather than `Path::starts_with`, which compares whole components: an
-    // AppImage's mount directory is named `.mount_<something random>`, so the component after `/tmp`
-    // is exactly the part that varies.
-    if root.to_string_lossy().starts_with(APPIMAGE_MOUNT_PREFIX) {
-        return Err(LayoutError::OutsideManagedScope {
-            root: root.to_path_buf(),
-            reason: "this is an AppImage mount point, which is a read-only location for the image \
-                     and not a place to write",
-        });
-    }
-    // The app's data directory is what Tauri resolves for it, and that is always below the user's
-    // home, a corporate profile or a distribution's own data root — never a bare top-level
-    // directory. A root one level under `/` is a configuration mistake that would scatter releases,
-    // profiles and recovery material across the filesystem, so it is refused where an operator can
-    // see the refusal rather than where the first write happens.
-    if root.parent().is_none_or(|parent| parent == Path::new("/")) {
-        return Err(LayoutError::OutsideManagedScope {
-            root: root.to_path_buf(),
-            reason: "the agent runtime's data belongs under the app's own data directory, not at \
-                     the root of the filesystem",
-        });
-    }
-    Ok(())
-}
-
-/// Whether a name can be a path component.
-///
-/// The same charset `registry.rs` uses for its ids, and duplicated rather than shared because the
-/// two answer different questions about different namespaces — this one is about versions and
-/// targets, which come from the release flow, and that one is about agent, profile and vault ids,
-/// which come from a form.
-fn validate_component(field: &'static str, value: &str) -> Result<(), LayoutError> {
-    let usable = !value.is_empty()
-        && value.len() <= 64
-        && value != "."
-        && value != ".."
-        && !value.starts_with('.')
-        && value
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
-    if usable {
-        Ok(())
-    } else {
-        Err(LayoutError::InvalidName {
-            field,
-            value: value.to_string(),
-        })
-    }
-}
-
-/// Whether a path is a file someone could run. `fs::metadata` follows symlinks, so a link to an
-/// executable counts — which is what a distribution that ships one under `/usr/bin` looks like.
-fn is_launchable(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-}
-
-// ---------------------------------------------------------------------------
-// The layout's own file operations
-// ---------------------------------------------------------------------------
-//
-// These belong here rather than with the update policy that calls them for the same reason the paths
-// do: they are statements about §3.2's directories — a profile tree, the recovery area beside it —
-// and the rules they keep (links are recreated and never followed, a tree that cannot be read is not
-// a tree, the replaced tree is kept) are rules about where this app is allowed to write. *When* one
-// of them may run is the update path's decision; *what it does to the filesystem* is this module's.
-
-/// Whether `candidate` is a later version than `base`.
-///
-/// Component-wise and numeric, because the comparison decides whether a rollback crosses a data
-/// migration: `1.18.10` is newer than `1.18.9`, which string comparison gets backwards. A component
-/// that is not a number reads as zero, which treats an unparseable version as the oldest rather than
-/// as a newer one — the direction that asks for confirmation instead of assuming it is safe.
-pub fn is_newer(candidate: &str, base: &str) -> bool {
-    version_key(candidate).cmp(&version_key(base)) == std::cmp::Ordering::Greater
-}
-
-/// A version as its numeric components.
-///
-/// The key everything that orders versions compares, so `is_newer` and `installed` can never
-/// disagree about which of two versions is the later one.
-fn version_key(version: &str) -> Vec<u64> {
-    version
-        .split(['.', '-', '+'])
-        .map(|part| part.parse::<u64>().unwrap_or(0))
-        .collect()
-}
-
-/// Whether a directory holds something that can be put back in place of a profile.
-///
-/// Deliberately shallow. This host does not know the engine's own store format — §3.3's 报告限制 is
-/// exactly about that — so what it can answer is "there is a tree here to restore", not "this backup
-/// is a valid engine store". The stronger claim is left unsaid rather than implied.
-pub fn is_restorable(path: &Path) -> bool {
-    fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_some())
-}
-
-/// Copies a tree, keeping modes and links.
-///
-/// Symlinks are recreated rather than followed: a link inside a profile that points out of it would
-/// otherwise make the copy write outside the managed roots this module is confined to.
-pub fn retain_tree(from: &Path, to: &Path) -> Result<(), String> {
-    fs::create_dir_all(to).map_err(|error| error.to_string())?;
-    for entry in fs::read_dir(from).map_err(|error| error.to_string())? {
-        let entry = entry.map_err(|error| error.to_string())?;
-        let source = entry.path();
-        let target = to.join(entry.file_name());
-        let metadata = fs::symlink_metadata(&source).map_err(|error| error.to_string())?;
-        if metadata.file_type().is_symlink() {
-            let link = fs::read_link(&source).map_err(|error| error.to_string())?;
-            std::os::unix::fs::symlink(link, &target).map_err(|error| error.to_string())?;
-        } else if metadata.is_dir() {
-            retain_tree(&source, &target)?;
-        } else {
-            // `fs::copy` carries the mode across, which matters for a profile whose files include
-            // anything the user made read-only.
-            fs::copy(&source, &target).map_err(|error| error.to_string())?;
-        }
-    }
-    Ok(())
-}
-
-/// Puts `backup` in place of `root`, in the order that cannot lose the old one.
-///
-/// The backup is copied into a staging directory beside the profile first, so a copy that fails
-/// partway leaves the profile alone; only then is the live profile moved aside and the staged copy
-/// moved in. If that last move fails, the first move is undone and the caller is told. What was moved
-/// aside ends up under `recovery` rather than being deleted: the retained copy beside it is the same
-/// data, and keeping both costs disk while deleting either could cost a session.
-pub fn restore_tree(root: &Path, backup: &Path, recovery: &Path) -> Result<(), String> {
-    let parent = root.parent().ok_or("the profile root has no parent")?;
-    let staging = parent.join(format!(".restore-{}", stamp()));
-    let moved_aside = recovery.join(format!("{}-replaced", stamp()));
-    let outcome = (|| -> Result<(), String> {
-        retain_tree(backup, &staging)?;
-        if root.exists() {
-            fs::create_dir_all(recovery).map_err(|error| error.to_string())?;
-            fs::rename(root, &moved_aside).map_err(|error| error.to_string())?;
-        }
-        match fs::rename(&staging, root) {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                if moved_aside.exists() {
-                    let _ = fs::rename(&moved_aside, root);
-                }
-                Err(error.to_string())
-            }
-        }
-    })();
-    if outcome.is_err() {
-        let _ = fs::remove_dir_all(&staging);
-    }
-    outcome
-}
-
-/// A name for one retained copy, unique per process and per moment.
-fn stamp() -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis())
-        .unwrap_or_default();
-    format!(
-        "{millis}-{}-{}",
-        std::process::id(),
-        COUNTER.fetch_add(1, Ordering::Relaxed)
-    )
-}
-
-/// Writes bytes readable and writable by the user and executable by nobody.
-fn write_private(path: &Path, bytes: &[u8]) -> Result<(), LayoutError> {
-    use std::io::Write;
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        // `create_new` rather than `create`: a staged candidate is never written over, so a name
-        // that is already taken is a name this call did not produce, and the caller learns that
-        // rather than getting a file it did not ask for.
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-        .map_err(|error| LayoutError::Io {
-            path: path.to_path_buf(),
-            detail: error.to_string(),
-        })?;
-    file.write_all(bytes).map_err(|error| LayoutError::Io {
-        path: path.to_path_buf(),
-        detail: error.to_string(),
-    })?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|error| LayoutError::Io {
-        path: path.to_path_buf(),
-        detail: error.to_string(),
-    })
-}
-
-// ---------------------------------------------------------------------------
-// What a file at one of those paths is
-// ---------------------------------------------------------------------------
-//
-// The same question [`is_launchable`] answers, asked further: a program at a path is a file with an
-// execute bit, an ELF built for the one architecture this release claims, and a specific sequence of
-// bytes. It lives here rather than with the update gate that asks it because none of these is a
-// judgement about *this app's* willingness to install something — they are facts about a file, and
-// the module that names the paths is where facts about what is at them belong.
-
-/// The digest of a file, streamed and off the async runtime.
-///
-/// A release artifact is a hundred-odd megabytes, so this reads in bounded chunks and hashes as it
-/// goes; doing it on the runtime's own thread would stall every other task in the app for the
-/// duration.
-pub async fn digest_of(path: &Path) -> Result<String, LayoutError> {
-    let reading = path.to_path_buf();
-    let hashed = tokio::task::spawn_blocking(move || {
-        use std::io::Read;
-        let mut file = fs::File::open(&reading).map_err(|error| error.to_string())?;
-        let mut hasher = Sha256::new();
-        let mut buffer = vec![0u8; 1 << 20];
-        loop {
-            let read = file.read(&mut buffer).map_err(|error| error.to_string())?;
-            if read == 0 {
-                break;
-            }
-            hasher.update(&buffer[..read]);
-        }
-        Ok::<String, String>(hex(&hasher.finalize()))
-    })
-    .await
-    .map_err(|error| LayoutError::Io {
-        path: path.to_path_buf(),
-        detail: error.to_string(),
-    })?;
-    hashed.map_err(|detail| LayoutError::Io {
-        path: path.to_path_buf(),
-        detail,
-    })
-}
-
-/// Lowercase hexadecimal, which is the spelling every release record and tool prints.
-pub fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-/// The first bytes of a file, for [`check_elf`].
-///
-/// A file shorter than a header is not an error here: it is a candidate that `check_elf` refuses with
-/// a sentence about what it actually is, rather than a read failure that reads like the filesystem's
-/// problem.
-pub fn read_elf_header(path: &Path) -> Result<Vec<u8>, LayoutError> {
-    use std::io::Read;
-    let mut header = vec![0u8; 64];
-    let mut file = fs::File::open(path).map_err(|error| LayoutError::Io {
-        path: path.to_path_buf(),
-        detail: error.to_string(),
-    })?;
-    let read = file.read(&mut header).map_err(|error| LayoutError::Io {
-        path: path.to_path_buf(),
-        detail: error.to_string(),
-    })?;
-    header.truncate(read);
-    Ok(header)
-}
-
-/// The ELF header, as the checks that can be made without running the file.
-///
-/// Deliberately the small set §3.3's architecture check needs, and no more: magic, class, byte order,
-/// executable-vs-PIE, and the machine. A fuller validation (program headers, dynamic loader) would be
-/// a different claim about a file this host is about to run under its own supervision.
-pub fn check_elf(header: &[u8]) -> Result<(), String> {
-    if header.len() < 20 || &header[..4] != b"\x7fELF" {
-        return Err("the file does not begin with an ELF header".to_string());
-    }
-    if header[4] != 2 {
-        return Err(format!("the ELF is class {} rather than 64-bit", header[4]));
-    }
-    if header[5] != 1 {
-        return Err("the ELF is not little-endian".to_string());
-    }
-    let kind = u16::from_le_bytes([header[16], header[17]]);
-    if kind != 2 && kind != 3 {
-        return Err(format!(
-            "the ELF is of type {kind}: neither an executable nor a position-independent one"
-        ));
-    }
-    let machine = u16::from_le_bytes([header[18], header[19]]);
-    if machine != EM_X86_64 {
-        return Err(format!(
-            "the program is built for machine {machine:#06x}, and this release installs x86-64 \
-             ({EM_X86_64:#06x}) only"
-        ));
-    }
-    Ok(())
-}
-
-/// A file's permission bits.
-pub fn mode_of(path: &Path) -> Result<u32, LayoutError> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::metadata(path)
-        .map(|meta| meta.permissions().mode())
-        .map_err(|error| LayoutError::Io {
-            path: path.to_path_buf(),
-            detail: error.to_string(),
-        })
 }
