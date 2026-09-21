@@ -1757,3 +1757,69 @@ request is honoured at all — the second one measured here, in the harness rath
 third is the `pnpm test:e2e` trap, which is a repository fact and stays. And two code
 questions are recorded without being decided: the unstable-plugin quarantine that a vault switch clears
 (§16), and whether the application should fetch the pet catalogue at all (§16).
+
+## 18. The round after that: the last two sections of §1, and a frozen surface that was not frozen
+
+**§1.3's claim about the snapshot test was a real gap, and its own numbers were wrong.** The document said
+the plugin-host surface "is frozen by a snapshot test that fails if any stable export is removed". It is a
+**list**, not a snapshot, and the gap sat exactly where the document and the test agreed with each other
+instead of with the barrel: the barrel re-exports 74 runtime values, `REQUIRED_RUNTIME_EXPORTS` required 46,
+and **11 names the document's own table calls public were on neither** — `createPluginSignature`,
+`verifyPluginSignature`, `buildPluginSignaturePayload`, `encodePluginKeyMaterial`, `publisherIdOf`,
+`setLifecycleHookTimeout`, `getLifecycleHookTimeout`, `setAuditLogFileSink`, `getPluginAuditEvents`,
+`serializeGovernance`, `loadGovernance`. Any of them could have been deleted with that test green, which is
+the one thing it exists to prevent. All eleven are required now (57 names, and every value the table names
+is on the list; the other 17 exports are undocumented and stay unrequired).
+
+The requirement has teeth, checked one name at a time rather than in a batch: dropping `serializeGovernance`
+from the barrel, `publisherIdOf` or `verifyPluginSignature` from `loader.ts`, or `loadGovernance` from the
+barrel each fails that test **by name**, and each file was restored byte-identically afterwards. The audit's
+counts for this row (42 required, 62 documented, 17 missing) are wrong in every figure; the finding is not.
+
+**The same document claimed two things the code has never done**, and the first one was written in four
+places. Vault plugins do not "load in a plain-browser demo build": the loader refuses there explicitly
+(`features/plugins/services/discovery.ts`: `browser-demo: plugin execution disabled`), for the reason its
+own comment gives — a browser demo has no isolation, so "it runs in the demo" would mean "it runs
+unsandboxed". §6's walkthrough, which could not be performed in either build, now says so and adds the fact
+that matters for anyone treating the example as a fixture: `examples/plugins/hello` is loaded by **nothing** —
+no test, no code path, only this document. And plugins cannot declare a peer range the host enforces; no
+peer-range handling exists anywhere, and what does exist is the other direction (the host's own per-plugin
+min/max through `setPluginVersionRange` and `versionSatisfies`).
+
+**§1.4 presented its own decision as unmade.** `docs/PLUGIN_ISOLATION.md` opened with 「状态：未实现」 and
+closed with "选 A、B 还是 C". Route A — ship no vault-plugin execution, keep the governance for the day
+isolation lands — is chosen and shipped, and three user-facing documents describe it as current behaviour
+(the README's plugin paragraph, the guide's plugin section, the settings notice behind
+`data-test="plugins-blocked"`). The document now says A is landed and the rest is C's 1.1 blueprint, and its
+two wrong file references are fixed: `services/plugins.ts` is a 21-line compatibility barrel, not the
+execution gate (that is `features/plugins/services/discovery.ts`), and the blob import is in `loader.ts`'s
+`loadPlugin`, not at the comment line the document cited.
+
+**With §1.3 and §1.4 closed, the audit's §1 is finished.** Three of its ten sections were closed in §15,
+§16 and §18 respectively, and the rest across §15–§17; §3's file-size row remains by instruction (the three
+files holding the wrong numbers are read-only) and §5's architecture ledgers were reported rather than
+edited for the same reason.
+
+**Two of my own steps are worth recording again.** I fixed one copy of the browser-demo claim and committed
+before grepping the document for the other copies — there were three more, including one in §2 that said
+the same sentence in different words. And I wrote "the barrel exports 101 names" from a first count that
+included `interface`/`type` declarations; the real figure, recounted for the commit that corrects it, is 74
+runtime values. Both are the same failure mode this programme keeps meeting from the other side: a reading
+taken once and trusted, when the point was to check it.
+
+### The gate
+
+| Step | Result |
+|---|---|
+| `verify` | PASS — **5947 tests across 3 package runs**, unchanged: the round adds names to an existing test, not tests |
+| `fmt` | PASS |
+| `clippy` | PASS — 97 warning lines, under the 110 ceiling |
+| `instruments` | PASS |
+| `scripts` | PASS — 89 checks, 0 failed |
+| `harness` | PASS — 5 passed, 0 failed |
+| `build` | PASS |
+| `rust` | PASS — 79 targets, 1409 passed, 0 failed |
+| `e2e` (`--with-e2e`) | PASS — 297 passed |
+
+One run, all nine steps, exit 0. No bundles were rebuilt: this round is four documents and one test file's
+list of names.
