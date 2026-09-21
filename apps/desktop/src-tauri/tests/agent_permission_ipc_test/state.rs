@@ -33,19 +33,21 @@ async fn the_ipc_state_carries_the_runtime_and_the_prompt_snapshot() {
     // produce — the shape that made it possible (receivers reached through `&mut`, and therefore
     // a table that had to exist before the runtime was shared) went with the reading half.
     let state = AgentIpcState::default();
-    state.install(Session {
-        identity: asked.runtime_identity(),
-        runtime: Arc::clone(&asked.runtime),
-        permissions: Arc::clone(&asked.table),
-        snapshots: Arc::new(SessionSnapshots::new(
-            asked.runtime_identity(),
-            REPLAY_WINDOW,
-        )),
-        model_option_id: Some("model".to_string()),
-        // This fixture's engine is a script with no HTTP surface, which is the `Unsupported`
-        // arm the grants readout reports rather than an empty list.
-        http: None,
-    });
+    state
+        .install(Session {
+            identity: asked.runtime_identity(),
+            runtime: Arc::clone(&asked.runtime),
+            permissions: Arc::clone(&asked.table),
+            snapshots: Arc::new(SessionSnapshots::new(
+                asked.runtime_identity(),
+                REPLAY_WINDOW,
+            )),
+            model_option_id: Some("model".to_string()),
+            // This fixture's engine is a script with no HTTP surface, which is the `Unsupported`
+            // arm the grants readout reports rather than an empty list.
+            http: None,
+        })
+        .expect("the slot this fixture just built is not poisoned");
 
     let session = state.session().expect("a session is running");
     apply_permission_answer(&session.permissions, asked.answer("once"))

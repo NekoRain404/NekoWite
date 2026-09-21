@@ -195,7 +195,9 @@ pub async fn wired_at(
         sink.lock().unwrap().push(envelope);
     })
     .expect("the session installs");
-    app.state::<AgentIpcState>().install(session);
+    app.state::<AgentIpcState>()
+        .install(session)
+        .expect("the slot this harness just built is not poisoned");
     // The instance goes where `agent_start` puts it: the slot a stop empties. Dropping the app is
     // what ends the engine at the end of a test, through `AgentInstance`'s own `Drop`.
     *app.state::<AgentRuntimeState>().instance.lock().unwrap() = Some(instance);

@@ -195,7 +195,9 @@ async fn wired(label: &str, behaviour: &str, adapter_id: &str) -> Wired {
         sink.lock().unwrap().push(envelope);
     })
     .expect("the session installs");
-    app.state::<AgentIpcState>().install(session);
+    app.state::<AgentIpcState>()
+        .install(session)
+        .expect("the slot this harness just built is not poisoned");
     *app.state::<AgentRuntimeState>().instance.lock().unwrap() = Some(instance);
 
     Wired {
