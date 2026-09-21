@@ -101,8 +101,32 @@ step verify "pnpm verify" \
   pnpm verify
 step fmt "cargo fmt --all --check" \
   cargo fmt --all --check --manifest-path apps/desktop/src-tauri/Cargo.toml
-step clippy "cargo clippy --all-targets --locked" \
-  cargo clippy --all-targets --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
+
+# `cargo clippy` runs without `-D warnings` (in this script and in CI), so on its own it can only fail
+# if it crashes — a step that cannot fail. It gets a ceiling instead, with slack, and the reason for
+# the slack is that clippy's version is not pinned: CI installs `dtolnay/rust-toolchain@stable`, so an
+# exact ceiling would break on a toolchain bump rather than on a change somebody made. 97 unique
+# warning lines when this was written; 110 leaves room for a compiler's new lint and not for a
+# regression nobody read. Lower it when a commit lowers the count — `CEILING` in
+# `scripts/check-dead-exports.py` is the same shape with no slack, because that instrument's input is
+# this repository's own source rather than a moving toolchain.
+CLIPPY_CEILING=110
+clippy_step() {
+  local manifest="apps/desktop/src-tauri/Cargo.toml"
+  cargo clippy --all-targets --locked --manifest-path "$manifest" || return $?
+  # The step's own log, by the name the `step` call below gives it.
+  local count
+  count="$(grep -c '^warning' "$LOG_DIR/clippy.log" 2>/dev/null || true)"
+  count="${count:-0}"
+  echo "clippy: $count warning lines (ceiling $CLIPPY_CEILING)"
+  if [ "$count" -gt "$CLIPPY_CEILING" ]; then
+    echo "clippy: above the ceiling — read the warnings in this log, or raise CLIPPY_CEILING in" >&2
+    echo "scripts/gate.sh in the commit that raises it." >&2
+    return 1
+  fi
+}
+step clippy "cargo clippy --all-targets --locked, then its warning ceiling" \
+  clippy_step
 step instruments "the three source instruments" \
   bash -c 'status=0
     # All three run even when one fails, for the reason the whole gate does: the log is worth more
