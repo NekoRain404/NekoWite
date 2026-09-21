@@ -51,7 +51,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_TRIPLE="x86_64-unknown-linux-gnu"
 STAGED="$ROOT/apps/desktop/src-tauri/binaries/opencode-$TARGET_TRIPLE"
-MANIFEST_SRC="$ROOT/apps/desktop/src-tauri/src/agent_runtime/update.rs"
+# The pinned release record, read out of the Rust source that ships it. **`update/manifest.rs` and
+# not `update.rs`**: the line-budget programme split that module, and the pin moved with the
+# `PinnedRelease` table it belongs to. A reader that resolves a *file name* is the third kind a
+# split can break — after a Rust test that `#[path]`-includes the tree and a TypeScript test that
+# reads the source — and this one broke silently: `grep` found no digest, `pipefail` turned that into
+# the pipeline's status, and `set -e` exited 1 with no message at all. The `|| true`s below are what
+# make the script's own diagnosis reachable instead.
+MANIFEST_SRC="$ROOT/apps/desktop/src-tauri/src/agent_runtime/update/manifest.rs"
 FETCH_SRC="$ROOT/scripts/fetch-opencode-linux.sh"
 # The scratch profile lives inside the repository on purpose (plan §3.2: 开发测试的临时 profile 必须放仓库
 # 内的测试临时目录). Nothing below writes anywhere else.
@@ -126,9 +133,9 @@ note "node           $(command -v node 2>/dev/null || echo absent) (the engine b
 [ -f "$MANIFEST_SRC" ] || fail "$MANIFEST_SRC is missing; the release record cannot be read"
 [ -f "$FETCH_SRC" ] || fail "$FETCH_SRC is missing; the fetch pin cannot be read"
 
-EXPECTED_SHA="$(grep -oE '"[0-9a-f]{64}"' "$MANIFEST_SRC" | head -1 | tr -d '"')"
-MANIFEST_VERSION="$(grep -oE '"[0-9]+\.[0-9]+\.[0-9]+"' "$MANIFEST_SRC" | head -1 | tr -d '"')"
-FETCH_VERSION="$(sed -n 's/^VERSION="\([^"]*\)"/\1/p' "$FETCH_SRC" | head -1)"
+EXPECTED_SHA="$(grep -oE '"[0-9a-f]{64}"' "$MANIFEST_SRC" | head -1 | tr -d '"' || true)"
+MANIFEST_VERSION="$(grep -oE '"[0-9]+\.[0-9]+\.[0-9]+"' "$MANIFEST_SRC" | head -1 | tr -d '"' || true)"
+FETCH_VERSION="$(sed -n 's/^VERSION="\([^"]*\)"/\1/p' "$FETCH_SRC" | head -1 || true)"
 [ -n "$EXPECTED_SHA" ] || fail "no digest found in $MANIFEST_SRC"
 [ -n "$MANIFEST_VERSION" ] || fail "no version found in $MANIFEST_SRC"
 [ -n "$FETCH_VERSION" ] || fail "no VERSION in $FETCH_SRC"
