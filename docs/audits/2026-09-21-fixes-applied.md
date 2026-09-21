@@ -1195,6 +1195,64 @@ driven in place again (version with an empty environment, no credentials, an ACP
 network namespace with only loopback), and the two things that run still cannot show are the ones the
 script names itself: a machine with no system `opencode`, and the engine's notice file.
 
+---
+
+## 14. The round after that: the user guide, and a row of §13 that lasted one round
+
+**The guide described a layout the application no longer has.** `docs/USER-GUIDE.md` sent the reader
+to the right rail for the tabs 「AI / 大纲 / 引用 / 历史 / 属性」, with Stats last. The rail declares
+**one** tab (`ui/InfoRail.vue`'s `TABS`), and the other four are modes of the left column now:
+`NoteListToolbar.vue`'s `MODES` lists seven — notes, outline, links, references, history, frontmatter,
+stats — under a comment that says exactly what happened ("The last four are the panels the right rail
+gave up"). Four places plus the overview section were corrected, and the vocabulary was split on
+purpose: 「页签」 for the right rail, which really has tabs, and 「模式切换」 for the left column's
+toolbar, which the code calls a switch.
+
+**And the attachment location for the third time.** The guide told the reader that a pasted image is
+saved into the knowledge base's `attachments/` and appears in the left attachments panel. Both halves
+are false for the ordinary case (it lands in `<note>_assets/` beside its note, staging in `.tmp/` until
+the note is saved; the panel lists where the app's *own* insertions go) — the panel's copy was fixed in
+§11 and `docs/PRIVACY.md` before it, and the guide was the copy nobody had checked. That is worth
+noting as a pattern rather than a one-off: **a wrong user-facing sentence usually has siblings**, and
+the review's D5 named one of three.
+
+**Two things were checked and deliberately not changed**, and the second is the lesson:
+
+- The guide is written for Windows ("对应 1.0（Windows）", "Microsoft Print to PDF"). Not stale:
+  `README.md` says the portable Windows exe is the primary deliverable and Linux builds from source,
+  and `docs/RELEASING.md` is titled "发布流程（1.0，Windows）". "Fixing" it would have invented a
+  platform story the repository does not have.
+- A grep for who sets the four panel modes found **no caller**, which reads as "these panels are
+  unreachable". It was a wrong reading: the toolbar drives them through a table of
+  `{id, label, icon}` entries, so no call site spells `setMode('references')` and no such grep could
+  ever have found one. This is the second time this session that a negative grep was the weakest
+  evidence in the room — the first was §13's mutation, which removed the *reader's* identically-spelled
+  line, left every test green, and was caught only by an explicit check that the guard was really
+  gone. **A grep that finds nothing is a hypothesis about where to look next, never a finding.**
+  (A third candidate was checked while writing this paragraph and is *not* an instance: `git ls-files`
+  on `binaries/` answering nothing is correct — `.gitignore:88` ignores that directory, which is why
+  CI cannot stage the engine from the repository.)
+
+**§13's row about this instrument is overtaken, and that is the round's second fix.** §13 said
+`check-dead-exports.py` "always exits 0, and its docstring now says why". One round later the deferred
+decision was taken, so the instrument now fails on two things — a control that makes the sweep blind
+(which used to print a warning and return 0, the one case that must never read as green, because a
+blind sweep reports the empty list that a clean tree also reports), and the count rising above
+`CEILING = 89`, the ratchet that makes the next uncalled export a decision. Read three ways: healthy
+exit 0 at `89 of 1372`; one planted uncalled export **exit 1** with `FAIL: 90 … above the ceiling of
+89`; a planted control that cannot pass **exit 1**. Both plants removed byte-identically. `ci.yml`'s
+comment and `scripts/gate.sh`'s said the old thing too and were corrected in the same commit — the
+stale sentence had three copies, which is the same pattern as the attachment claim, one layer in.
+
+### The gate
+
+`bash scripts/gate.sh --only instruments` — PASS. The other steps were not re-run, and the reason is a
+fact rather than a schedule: this round changes a Markdown document, three scripts and a workflow, and
+no source file, so `verify`, `fmt`, `clippy`, `build` and the Rust suite cannot read differently from
+§13's run (5926 tests, 79 targets, 1409 passed, clippy 97). No bundles were rebuilt for the same
+reason — nothing that ships changed.
+
+
 
 
 
