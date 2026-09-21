@@ -1446,6 +1446,22 @@ in that file twice, both times inside explanatory comments (`:36`, `:169`) about
 no `files:`/`ignores:` pattern. A lint configuration that mentions a file in a comment is not a lint
 configuration that lints it. This is the second such row found this session; §14 recorded the first.
 
+**No bundles were rebuilt, because the ones from §13 are this tree.** They were produced at 03:01–03:08
+this session, and every commit since that touches a runtime source file is either an attribute that cannot
+change codegen (`#![deny(unsafe_code)]`, `d8f4a14`) or a comment (`6f214f2`); the rest are tests, scripts
+and documents. Rebuilding would spend ten minutes and half a gigabyte to produce the same behaviour, so the
+artefacts from §13 remain current, and the check that says so is the two-commit diff above rather than an
+assumption.
+
+**The live AI reading, re-measured this round** (`bash scripts/verify-ai-live.sh`, key written to
+`/tmp/nkw-test-key` at 0600 and removed in the same command; never in `argv`, never in a file, never
+printed): **3 passed, 0 failed**, exit 0, 11.2 s. The gateway still lists five models
+(`deepseek-v4-flash`, `deepseek-v4.1-flash`, `glm-5.2`, `mimo-v2.5`, `mimo-v2.5-pro`) and still pins
+`ai.iapp.dpdns.org` to one vetted address. The first paid turn billed 17 prompt + 2 completion = 19 tokens,
+unchanged across every run of this script so far; the reasoning turn billed 89 prompt + 30 completion, with
+27 of those reported as `reasoning_tokens` — inside the 20–31 band the script's own header records as
+moving with how long the model thinks. Both turns kept every count the provider sent, unchanged.
+
 ### The gate
 
 | Step | Result |
