@@ -34,7 +34,7 @@ exactly that reason, the behaviour is restored, and the test passes again. Those
 
 The gate above was taken on the tree this work produced. The maintainer then asked for the
 optimisation to continue and for every change to be committed, so the review's remaining verified
-findings were worked through one at a time, each with its own commit and its own evidence. Four are
+findings were worked through one at a time, each with its own commit and its own evidence. Nine are
 fixed; the rest are accounted for in §3.
 
 | # | Finding | Change | Evidence |
@@ -43,6 +43,11 @@ fixed; the rest are accounted for in §3.
 | **F6** | `set_visible` returned at the first refusal, leaving the rest of the pet unasked and the flag unchanged | Ask every window, keep the first refusal, ask the ball, answer afterwards — the shape `set_always_on_top`/`set_character_size` already use; the flag moves only when all agreed, so the retry stays available | A case plants the refusal on the **first** window and asserts all three calls happened in order, the refusal names the hide, `is_visible()` stays `true`, and the same call succeeds once the compositor stops refusing · **mutation check**: the old early return records `[("pet-1", false)]` against the expected three · target 70 passed |
 | **F8** | The palette's file-watch subscription had no rejection path (its sibling guarded the same call) | `Promise.resolve(...)` with both arms, the unlisten stored as a function, and a `disposed` guard so a late subscription is released rather than stored | `use-palette-entries.test.ts` mounts the composable through a real component · **mutation check**: the old unguarded body makes vitest report an `Unhandled Rejection` and go red · palette 20 passed, typecheck 0, lint 0 errors |
 | **F5** | A comment in `lib.rs` claimed the pet is not on screen until a settings page asks, and the defaults do the opposite | The comment now states what happens, names the two defaults that decide it (`ball`, `characterWindow`), and leaves the product question to §9.6 | Verified against the code: the two `Kind::Bool(true)` defaults, `restore`'s `apply` call, and `apply`'s `open_selected`/`ensure_ball` |
+| **S3** | Proxy credentials were copied into a sentence returned to the window | `proxy_line` formats the value through `without_userinfo`, which replaces the authority's userinfo with `***` and keeps scheme, host, port and path | A five-shape unit test · **mutation check**: the verbatim form prints `http://user:pass@proxy.internal:8080` and fails it |
+| **S5** | `agent_credentials_write` accepted any environment-variable name, injected **last**, so a credential beat the isolation roots | `credentials::reserved_name` refuses the names that decide *what code runs* (`LD_*`, `DYLD_*`, `NODE_*`) or *where the engine reads* (`HOME`, `XDG_*`, `OPENCODE_*`, `PWD`, `TMPDIR`, `SHELL`, `ENV`, `IFS`, `PATH`), each with a reason the user is shown; and a credential can no longer outrank a root the host set | Two new cases (the effective environment for `HOME`/`XDG_CONFIG_HOME`/`OPENCODE_CONFIG_DIR`, and seven refused names with their reasons) · **two mutation checks**, one per half |
+| **S7** | The credentials file's mode was reported as `600` and inherited from whatever the file already had | `config_edit` gained `write_replacing_private` — the same atomic write with `DOCUMENT_MODE` regardless of what was there — and the credentials document is its one caller; the engine's own configuration keeps the preserving behaviour | A case plants a `0644` file and asserts the write leaves `0600` and really wrote · **mutation check**: the preserving writer fails it with `the page says 600 and the file is 644` |
+| **F4** | A pet window destroyed from outside (Alt+F4, a session manager, a compositor) left a label whose window was gone, wedging every later operation | `PetWindowHost::forget(label)` drops the instance and marks the ball's record closed; `lib.rs`'s `Destroyed` arm grew the `else` branch that calls it for a pet label | A case drives the wedge first (a call failing at the stale label), then the forget, then that every operation works again and the cap slot is free · **mutation check**: a `forget` that drops nothing fails it |
+| **F10** | `hasActiveTab` meant "the note has text", so an open empty note could not be exported | The gate is `tab !== null && tab.loading !== true`: the flag that means "the first read has not landed" is what refuses, and an empty note is exportable as an empty document | The case that pinned the old behaviour now walks both states in order · `vitest run src/features/settings` 138 passed |
 
 One correction is recorded rather than hidden: making `install` return a `Result` left three test
 fixtures ignoring it — the same habit the finding was about — and the commit that fixed them says so
@@ -197,26 +202,26 @@ plus the two arity assertions F1's change required (`app-lifecycle.test.ts`, `ap
 
   | Finding | Status |
   |---|---|
-  | F1, F2, F3, F5, F6, F7, F8 | **fixed** — F1–F3 and the table above, F5–F8 in the section above it |
-  | S1, S2 | **fixed** — the credential binding and the single guarded URL path |
+  | F1, F2, F3, F4, F5, F6, F7, F8, F10 | **fixed** — F1–F3 and the first table, F4–F10 in the section above it |
+  | S1, S2, S3, S5, S7 | **fixed** — the credential binding, the single guarded URL path, the proxy's userinfo, the credential-name policy, and the credentials file's mode |
   | U1 (U1a, U1b, U1b′) | **fixed** — the care ledger's producer, its file and its read-only arm |
   | T1, B | **fixed** — a skipped process case is not a pass; the engine's own end is read |
-  | F4 (a pet window destroyed from outside wedges the host) | **open** — the code path is certain and the trigger needs a runtime check; the fix belongs with the instance list `window_host.rs` owns, and it should come with a case that destroys a window out of band |
+  | F4 (a pet window destroyed from outside wedges the host) | **fixed** — see the table above; the half that needs the real window system is the `Destroyed` wiring, and the case pins the contract it calls |
   | F9 (a delegated write drops the no-history warning) | **open** — the warning is carried by the port and dropped by one destructuring; needs a decision about what a window does with it |
-  | F10 (`hasActiveTab` means "has text") | **open** — documented/implemented mismatch, low impact |
+  | F10 (`hasActiveTab` means "has text") | **fixed** — the gate is `loading` now, so an empty note is exportable and a placeholder is not |
   | F11 (a plugin toggle can report a state the app does not hold) | **open** — a policy question about what a toggle does when the write fails |
-  | S3 (proxy credentials copied into a window payload) | **open** — reported, not re-run |
-  | S4 (`import_attachment` reads any image-named path) | **open** — needs the threat-model decision the review's §8 names |
-  | S5 (`agent_credentials_write` accepts any environment-variable name) | **open** — needs a name policy and a test at the IPC boundary |
+  | S3 (proxy credentials copied into a window payload) | **fixed** — the value's userinfo is `***` in the sentence the window reads |
+  | S4 (`import_attachment` reads any image-named path) | **open** — needs the threat-model decision the review's §8 names; the one-shot token it suggests is a cross-language contract change, so it wants a round of its own |
+  | S5 (`agent_credentials_write` accepts any environment-variable name) | **fixed** — reserved names with reasons, and the isolation roots filtered against the credentials |
   | S6 (a crash mid password change is unrecoverable) | **open** — needs the recovery decision, and the ignored tests that state their cost are the place it lands |
-  | S7 (the credentials file's mode is reported, not enforced) | **open** — enforcement is a small change, but it makes a stored profile unreadable to a build that expected 0600-by-report |
+  | S7 (the credentials file's mode is reported, not enforced) | **fixed** — the credentials document's writer sets `0600`; the engine's own document keeps the user's mode |
   | U2 (two more production-dead exports) | **open** — `check-dead-exports.py` lists them |
   | U3 (`main_window::raise`'s rebuild path has no test) | **open** — needs a window-level case, not a unit one |
   | T2 (§9.1a's unrun targets) | **closed by the programme** — every wave ran the whole suite with `NEKOWITE_REQUIRE_PROCESS_TESTS=1`, so no target is unread |
   | T3 (`pnpm test` does not run `pnpm perf`; lint cannot fail on a warning) | **open** — a gate change, and it changes what "green" means for everyone after it |
   | T4 (~50 `never used` warnings that are artefacts of `#[path]`-included targets) | **open** — separating them from real ones is a real improvement and a separate piece of work |
 
-  The nine open ones are open because each needs a decision this work is not entitled to take alone
+  The eight open ones are open because each needs a decision this work is not entitled to take alone
   (a policy, a product answer, or a change to what the gate means), not because they were missed.
 - **`docs/HANDOVER.md` is not edited.** Its §9.1 is now stale in a second way — `cargo test` skips
   those two cases on a tree whose packaged binary is older than its sources — and correcting the
@@ -635,6 +640,39 @@ half of the start was missing instead of timing out anonymously. What was wrong 
 which assumed the staging step had been done by hand. It now stages the verified engine from
 `binaries/` before the suite and removes it on the way out, including after a failure — so the gate
 is reproducible by one command, which is the property the earlier gates only appeared to have.
+
+### The gate after the second round of fixes, and one flake observed once
+
+Five more findings were fixed after that (S3, S5, S7, F4, F10), so the gate was taken again on the
+tree they produced:
+
+| Command | Result |
+|---|---|
+| `pnpm typecheck` · `pnpm lint` · `pnpm perf` | exit 0 · exit 0 — 0 errors, 462 warnings · 10 tests in 2 files |
+| `pnpm test` | exit 0 — **439 files, 4797 tests** (editor-core 959/73, plugin-host 132/10) |
+| `cargo fmt --all --check` · `cargo clippy --all-targets --locked` | exit 0 · exit 0 — 159 warning lines, unchanged |
+| `NEKOWITE_REQUIRE_PROCESS_TESTS=1 cargo test --locked --no-fail-fast` | **77 targets, 1375 passed, 0 failed, 5 ignored, 0 skipped** |
+| `pnpm e2e` (the real-browser suite of §7) | **293 passed, exit 0** |
+
+1375 is the 1370 of the previous gate plus the five cases this round added. The e2e suite was run
+because two of the five fixes touch what a page can see (the export gate and the pet's window
+handling), and it is the only check that would notice.
+
+**One flake, recorded rather than smoothed over.** The first run of that Rust suite failed
+`agent_two_instances_test`'s `two_engines_on_one_profile_share_the_database_and_the_session`:
+
+```text
+the second engine answered without ever naming the shared session
+    engine B: frames 2, stderr: (none)
+```
+
+at a load average of ~20, with two engines really running. It was **not** a deterministic effect of
+the code under test: the same tree ran that target alone three times (12.1 s, 8.6 s, 10.2 s, all
+green) and then passed the whole suite unchanged. So it is a load-sensitive case in the same family
+as the two e2e popups in §7 — a real engine on a loaded machine answering a `session/load` late —
+and it is written here with its numbers so the next reader who sees it once does not start by
+suspecting their own change. If it recurs, the case is the one to harden; one observation is not
+enough to justify a deadline change.
 
 ---
 
