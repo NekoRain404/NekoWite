@@ -5,9 +5,13 @@ covers the public API surface, the lifecycle, the permission/capability model, h
 plugin is loaded, and how the API is versioned.
 
 A reference plugin lives at [`examples/plugins/hello`](../examples/plugins/hello):
-`index.js` plus its manifest, kept correct for a host that can execute one. **Nothing loads it
-today** — the application refuses vault plugins in both builds (§ 4) and no test uses it as a
-fixture (they stub the import boundary with their own). Read it alongside this document.
+`index.js` plus its manifest, kept correct for a host that can execute one. **No build loads
+it** — the application refuses vault plugins in both builds (§ 4). What does exercise it is
+`apps/desktop/src/services/examples-plugin.test.ts`, added 2026-09-22: it reads these bytes,
+supplies the SDK the way a host's `dynamicImport` would (a bare `@nekowite/plugin-host` cannot
+resolve from `examples/`, where no `node_modules` sits on the path), and runs the toolbar item
+and every hook — so an API rename that misses the example fails a test here rather than in the
+first plugin an author copies. Read it alongside this document.
 
 ---
 
@@ -423,11 +427,12 @@ because the example is still the fixture the tests load:
 
 So the consent → trust → integrity → import sequence runs **only where a test stubs its
 import boundary**: `services/plugins.test.ts` passes `loadPlugin`, and
-`services/plugins-declared-permissions.test.ts` passes `importSource`. Those tests do not
-load `examples/plugins/hello` — nothing does. It is referenced by no test and no code path,
-only by this document: it is a reference implementation for a host that can execute one, and
-it is kept correct for the day that host exists (57 lines of `index.js`, a real manifest, a
-real `main`, a real `registerLifecycleHook` call).
+`services/plugins-declared-permissions.test.ts` passes `importSource`. Those tests do not load
+`examples/plugins/hello`; the one that does is
+`apps/desktop/src/services/examples-plugin.test.ts`, which reads the example's bytes and
+supplies the SDK the way a host's `dynamicImport` would — so the reference implementation is
+executed somewhere, and an API rename that misses it fails a test rather than the first plugin
+an author copies.
 
 The steps below describe what the sequence does once a host can reach it, not something you
 can do to a running app:
