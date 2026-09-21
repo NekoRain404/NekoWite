@@ -468,6 +468,18 @@ interface PlacementRead {
  * {@link ATTEMPTS} of them — and nothing about the guard moves: it is the *same* threshold, and a
  * machine that cannot catch the drawer in any attempt still fails here rather than passing.
  *
+ * **The drawer's duration is stretched for the measurement, which is what makes the race winnable
+ * on a loaded machine.** The retry below was the first answer to this and it is not enough on its
+ * own: a full parallel run of this suite (16 workers) missed the draw in **all three** attempts and
+ * failed the guard with the control **1.6px** from rest — a press that measured nothing, on a
+ * machine that was merely busy. The rail's duration comes from `--app-motion` (`appShell.css`), and
+ * the case now sets a longer `transition-duration` on the rail's enter/leave classes before it
+ * starts. The threshold is unchanged and the property under test is if anything sharper: measured
+ * with a temporary log in place, the press lands with **72.9px** of travel ahead (against 1.6px in
+ * the failed run) — the same order this case's own forty-run note measured on an unloaded machine,
+ * so a popup that placed itself from pre-draw coordinates and stayed there would be caught by a far
+ * larger error than before.
+ *
  * ## The click path, hop by hop
  *
  *   `AppShell.vue:488-490` the status bar's rail button → `App.vue:42`'s `railOpen`
@@ -481,6 +493,15 @@ interface PlacementRead {
  */
 test('the config picker’s list follows its trigger while the rail is still arriving', async ({ page }) => {
   await openNote(page)
+
+  // The drawer, slowed to a duration the mount cannot outrun on any machine this suite runs on.
+  // Written against the transition classes rather than `--app-motion`, because the global
+  // `prefers-reduced-motion` rule (`styles/motion.css`) forces `transition-duration: 0.01ms
+  // !important` onto `*`: this rule is `!important` too and its class selector is more specific,
+  // so the drawer stays slow whichever way the environment reports that preference.
+  await page.addStyleTag({
+    content: '.rail-enter-active, .rail-leave-active { transition-duration: 1200ms !important; }',
+  })
 
   /** Open the rail, mount the panel, and take the mount down again — the warm pass. */
   const openRailAndMount = async (): Promise<void> => {
