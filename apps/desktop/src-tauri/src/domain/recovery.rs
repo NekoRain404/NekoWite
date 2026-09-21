@@ -90,6 +90,46 @@ fn read_unlockable_keyfile(io: &dyn KeyFileIo, path: &Path) -> Result<Vec<u8>, S
     }
 }
 
+/// Open the live snapshot with the first key backup beside `key_path` that really
+/// decrypts it, in the order [`backup_key_paths`] returns; `None` when none does.
+///
+/// **This is the one definition of the backup search.** [`open_snapshot`] uses it
+/// for its own retry, and the load path's `Locked` arm asks it directly: a crash
+/// between the two renames of [`reencrypt_vault`] leaves `master.key` holding a key
+/// that opens nothing — in the `Auto`→`Locked` direction, a password-protected key,
+/// which cannot open the still-live OLD snapshot at all — while the key that does
+/// open it sits in a backup. What a backup *holds* can never decide that: a
+/// password-protected backup carries no key, and a readable one may simply be
+/// wrong. So the decision is made by opening the live snapshot, and only a backup
+/// that succeeds is returned.
+///
+/// A password-protected backup is skipped rather than ending the search: its key
+/// would have to be derived from a typed password, which is `unlock_vault`'s
+/// business, while a later candidate may still be the passwordless key that opens
+/// this snapshot.
+///
+/// Nothing here writes to disk, so a call that finds no key cannot make a state
+/// worse.
+pub fn open_snapshot_from_backups(
+    io: &dyn KeyFileIo,
+    snapshot_path: &Path,
+    key_path: &Path,
+) -> Option<Stronghold> {
+    for backup in backup_key_paths(key_path) {
+        // A password-protected backup cannot be used from here at all (its key
+        // has to be derived from the password), so it is skipped rather than
+        // ending the retry — a later candidate may still be the passwordless key
+        // that opens this snapshot.
+        let Ok(backup_key) = read_unlockable_keyfile(io, &backup) else {
+            continue;
+        };
+        if let Ok(stronghold) = Stronghold::new(snapshot_path, backup_key) {
+            return Some(stronghold);
+        }
+    }
+    None
+}
+
 /// Open the snapshot at `snapshot_path` with `master_key`. If that fails, retry
 /// with each key backup beside `key_path` (see [`backup_key_paths`]) before
 /// giving up.
@@ -113,24 +153,11 @@ pub fn open_snapshot(
 ) -> Result<Stronghold, String> {
     match Stronghold::new(snapshot_path, master_key) {
         Ok(stronghold) => Ok(stronghold),
-        Err(primary_err) => {
-            for backup in backup_key_paths(key_path) {
-                // A password-protected backup cannot be used from here at all
-                // (its key has to be derived from the password), so it is
-                // skipped rather than ending the retry — a later candidate may
-                // still be the passwordless key that opens this snapshot.
-                let Ok(backup_key) = read_unlockable_keyfile(io, &backup) else {
-                    continue;
-                };
-                if let Ok(stronghold) = Stronghold::new(snapshot_path, backup_key) {
-                    return Ok(stronghold);
-                }
-            }
+        Err(primary_err) => open_snapshot_from_backups(io, snapshot_path, key_path)
             // Surface the primary error: the backups are missing, also wrong or
             // password-protected, and their own errors would only repeat the
             // same decryption failure.
-            Err(primary_err.to_string())
-        }
+            .ok_or_else(|| primary_err.to_string()),
     }
 }
 

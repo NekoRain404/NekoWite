@@ -13,10 +13,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use tauri::Manager;
+use tauri::{Manager, Runtime};
 use tauri_plugin_stronghold::stronghold::Stronghold;
 
-use crate::domain::recovery::open_snapshot;
+use crate::domain::recovery::{open_snapshot, open_snapshot_from_backups};
 use crate::errors::fs_error;
 use crate::state::KeyVault;
 use crate::storage::key_file_io::DiskKeyFiles;
@@ -116,32 +116,65 @@ pub fn ensure_master_key(app: &tauri::AppHandle) -> Result<Vec<u8>, String> {
 /// caller does not borrow the app while holding the vault guard).
 ///
 /// A password-protected vault that has not been unlocked yet errors here with a
-/// recovery hint instead of auto-opening, so the locked state is never bypassed.
-pub fn open_vault<R>(
-    app: &tauri::AppHandle,
+/// recovery hint instead of auto-opening, so the locked state is never bypassed —
+/// unless a backup key really opens the live snapshot, which is the interrupted
+/// passwordless→password swap and not a bypass (see the `Locked` arm).
+///
+/// Generic over the runtime, and deliberately so: the `Locked` arm below IS the
+/// load path, so a test has to be able to drive *this* function rather than a
+/// helper beside it. Nothing here is `Wry`-specific — the handle is used only for
+/// the managed [`KeyVault`] — and the callers pass the real handle unchanged.
+pub fn open_vault<R: Runtime, T>(
+    app: &tauri::AppHandle<R>,
     init: &mut dyn FnMut() -> Result<(PathBuf, PathBuf, VaultKeyState), String>,
-    f: impl FnOnce(&Stronghold) -> Result<R, String>,
-) -> Result<R, String> {
+    f: impl FnOnce(&Stronghold) -> Result<T, String>,
+) -> Result<T, String> {
     let state = app.state::<KeyVault>();
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
     if guard.is_none() {
         let (snapshot_path, key_path, key_state) = init()?;
-        let master_key = match key_state {
-            VaultKeyState::Auto(key) => key,
-            VaultKeyState::Locked { .. } => {
-                return Err(
-                    "vault is locked: unlock it with your master password first \
-                     (unlock_vault)"
-                        .into(),
-                )
+        match key_state {
+            VaultKeyState::Auto(master_key) => {
+                *guard = Some(open_snapshot(
+                    &DiskKeyFiles,
+                    &snapshot_path,
+                    &key_path,
+                    master_key.to_vec(),
+                )?);
             }
-        };
-        *guard = Some(open_snapshot(
-            &DiskKeyFiles,
-            &snapshot_path,
-            &key_path,
-            master_key.to_vec(),
-        )?);
+            VaultKeyState::Locked { .. } => {
+                // **The lock is not bypassed by consulting the backups.** A backup
+                // decides this state only when it really OPENS the live snapshot
+                // (see `open_snapshot_from_backups`): a vault whose data is
+                // genuinely encrypted with the password-derived key has no backup
+                // that decrypts it, so the search finds nothing, the refusal below
+                // stands, and the user is still sent to `unlock_vault`. The retry
+                // writes nothing, so a state it cannot recover is left exactly as
+                // it was.
+                //
+                // What it recovers is the crash state `reencrypt_vault`'s contract
+                // already calls recoverable — a crash at ANY point loses no stored
+                // key. A process that died between step 4 and step 5 of the
+                // passwordless→password change promoted the new, password-protected
+                // key to `master.key` over a snapshot that is still the OLD,
+                // passwordless one, whose key is left in `master.key.old`. Refusing
+                // on `Locked` without looking made that vault unopenable through the
+                // UI: the unlock path builds its candidates from typed passwords and
+                // deliberately skips passwordless backups, so it could never open a
+                // snapshot that never had a password — while the key that opens it
+                // sat on disk beside it.
+                match open_snapshot_from_backups(&DiskKeyFiles, &snapshot_path, &key_path) {
+                    Some(stronghold) => *guard = Some(stronghold),
+                    None => {
+                        return Err(
+                            "vault is locked: unlock it with your master password first \
+                             (unlock_vault)"
+                                .into(),
+                        )
+                    }
+                }
+            }
+        }
     }
     let stronghold = guard.as_ref().expect("open_vault guarantees a stronghold");
     f(stronghold)

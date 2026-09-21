@@ -288,6 +288,11 @@ pub type PasswordCandidate = ([u8; 32], [u8; 32]);
 /// the ONLY path that can open that vault. It read `.old` alone, leaving the
 /// rotated name unread.
 ///
+/// The converse is the load path's, and it is why the paragraph below can afford
+/// to skip passwordless backups: the one such backup that matters — the one that
+/// really opens the live snapshot — is recovered by `open_vault` before it
+/// refuses (`open_snapshot_from_backups`), so no vault needs unlock for it.
+///
 /// Two files are deliberately not candidates: a passwordless backup, whose key
 /// is usable as-is and so would let any string typed into the unlock dialog open
 /// a vault whose `master.key` claims a password protects it; and
