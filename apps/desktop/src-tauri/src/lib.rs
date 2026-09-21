@@ -404,6 +404,55 @@ pub fn run() {
         .build(context)
         .expect("error while building tauri application")
         .run(|app, event| {
+            // **Closing the main window ends the pet with it.**
+            //
+            // `main_window.rs`'s header states the state this arm exists for, and states it as the
+            // reason that module was written: the wry runtime leaves only when its window map is
+            // empty, and the pet's windows are in that map. So closing the main window used to
+            // leave a process with nothing to show — still holding the single-instance name, still
+            // running the engine and the watchers, with a pet on the desktop the reader could no
+            // longer reach a setting for. The maintainer reported it as 「软件退出的时候桌宠没有退出」,
+            // which is what that state looks like from the outside.
+            //
+            // The main window is *destroyed* rather than hidden (`main_window.rs` traces the whole
+            // path, ending in the API's own `destroy()`), so `Destroyed` is the event that fires
+            // exactly once per close and cannot be prevented — which makes it the one honest hook
+            // for this. `CloseRequested` would not do: a JS listener exists for it, so Tauri
+            // prevents the native close and the window is destroyed a moment later anyway.
+            //
+            // The pet is closed through `PetWindowHost::disable`, the same call the feature switch
+            // makes when it goes off, so "every pet window is gone" has one implementation. The
+            // ball goes first there and the character windows after, which is the order that call
+            // documents.
+            if let tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Destroyed,
+                ..
+            } = &event
+            {
+                if label == crate::main_window::LABEL {
+                    if let Some(pet) = app.try_state::<state::DesktopPetState>() {
+                        match pet.host.lock() {
+                            Ok(mut host) => {
+                                let report = host.disable();
+                                // Reported and not fatal, for the reason the commands give: a
+                                // window the compositor refused to close is worth a line in the
+                                // log, and by this point there is no window left to show it in.
+                                for refusal in &report.failed {
+                                    eprintln!(
+                                        "nekowite: a pet window outlived the main window: {refusal:?}"
+                                    );
+                                }
+                            }
+                            Err(_) => eprintln!(
+                                "nekowite: the pet's window host was poisoned, so its windows \
+                                 outlive the main window"
+                            ),
+                        }
+                    }
+                }
+            }
+
             // **The engine is stopped here, and nowhere else on this path.**
             //
             // `App::run` finishes by calling `std::process::exit` — Tauri's own documentation for
