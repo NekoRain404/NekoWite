@@ -62,7 +62,20 @@ describe('ImagePanel accessibility', () => {
     expect(panel.getAttribute('aria-label')).toBeTruthy()
 
     // Every field is a real label + control pair with a matching for/id.
-    for (const id of ['neko-image-alt', 'neko-image-title', 'neko-image-link', 'neko-image-width', 'neko-image-align']) {
+    // `-height` and `-lock` were missing from this list until 2026-09-22: the
+    // panel had grown two controls, and the assertion that exists to catch a
+    // missing `for`/`id` pair could not see them — `docs/A11Y.md` §1 listed the
+    // same five the test did, so the two agreed with each other and not with the
+    // panel.
+    for (const id of [
+      'neko-image-alt',
+      'neko-image-title',
+      'neko-image-link',
+      'neko-image-width',
+      'neko-image-height',
+      'neko-image-lock',
+      'neko-image-align',
+    ]) {
       const control = document.getElementById(id)
       expect(control, `#${id} control`).toBeTruthy()
       const label = control?.closest('label')
