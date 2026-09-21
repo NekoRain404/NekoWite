@@ -1648,6 +1648,25 @@ covered on both sides, and the thing nothing covers is whether the window manage
 the same class of claim as the harness finding above, and is now stated with the 1024x732 measurement
 behind it.
 
+**§1.9's accessibility matrix is closed, and one of its rows was a test agreeing with a document.** Five
+defects, each re-read in the code before it was changed: the conflict dialog's focus behaviour was
+described backwards (the document said "focus moves to the first button"; the code passes
+`initialFocus: false` and focuses the dialog itself, because the first control is 「以磁盘为准」 — the
+destructive answer — and the test is named for it); a second test was misquoted (`reloadDisk` is reported,
+not performed); the live-region table named `stores/tabs.ts` for wirings that live in `stores/tab-save.ts`
+and `stores/tab-recovery.ts`, and missed five call sites it now lists (refused save, trash emptied, graph
+node reached by keyboard, chat answer complete, long image saved — each with the string the user actually
+hears, checked against the i18n files); six camelCase paths became the kebab-case files that exist; and the
+image panel's field list was short in the same way its test was short — the same five ids in both, so the
+assertion that exists to catch a missing `for`/`id` pair could not see `neko-image-height` or
+`neko-image-lock`, which the panel has had all along. Both lists now carry all seven, and the assertion
+has teeth: renaming that control's id fails that test and only that test.
+
+The document also lost every `file:line` citation in favour of symbol names, because the audit that found
+these defects found several of them *as* drifted line numbers. A document that quotes line numbers is a
+document that will be wrong again in a week; a document that names `saveTab` or "the range-count watcher"
+is wrong only when the code actually moves.
+
 ### The real-engine attempt, and what it measured about its own instrument
 
 The round also tried to take a reading on the engine that ships — `node e2e/webkit/measure.mjs --only
@@ -1683,3 +1702,17 @@ that honours a resize (the maintainer's own desktop), or an Xvfb with a window m
 | `e2e` (`--with-e2e`) | PASS — 297 passed |
 
 One run, all nine steps, exit 0.
+
+### What remains, after §1.9 closed
+
+The audit's §1 now has four open sections — §1.3 (`docs/PLUGIN_SDK.md`), §1.4
+(`docs/PLUGIN_ISOLATION.md`), §1.8 (`docs/RECOVERY.md`) — plus §3's file-size row, which cannot be
+fixed because the three files holding the wrong numbers are read-only by instruction, and §5's three
+architecture ledgers, which are read-only by the same instruction and were reported rather than edited.
+§1.1, §1.2, §1.5, §1.6, §1.7, §1.9 and §1.10 are closed, in §15, §16 and this round.
+
+The rewritten test plan's §3 is down to two entries, both of which are claims about the *window manager*
+rather than about this repository: the system print dialog PDF hands off to, and whether a resize request
+is honoured at all — the second one measured here, in the harness rather than in the app. And two code
+questions are recorded without being decided: the unstable-plugin quarantine that a vault switch clears
+(§16), and whether the application should fetch the pet catalogue at all (§16).
