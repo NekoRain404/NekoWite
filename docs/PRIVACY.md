@@ -42,16 +42,23 @@ NekoWite 不收集遥测、不需要账号、不会主动联网。只有你亲�
 
 ### 系统目录
 
-- `%APPDATA%\dev.nekowite.app\.nekowite\`
+应用的数据目录叫 `dev.nekowite.app`：Windows 是 `%APPDATA%\dev.nekowite.app\`，Linux 是
+`~/.local/share/dev.nekowite.app/`（下面写作 `<数据目录>`）。
+
+- `<数据目录>/.nekowite/`
   - `stronghold.bin`：**API Key 的存放处**，Stronghold 加密快照，不是明文。
-  - `master.key`：打开该快照所需的密钥文件。当前版本还没有设置主密码的界面，因此它保存的是系统生成的随机密钥，边界是本机账户的文件权限；若通过命令设置了主密码，则改为 Argon2id 派生的密钥，文件里只留下盐与一次性校验值。
+  - `master.key`：打开该快照所需的密钥文件。没有设置主密码时，它保存的是系统生成的随机密钥，边界是本机账户的文件权限；设置了主密码（设置 → AI → 主密码）之后，改为 Argon2id 派生的密钥，文件里只留下盐与一次性校验值。
   - 界面永远拿不到真实 Key：`load_ai_key` 只返回掩码 `••••••••` 表示「已配置」，真实取用只发生在 Rust 内部发请求时。
-- `%LOCALAPPDATA%\dev.nekowite.app\`（WebView2 用户数据目录，也就是应用的 localStorage）
-  - 界面设置：主题/配色/字体、编辑器偏好、默认视图、自动保存间隔、历史版本上限、导出默认值。
-  - 最近打开的知识库路径、上次打开的标签页、收藏与最近列表（按知识库分别保存）。
-  - AI 配置：服务商、模型、Base URL、温度、上下文长度、系统提示词、思考深度、写入权限、总开关（**不含 Key**）。
-  - `nekowite.ai.audit`：本地 AI 活动记录（见下）。
-  - `nekowite.chat.sessions`：聊天会话记录（聊天文本与附加图片；超出存储上限时会截断或丢弃较早的图片）。
+- `<数据目录>/` 下的其余目录：
+  - `agent-runtime/`、`downloads/`、`agent-recovery/`：内置智能体引擎的各版本、正在下载或已验证的候选、以及回滚保留的旧版本。
+  - `agent-profiles/`：每个智能体的配置档案（含它自己的服务商与模型设置）。
+  - `agent-catalogue/`、`desktop-pet/`：智能体注册表与桌面宠物形象库的本地缓存。
+  - `localstorage/`、`storage/`、`CacheStorage/`、`WebKitCache/`、`hsts-storage.sqlite` 等：WebView 自己的用户数据目录（Linux 上是 WebKitGTK，Windows 上是 WebView2）。界面设置就存在这里：
+    - 主题/配色/字体、编辑器偏好、默认视图、自动保存间隔、历史版本上限、导出默认值。
+    - 最近打开的知识库路径、上次打开的标签页、收藏与最近列表（按知识库分别保存）。
+    - AI 配置：服务商、模型、Base URL、温度、上下文长度、系统提示词、思考深度、写入权限、总开关（**不含 Key**）。
+    - `nekowite.ai.audit`：本地 AI 活动记录（见下）。
+    - `nekowite.chat.sessions`：聊天会话记录（聊天文本与附加图片；超出存储上限时会截断或丢弃较早的图片）。
 - 导出：PDF / HTML 写到你自己选择的路径（PDF 通过系统打印对话框完成）。
 
 ## AI 权限模型（白话版）
@@ -66,14 +73,19 @@ NekoWite 不收集遥测、不需要账号、不会主动联网。只有你亲�
 ## 不收集什么
 
 - 没有遥测，没有使用统计，没有崩溃上报，没有账号，也没有检查更新请求：仓库里没有任何相关 SDK 或上报端点（可以自行 grep 验证）。
-- 除你自己配置的 AI 请求外，应用不会主动连接任何服务器。
+- **本应用自己发起的联网只有三条；另有内置引擎自己的一条。除此之外不主动连接任何服务器**：
+  - **你自己配置的 AI 请求**（见上一节）：包括「刷新模型列表」，它也走你的服务商。
+  - **桌面宠物的形象库**：打开设置 → 桌面宠物 → 形象库时，会去 `pets.thenightwatcher.online` 取清单（`desktop_pet/resources.rs` 的 `LIBRARY_ENDPOINT`）。它不经过 AI 设置，也不带任何凭据。
+  - **智能体注册表**：打开智能体目录时，会去 `cdn.agentclientprotocol.com` 取注册表（`commands/agent_catalogue.rs` 的 `REGISTRY_URL`），同样不带凭据。
+  - **另外要说清的一条**：随包内置的 `opencode` 引擎是一个**独立进程**，你在智能体设置里为它配置的服务商由它自己直连——这条不经过 NekoWite 的请求层，也不受 AI 总开关管。
+  - 断网时前三条会失败并如实报错，编辑、搜索、图谱、导出、历史、回收站都不受影响（见本页最后一条）。
 - 文档里的**远程图片不会被加载**（受安全策略限制，界面显示「远程图片未加载」），因此渲染笔记不会顺带发起网络请求。
-- 应用只在自己的目录里写文件：你的知识库，以及 `%APPDATA%` / `%LOCALAPPDATA%` 下的 `dev.nekowite.app` 目录。
+- 应用只在自己的目录里写文件：你的知识库，以及上面那个 `dev.nekowite.app` 数据目录（Windows 在 `%APPDATA%` 下，Linux 在 `~/.local/share` 下）。
 
 ## 怎么自己核对
 
 - 设置 → AI：核对服务商、Base URL、模型，以及「最近的 AI 活动」里记录了什么。
 - 用文件管理器打开你的知识库：`.nekowite/`、`.nekowite-trash/`、`attachments/`、`daily/` 都在其中（需要显示隐藏文件）。
-- 打开 `%APPDATA%\dev.nekowite.app\.nekowite\`：`stronghold.bin` 是加密的二进制文件，用文本编辑器看不到明文 Key。
+- 打开数据目录下的 `.nekowite/`（Windows：`%APPDATA%\dev.nekowite.app\.nekowite\`，Linux：`~/.local/share/dev.nekowite.app/.nekowite/`）：`stronghold.bin` 是加密的二进制文件，用文本编辑器看不到明文 Key。
 - 断网测试：关掉网络后，编辑、搜索、图谱、导出、历史、回收站照常工作；只有 AI 动作会失败，而总开关关闭时连请求都不会尝试。
-- 想彻底禁止出站：关闭「启用 AI 功能」，或在系统防火墙里阻止 `nekowite.exe` 联网。
+- 想彻底禁止出站：关闭「启用 AI 功能」，或在系统防火墙里阻止这个应用联网（Windows 上是 `nekowite.exe`，Linux 上是 `nekowite`）；注意形象库、智能体注册表与内置引擎各有自己的连接，见前面「不收集什么」那一节。
