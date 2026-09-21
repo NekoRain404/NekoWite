@@ -934,4 +934,39 @@ That is the shape worth remembering about a gate: neither failure was reachable 
 caused it. The scan's rule was in a test file two directories away, and the console rule was in a
 browser spec that only runs when a real page renders.
 
+---
+
+## 10. The round after that: the other half of two defects, and the debt the last one recorded
+
+Three of the previous round's fixes left a half behind, and this round took those halves plus the one
+piece of debt that round wrote down about itself.
+
+| # | What was still wrong | Change | Evidence |
+|---|---|---|---|
+| **F11's panel half** | Reading the vault's switch file had four outcomes and reported none of them: a missing file, a file that is not ours and a failed MAC all left the in-memory set as it was, so the panel drew every switch from that set — "nothing here is switched off" and "the record cannot be verified" rendered the same. The previous round fixed the lie at the moment of the click; this is the same lie on first paint. | `DisabledPluginsRead` (`verified` / `absent` / `tampered` / `unreadable`), `readVaultPlugins` returning it beside the rows, and one sentence per unverified state in the panel — two sentences, because the remedies differ (fix or remove the file / leave it alone, the app writes neither). The composable also moves off the `services/plugins` shim, which is what that shim's own docblock asks its remaining callers to do. | 4 registry cases over the real in-memory fs (verified, absent, tampered, and both unreadable shapes — not an envelope, and a real envelope over bytes that are not a policy), 2 composable, 3 panel · **two mutation checks**, each failing exactly its own cases and nothing else |
+| **T4's other half** | Deleting a never-called helper (`FakeSurfaces::resizes`) exposed the hole it belonged to rather than an unused line: no IPC case drove a settings write whose effect is a window that is **already open**. The arithmetic is asserted in `desktop_pet_settings_test`; the road a real write travels was asserted nowhere. | `tests/desktop_pet_ipc_test/settings.rs`: a saved size reaching the window that is up (and not minting one), and a refused resize that keeps the preference and still asks the windows behind the refusing one | 2 cases · target **73 passed** (71 before) · **two mutation checks**: skipping the character resize fails both new cases, and breaking at the first refusal fails exactly the refusal case with `the window after the refusing one was not asked` |
+| **The test target at its budget** | `tests/agent_skills_test.rs` stood at 799 lines against the 800-line budget — one line of headroom, and the round that added to it last said the next edit had to split it first. | Target root of 85 lines plus seven modules under `tests/agent_skills_test/`, largest 208; the seam is the file's own six section headings, one module each | 17 cases before and after, `--list` names identical with the new prefix stripped, and **every case body byte-identical** to `git show HEAD:…` · `module_tree_test` and the sibling target green |
+
+**Two things this round did not do, said rather than left implied.** The change list
+(`SessionRuntime::changes`) still has no production reader — T10's surface is unbuilt, and building it
+is a product decision rather than a defect fix. And clippy is still unratcheted: it has no
+`--max-warnings`, and a count compared against a moving toolchain would fail contributors' builds for
+something that is not their change.
+
+### The gate
+
+Run on the frozen tree with the same `final-gate.sh`, and green on the first attempt this time — the
+previous round's gate needed three fixes before it would pass, all of them for that round's own work.
+
+| Reading | Result |
+|---|---|
+| `pnpm verify` | **exit 0** — typecheck; lint 0 errors / 462 warnings (at the ceiling); tests **440 files / 4824 passed** (nine more than the previous round); perf 2 files / 10 passed; renderer build 14.39 s; `check-katex` OK |
+| `cargo fmt --all --check` | exit 0 |
+| `cargo clippy --all-targets --locked` | exit 0, **97** warning lines — unchanged, and the number the previous round was the first to move |
+| `tauri build --no-bundle` | exit 0; the staged engine removed again afterwards, which is the script's own guarantee |
+| full suite, `NEKOWITE_REQUIRE_PROCESS_TESTS=1` | **79 targets · 1408 passed · 0 failed · 5 ignored · 0 skip announcements** — two more than the previous round, which is exactly the pair of new IPC cases |
+| `pnpm --filter @nekowite/desktop e2e` | **293 passed**, no failures on the first run: the new panel sentence renders in a real browser and the console-clean walk over every settings control stays clean |
+
+
+
 
