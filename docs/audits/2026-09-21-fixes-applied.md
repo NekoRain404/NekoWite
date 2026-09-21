@@ -1336,6 +1336,137 @@ page sizes include A3/A5/Legal, 专注模式 lives on the appearance page, and t
 No bundles were rebuilt: the round's Rust change is a crate attribute and a comment, so nothing that
 runs changed. The packaged artefacts from §13 remain the current ones for the shipped behaviour.
 
+## 16. The round after that: the suites nothing ran, and the gate's own browsers
+
+**Three test suites existed that no command invoked.** `scripts/boot-probe.test.sh` (45 checks),
+`scripts/package-linux.test.sh` (44 checks) and `apps/desktop/e2e/webkit/{pixel-scale,verify-selection}.test.mjs`
+(5 `node:test` cases) were written, committed, and then reached by nothing: no step in `scripts/gate.sh`,
+no job in `ci.yml`, and for the two `.mjs` files no runner at all — `*.test.mjs` matches neither a vitest
+project's `include` nor Playwright's spec pattern. §1.7 of the audit had listed the first two as "test
+assets nothing runs"; the third was found while fixing them.
+
+They now run: a `scripts` step and a `harness` step in the gate, and the same three in CI. The gate's
+`scripts` step does **not** trust the suites' exit codes, and the reason is a property of the suites
+themselves: each prints one `PASS:`/`FAIL:` line per check and computes its own status from the count it
+kept, so the exit code is a *summary of the log* rather than independent evidence. A suite that lost its
+last line would exit 0 with `FAIL:` in its output, and a step reading only the status would call that
+green. The step reads both. Proved by mutation in three states, with the mutated file restored
+byte-identically (`md5 171a4c997fe0eb1cbb91f447e272bf7f`): green (89 passed, 0 failed, exit 0); one
+injected failing check (exit 1, 89 passed / 1 failed); and the same failing check with the suite's
+`process.exitCode` forced to 0 — where the suite run on its own exits 0 and the step still fails, which
+is the hole the log read closes.
+
+The packager suite has a precondition CI was not providing. It mocks `rpm` with a command that only
+exits 0 and asserts that `scripts/package-linux.sh` **rejects that decoy** and pins the real tool
+(`RPM version N`) — the case the packager turns into `no working RPM tool` and exit 1. Whether the
+runner image already ships `rpm` could not be verified from this machine (the web fetches this sandbox
+allows resolve to non-public addresses), so CI declares it with `apt-get install -y rpm` instead of
+assuming it: installing a present package is a no-op, and its absence would otherwise have made a new
+red step on every run.
+
+**The gate's summary was doubling a zero, in three rows.** `grep -c` prints its count *and* exits 1 when
+that count is zero, so `grep -c … || echo 0` — the idiom the summary used — appends a second zero and
+turns one reading into two lines. The `scripts` row added this round printed `89 checks passed, 0` then
+`0 failed`; the Rust row would have printed `0\n0 targets` in exactly the case that row exists to catch,
+and clippy's the same. All three now go through one `count_matches` helper, measured against a
+zero-count log, a matching log and a missing one: old `[0\n0]`, new `[0]`, absent log `[0]`.
+
+**And the gate's last step found its own defect first.** The full run for this round came back
+`FAIL e2e (exit 1) — 1 passed`, with 296 tests listed as never run: a reading that looks like a
+catastrophic regression. It was not one. `scripts/gate.sh` exports `XDG_CACHE_HOME` to the repository's
+own scratch (`pnpm` needs writable XDG directories on a machine whose `$HOME` is not one), and Playwright
+resolves its **browser cache** from exactly that variable — so every test died in about a millisecond
+with `browserType.launch: Executable doesn't exist at <repo>/.tmp-review-pnpm/cache/ms-playwright/...`
+while the browsers sat in `~/.cache/ms-playwright`. The step now resolves the path itself (explicit
+`PLAYWRIGHT_BROWSERS_PATH`, then the relocated default, then the conventional one) and prints which it
+pinned; a machine with no browsers anywhere fails with one line naming the candidates and the install
+command. Both directions were run without the variable in the environment: `PASS e2e (exit 0) — 297
+passed`, and the empty machine's `exit 1` with the readable message. The same change made `--only e2e`
+imply `--with-e2e`, because on its own it matched no step and answered a request for exactly that step
+with `no step found` and exit 2.
+
+**The MDX demo corpus's validation suite was outside every vitest project.**
+`docs/mdx-demo/__validation/validate.test.ts` opens, round-trips and renders all seven demo files
+through `editor-core`; the desktop project's `include` was `src/**/*.test.ts`, and no other project
+reaches outside `apps/desktop`. Fixed by widening the pattern rather than moving the test — it resolves
+its fixtures through `resolve(__dirname, '..')`, so it belongs beside them. Fresh run: 7 passed, and it
+is now inside `pnpm verify` and therefore inside the gate and CI (`verify` went from §15's 5926 tests to
+this round's 5933: exactly those seven).
+
+**`docs/test-plan.md` now describes the surface that exists.** §15 left it open. The old 35 lines were a
+plan for an audit session: twelve rows whose "existing tests" column named artefacts that are not in the
+tree (`coordinator tests`, `useImagePasteDrop`, `vaultIndexCoordinator`, `searchIndex`, `linkGraph`,
+`recoveryClosedLoop`, `exportRenderers`), an empty status column while the text asked for
+COVERED/PARTIAL/GAP, a lint figure invalidated by the `--max-warnings` ceiling, a citation of
+「docs/debug.md §4」 in a document with no sections, and no mention of the four vitest projects, the
+Playwright suite, the 76 Rust targets, the three instruments or the three non-vitest suites. Rewritten
+around what runs, with every row naming files that exist — all 64 paths checked before writing — and no
+blank status cell. Three rows are PARTIAL and §3 says what is missing rather than implying it is fine:
+nothing asserts a typing burst is a single undo step, PDF export is covered only as the print iframe's
+lifecycle (`use-note-export.ts` has no test file at all), and window geometry round-trips only in the
+frontend. The two per-suite check counts, the 297-in-46 Playwright collection and the 76 targets were
+measured while writing it, not copied from a summary.
+
+**§1.6 and §1.1 are closed, with one correction to the audit itself.** The guide rows were re-verified
+against the code before anything was edited, and **seven of them had already been fixed** in this
+session — the rail tabs, the attachment location, the daily note and the seven view modes were correct
+as they stood, so re-applying the audit's table would have been damage. What was still wrong is now
+fixed: the editing toolbar appears whenever a document is open (`EditorPane.vue:195`, `:206` — the
+selection-gated one is `FloatToolbar`), 「索引」 falls through to 「即将支持」 (`NoteListPanel.vue:152`),
+the rail's body is `AgentRailBody` by default (`AGENT_PANEL_DEFAULT = true`,
+`stores/settings-agent.ts:87`), the save indicator has a fourth state, the graph's controls are two rows
+above the canvas, the bibliography is `作者 (年份) 标题. 期刊 卷(期) 页. doi:…`, the export list has five
+formats and five page sizes, the Base URL renders for all seven providers, and 专注模式 lives on the
+appearance page. The audit's own row was **incomplete, not wrong**: settings has eight sections, not
+"four plus 智能体 and 桌面宠物" — 导出 and AI were missing from its correction too. PRIVACY's vault
+inventory gained `plugins/` and the staged `.nekowite-<digits>.tmp` files, and its history entry now
+gives the real shape: one percent-escaped component per note (`.nekowite/history/docs%2Fa.md/`), not the
+note's folders, with `<epoch-millis>.<ext>` snapshots inside (`storage/history_snapshot.rs:111-138`).
+The Windows framing in both documents is untouched, deliberately, for the reason §14 recorded.
+
+**Two dangling references were found while checking the things that were supposed to be the work.**
+`storage/index_store.rs`'s module comment named `.nekowite/index.meta.json` as the frontend index's
+metadata file and pointed at `features/vault/services/indexPersistence.ts`; no such file exists in the
+tree, and the frontend's own mapping (`features/search/services/index-storage.ts:94-108`) puts the
+metadata record at `manifest.json` inside `.nekowite/index/`, with shards beside it. `index.meta.json`
+is only the persistence port's generic path for a key named `index.meta`, whose single user is a test
+fixture. The CHANGELOG entry that first recorded this comment's correction had repeated the same wrong
+path, so it is corrected too — along with the only non-Latin, non-CJK word in the file (a stray
+Cyrillic `форм` in `字节форм改变`).
+
+**One row of the audit is inaccurate, and it is recorded here rather than fixed.** §1.7's last bullet
+says `eslint.config.js` "still lints a deleted `e2e/webkit/perf.mjs`". It does not: `perf.mjs` appears
+in that file twice, both times inside explanatory comments (`:36`, `:169`) about a deleted import, and in
+no `files:`/`ignores:` pattern. A lint configuration that mentions a file in a comment is not a lint
+configuration that lints it. This is the second such row found this session; §14 recorded the first.
+
+### The gate
+
+| Step | Result |
+|---|---|
+| `verify` | PASS — **5933 tests across 3 package runs**; §15's 5926 plus the seven in the MDX validation suite, which is the only test this round added to a vitest project |
+| `fmt` | PASS |
+| `clippy` | PASS — 97 warning lines, under the 110 ceiling |
+| `instruments` | PASS — 0 broken specifiers, 0 of 21 channels unnamed, 0 of 6 unemitted, 89 of 1372 exports uncalled (at the ceiling) |
+| `scripts` | PASS — **89 checks, 0 failed** (45 + 44), a step that did not exist before this round |
+| `harness` | PASS — **5 passed, 0 failed**, likewise new |
+| `build` | PASS |
+| `rust` | PASS — **79 targets, 1409 passed, 0 failed** |
+| `e2e` (`--with-e2e`) | PASS — **297 passed**, unchanged from §15; the round's e2e work is the step that runs it, not the specs in it |
+
+No bundles were rebuilt. Nothing the application runs at runtime changed this round: a vitest `include`
+pattern, a gate script, a CI workflow, a Rust module comment, and four documents.
+
+### What the audit lists that is still open
+
+§1.2 (`docs/SECURITY.md`'s dormant gate), §1.3 (`docs/PLUGIN_SDK.md`), §1.4
+(`docs/PLUGIN_ISOLATION.md`), §1.5 (`docs/RELEASING.md` — the audit's most consequential remaining row,
+since it says the Linux path it omits can produce a broken release), §1.8 (`docs/RECOVERY.md`), §1.9
+(`docs/A11Y.md`), §1.10 (`docs/debug.md`, `docs/development-log.md`), and the §2, §3 and §5 tables.
+Plus the three gaps the rewritten test plan now names out loud: undo-step granularity, PDF export as an
+outcome, and window geometry through the backend.
+
+
 
 
 
