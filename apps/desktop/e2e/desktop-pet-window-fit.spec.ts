@@ -44,7 +44,8 @@
  *
  * ## Where the window rule comes from, and what pins it
  *
- * The box is read **out of `window_host.rs`** rather than restated here. That is the opposite of what
+ * The box is read **out of `window_host/geometry.rs`** rather than restated here. That is the
+ * opposite of what
  * `desktop-pet-tasks.spec.ts` does with the bubble's cap, and it is deliberate: what this file
  * measures is a *layout* property — "the browser puts this sprite inside this box" — and a copy of
  * the rule would keep measuring the box the product used to build. The numbers themselves are pinned
@@ -56,8 +57,9 @@ import { expect, test, type Page } from '@playwright/test'
 import { SHEET } from './support/petFixture'
 
 /**
- * The window the host builds, and the boxes it is measured against — **read out of `window_host.rs`
- * rather than restated here**, which is the opposite of what `desktop-pet-tasks.spec.ts` does with
+ * The window the host builds, and the boxes it is measured against — **read out of
+ * `window_host/geometry.rs` rather than restated here**, which is the opposite of what
+ * `desktop-pet-tasks.spec.ts` does with
  * the bubble's cap.
  *
  * They live in `support/petWindow.ts` because `desktop-pet-bubble.spec.ts` measures surfaces inside

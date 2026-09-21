@@ -21,15 +21,22 @@ import { fileURLToPath } from 'node:url'
 /**
  * The Rust file that owns the character window's geometry. Resolved from this file's own location,
  * the way `support/repoFs.ts` does it, so a clone anywhere reads its own tree.
+ *
+ * `window_host/geometry.rs` and not `window_host.rs`: the line-budget programme split the module,
+ * and the two constants below moved with the rule they belong to. **This is the file the split
+ * broke**: the specs that use `windowRule()` kept failing with "CHARACTER_WINDOW_SLACK … is not in
+ * window_host.rs" until this path followed the code — a failure only the e2e suite could see,
+ * because it is the only reader that resolves the name as a *file* rather than importing it.
  */
-const WINDOW_HOST_RS = path.resolve(
+const GEOMETRY_RS = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '..',
   '..',
   'src-tauri',
   'src',
   'desktop_pet',
-  'window_host.rs',
+  'window_host',
+  'geometry.rs',
 )
 
 /** A box in viewport coordinates, as `getBoundingClientRect()` gives it. */
@@ -40,7 +47,7 @@ export type WindowBox = { width: number; height: number }
 /** The text after `marker` on the same line, or a throw naming what moved. */
 function declaredAfter(text: string, marker: string): string {
   const at = text.indexOf(marker)
-  if (at < 0) throw new Error(`${marker} is not in window_host.rs`)
+  if (at < 0) throw new Error(`${marker} is not in window_host/geometry.rs`)
   const rest = text.slice(at + marker.length)
   const end = rest.indexOf('\n')
   return (end < 0 ? rest : rest.slice(0, end)).trim()
@@ -48,7 +55,7 @@ function declaredAfter(text: string, marker: string): string {
 
 /** `CHARACTER_WINDOW_SLACK` and `CHARACTER_WINDOW_MIN_WIDTH`, as the rule declares them. */
 export function windowRule(): { slack: [number, number]; floor: number } {
-  const text = readFileSync(WINDOW_HOST_RS, 'utf8')
+  const text = readFileSync(GEOMETRY_RS, 'utf8')
   const slack = declaredAfter(text, 'const CHARACTER_WINDOW_SLACK: (f64, f64) = (')
     .replace(/\)\s*;.*$/, '')
     .split(',')
