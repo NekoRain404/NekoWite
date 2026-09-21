@@ -410,13 +410,27 @@ pub fn run() {
             // it says so, and the call is at `tauri-2.11.5/src/app.rs:1346`. `process::exit` does
             // not run destructors, so the managed `AgentRuntimeState` is never dropped and
             // `AgentInstance`'s `Drop` — which releases the registration and signals the engine's
-            // process group (§6.2) — never runs. Every quit left an `opencode` behind.
+            // process group (§6.2) — never runs.
             //
-            // `RunEvent::Exit` is the last moment that is still inside the event loop: Tauri calls
-            // this callback first, then `cleanup_before_exit`, and only then exits the process
-            // (`app.rs:1430-1437`). The teardown below is synchronous and bounded — the connection
-            // asks the engine to leave, waits `SHUTDOWN_GRACE`, then signals the group — so it has
-            // the time it needs and the process leaves afterwards.
+            // **What that costs, measured rather than argued.** This paragraph used to say 「every
+            // quit left an `opencode` behind」, and that was wrong. `tests/agent_exit_teardown_test.rs`
+            // closed the real app twice, once with this arm and once without it: the engine was
+            // gone 1.00–1.60s after the quit with the arm and 0.80–1.00s without, and the two
+            // distributions overlap. `opencode` 1.18.29 leaves on its own when its stdin closes,
+            // which the app's exit does. So this is not what stops an orphan engine, and a reader
+            // should not believe it is.
+            //
+            // What it does do is the thing that had no owner: **release the registration and reap
+            // the child, inside the event loop, before the process goes.** Those were the two
+            // halves that were missing — the engine died unnoticed, so its claim stayed held and
+            // the next start was refused with `AlreadyRunning` until the app was quit, and its
+            // process was never collected. What reaches them is this callback: Tauri calls it
+            // before `cleanup_before_exit` and before the process exits (`app.rs:1430-1437`).
+            //
+            // The teardown is synchronous. It asks the connection to stop — which drops the senders
+            // and returns; the engine itself leaves 0.1–0.3s later, and the bounded `SIGTERM`/
+            // `SIGKILL` sequence behind it is for an engine that does not — so the process leaves
+            // shortly afterwards rather than waiting on a signal that is never needed.
             //
             // The work is `agent_stop`'s, called through the same function for the reason that
             // function's own doc gives: two callers that spell the teardown separately are two

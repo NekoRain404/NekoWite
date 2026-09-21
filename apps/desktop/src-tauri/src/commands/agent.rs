@@ -405,11 +405,25 @@ pub async fn agent_stop<R: tauri::Runtime>(
 ///
 /// **`App::run` exits through `std::process::exit`.** Tauri's own doc on it says so
 /// (`tauri-2.11.5/src/app.rs:1346`), and `std::process::exit` does not run destructors — so the
-/// managed state was never dropped, `AgentInstance`'s `Drop` never ran, and every launch left the
-/// engine behind. `agent_runtime::mod`'s promise that 「the process group and its teardown」 belong
-/// to the transport was true the whole time; nothing reached it on the exit path. This is the same
-/// shape as the rest of this repository's recurring defect — built, correct, and unreachable —
-/// except that its cost lands on the machine rather than on the reader.
+/// managed state was never dropped and `AgentInstance`'s `Drop` never ran. `agent_runtime::mod`'s
+/// promise that 「the process group and its teardown」 belong to the transport was true the whole
+/// time; nothing reached it on the exit path. This is the same shape as the rest of this
+/// repository's recurring defect — built, correct, and unreachable.
+///
+/// **What that cost, corrected by measurement.** This docblock first said 「every launch left the
+/// engine behind」, and that is not what happened. `tests/agent_exit_teardown_test.rs` closed the
+/// real app with and without the exit arm: the engine was gone 1.00–1.60s after the quit with it
+/// and 0.80–1.00s without, and the two overlap. `opencode` 1.18.29 exits on its own when its stdin
+/// closes. So the orphan this was written to prevent does not occur, and a reader who wants the
+/// reason an orphan could not occur should not be pointed here.
+///
+/// What the missing arm really cost is the pair below, and it is worth stating because it is the
+/// bug the maintainer actually hit: **the registration was never released and the child was never
+/// reaped.** The engine left unannounced, its epoch stayed claimed, and the next start was refused
+/// with `AlreadyRunning` — for an engine that was not there — until the app was quit. The reaping
+/// half now has a second owner as well (`agent_runtime`'s supervisor collects a child that exits on
+/// its own, and `start_session` lets go of an instance whose engine is gone), so the wedge no
+/// longer depends on this callback running.
 ///
 /// The three steps and their order are `agent_stop`'s, unchanged.
 pub fn stop_running_engine<R: tauri::Runtime>(

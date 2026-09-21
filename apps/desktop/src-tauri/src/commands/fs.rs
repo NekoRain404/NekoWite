@@ -65,7 +65,11 @@ pub async fn write_file(
     // failed (currently: the history snapshot). The window shows it; it must not
     // be mistaken for a failed save.
     crate::storage::save_store::write_file_guarded(
-        &vault_root, &path, &content, max_history, expected_content.as_deref(),
+        &vault_root,
+        &path,
+        &content,
+        max_history,
+        expected_content.as_deref(),
     )
 }
 
