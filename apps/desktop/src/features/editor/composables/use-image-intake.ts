@@ -93,8 +93,11 @@ export function useImageIntake() {
     renamePrompt.value = null
   }
 
-  /** The vault-relative destination for new assets, or undefined for the
-   *  legacy attachments/YYYY-MM layout when the note has no usable path. */
+  /** The vault-relative destination for new assets, or undefined when the note's
+   *  own name yields them no folder — the backend reads an absent `dir` as its
+   *  legacy `attachments/YYYY-MM` layout. A note with no path yet is not that
+   *  case: it stages into `.tmp` and moves beside the note once it is saved
+   *  (`stores/tab-assets.ts::relocate`). */
   function assetsDirFor(notePath: string | null): string | undefined {
     return assetsDirForNote(notePath, tabs.vault ?? '') || undefined
   }

@@ -226,7 +226,7 @@ export function createVaultSwitch(deps: VaultSwitchDeps): VaultSwitch {
       await fs.registerVault(path)
     } catch {
       if (isStale()) return
-      notifyError(`could not open the vault (missing/permission): ${path}`)
+      notifyError(t('tabs.vaultOpenFailed', { path }))
       return
     }
     if (isStale()) return

@@ -84,6 +84,10 @@ export const documents = {
       reloadFailed: 'Could not reload file: {path}; current content kept',
       unsavedWorkPrompt: 'You have unsaved changes. Leave anyway?',
       unsavedWorkBlocker: 'Some files could not be saved; the vault was not switched.',
+      // The switch's other failure: the root never registered (the folder is
+      // gone, or its permission was lost), so nothing switched and the current
+      // vault is still the open one.
+      vaultOpenFailed: 'Could not open the vault (missing or no permission): {path}',
       // The close path's own wording. The vault-switch sentence above describes
       // an action the user closing the window never took.
       unsavedWorkBlockerClose:
@@ -173,6 +177,7 @@ export const documents = {
       reloadFailed: '无法重新加载文件：{path}，已保留当前内容',
       unsavedWorkPrompt: '你有未保存的更改，仍要离开吗？',
       unsavedWorkBlocker: '部分文件无法保存，未切换 vault',
+      vaultOpenFailed: '无法打开 vault（不存在或没有权限）：{path}',
       unsavedWorkBlockerClose: '部分文件无法保存；窗口保持打开，文字仍在编辑器中。',
       unsavedWorkBlockerCloseAll: '部分文件无法保存；标签页保持打开，文字仍在编辑器中。',
       unsavedWorkRescue:

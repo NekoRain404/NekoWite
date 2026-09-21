@@ -6,7 +6,11 @@ export const attachments = {
       refresh: 'Refresh',
       loading: 'Loading attachments…',
       emptyTitle: 'Attachment library is empty',
-      emptyHint: 'Paste or drag images into the editor; they are saved to the vault attachments folder and appear here.',
+      // Where a paste actually lands is the note's own `<basename>_assets`
+      // folder, not the `attachments/` tree this panel lists
+      // (`services/rename-asset.ts::assetsDirForNote`). Saying otherwise sent
+      // the reader looking in the wrong directory for the file they just made.
+      emptyHint: 'Paste or drop an image into a note and it is saved beside that note, in a <notename>_assets folder; a note with no path yet stages it in .tmp until the note is saved. This list shows the vault attachments folder, where the images the app inserts for you land (attachments/<YYYY-MM>).',
       insertImage: 'Insert image {name}',
       insert: 'Insert into document',
       copyPath: 'Copy relative path',
@@ -27,7 +31,7 @@ export const attachments = {
       refresh: '刷新',
       loading: '正在加载附件…',
       emptyTitle: '附件库为空',
-      emptyHint: '在编辑器中粘贴或拖入图片，会自动保存到 vault 的 attachments 目录并出现在这里。',
+      emptyHint: '在笔记中粘贴或拖入的图片会保存在该笔记旁边的 <笔记名>_assets 目录；笔记还没有路径时先暂存于 .tmp，保存后移入该目录。此列表显示 vault 的 attachments 目录，即应用为你插入的图片所在位置（attachments/<YYYY-MM>）。',
       insertImage: '插入图片 {name}',
       insert: '插入到文档',
       copyPath: '复制相对路径',

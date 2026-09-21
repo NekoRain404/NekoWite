@@ -71,6 +71,11 @@ const h = vi.hoisted(() => {
     editorSessionManager: { destroyAll: vi.fn(), destroySession: vi.fn() },
     notifyError: vi.fn(),
     notifyRecovery: vi.fn(),
+    // The catalogue's own `t`, spied rather than stubbed inline: what a failure
+    // message must carry is the key *and* the values it interpolates, and a
+    // mock that returns the key alone cannot tell a message that lost its
+    // `{path}` from one that never had it.
+    t: vi.fn((key: string) => key),
     takePendingOpen: vi.fn(),
     onOpenFileRequest: vi.fn(),
   }
@@ -138,7 +143,7 @@ vi.mock('../services/errors', () => ({
 }))
 
 vi.mock('../i18n', () => ({
-  t: (key: string): string => key,
+  t: h.t,
 }))
 
 import { createDesktopRuntime } from './app-bootstrap'
@@ -533,7 +538,11 @@ describe('createDesktopRuntime', () => {
       expect(h.gateways.fs.watch).toHaveBeenCalledWith('/current')
 
       // A clear, recoverable error is surfaced, and the bad path is NOT persisted.
-      expect(h.notifyError).toHaveBeenCalledWith('could not open the vault (missing/permission): /bad')
+      // The message is the localised one, so the vault-switch failure speaks the
+      // UI's language like its neighbours — and the path travels with the key,
+      // because the sentence is useless without the folder it is about.
+      expect(h.t).toHaveBeenCalledWith('tabs.vaultOpenFailed', { path: '/bad' })
+      expect(h.notifyError).toHaveBeenCalledWith('tabs.vaultOpenFailed')
       expect(localStorage.getItem(VAULT_LS_KEY)).toBe('/current')
     })
   })
