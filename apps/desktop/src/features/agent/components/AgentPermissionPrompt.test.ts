@@ -552,6 +552,9 @@ describe('AgentPermissionPrompt — what a lasting answer commits the user to', 
       expect(text).toContain(places.section)
       expect(text).toContain(places.page)
       expect(text).toContain(places.surface)
+      // ACP's in-memory approvals are not the saved-rule API's revocable rows.
+      expect(text).toContain(locale === 'en' ? 'cannot revoke' : '无法在那里撤销')
+      expect(text).toContain(locale === 'en' ? 'Allow once' : '允许一次')
       expect(text).not.toMatch(gaveUpOn)
       // The slots are the page's own names, so a sentence that rendered them literally — or one
       // that named a place by a name nothing else in the app uses — fails here rather than

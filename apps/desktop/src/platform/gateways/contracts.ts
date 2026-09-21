@@ -116,7 +116,8 @@ export interface FsPort {
   /** Resolves to a user-facing WARNING when the write itself succeeded but
    *  something optional failed (e.g. the history snapshot) — `null` when
    *  everything worked. A rejected promise always means nothing was written. */
-  write(vault: string, path: string, content: string, maxHistory?: number): Promise<string | null>
+  /** Expected bytes are checked at commit; omission is explicit creation/Save-As. */
+  write(vault: string, path: string, content: string, maxHistory?: number, expectedContent?: string): Promise<string | null>
   list(vault: string, dir: string): Promise<FileEntry[]>
   watch(vault: string): Promise<void>
   deleteFile(vault: string, path: string): Promise<string>

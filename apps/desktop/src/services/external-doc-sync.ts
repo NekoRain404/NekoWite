@@ -99,6 +99,7 @@ export function createExternalDocSync(deps: ExternalDocSyncDeps): ExternalDocSyn
    * release **its own** registration instead of storing it.
    */
   let generation = 0
+  const pendingReads = new Map<string, symbol>()
 
   /** True when `path` is `ancestor` itself or lives beneath it. */
   function isUnder(path: string, ancestor: string): boolean {
@@ -126,8 +127,10 @@ export function createExternalDocSync(deps: ExternalDocSyncDeps): ExternalDocSyn
    * A tab that is gone by now is not decided at all: there is nothing to reload
    * and nobody to ask.
    */
-  function currentTab(id: string): OpenDocTab | null {
-    return deps.getOpenTabs().find((t) => t.id === id) ?? null
+  function currentTab(vault: string, id: string, path: string, ticket: number, readTicket: symbol): OpenDocTab | null {
+    if (pendingReads.get(id) !== readTicket) return null
+    if (ticket !== generation || deps.getVault() !== vault || deps.isPendingMove?.(path)) return null
+    return deps.getOpenTabs().find((t) => t.id === id && t.path === path) ?? null
   }
 
   /**
@@ -151,18 +154,23 @@ export function createExternalDocSync(deps: ExternalDocSyncDeps): ExternalDocSyn
    * parameter, because a tab read before the await is a snapshot, and every
    * comparison this function makes is one the snapshot gets wrong.
    */
-  async function examine(vault: string, id: string, path: string): Promise<void> {
+  async function examine(vault: string, id: string, path: string, ticket: number, readTicket: symbol): Promise<void> {
     let disk: string
     try {
       disk = await deps.read(vault, path)
-    } catch {
-      deps.onMissing(id, path)
+    } catch (error) {
+      // Only the gateways' missing-file reason proves absence. Permission and
+      // decoding failures must not detach a file that still exists.
+      const message = error instanceof Error ? error.message : String(error)
+      const missing = /^could not read [\s\S]+: no such file or folder(?: \(os error 2\))?$/.test(message)
+        || message.startsWith('No such file in demo vault: ')
+      if (missing && currentTab(vault, id, path, ticket, readTicket)) deps.onMissing(id, path)
       return
     }
     if (deps.isSelfWrite(path, disk)) return
     // Asked AFTER the await and only for this tab: what the decision needs is
     // what the tab holds now, not what the loop saw when it started.
-    const tab = currentTab(id)
+    const tab = currentTab(vault, id, path, ticket, readTicket)
     if (!tab) return
     // An identical file is a no-op touch (or our own write that raced the
     // claim) and must not reload — that would replace the live model and reset
@@ -191,13 +199,26 @@ export function createExternalDocSync(deps: ExternalDocSyncDeps): ExternalDocSyn
   async function examineEach(
     vault: string,
     inScope: (path: string) => boolean,
+    ticket: number,
   ): Promise<void> {
-    for (const tab of deps.getOpenTabs()) {
-      if (!tab.path || !inScope(tab.path)) continue
-      if (deps.isPendingMove?.(tab.path)) continue
-      // Only the id and the path travel: the tab itself is read again inside,
-      // after the read, because this loop's copy is stale by then.
-      await examine(vault, tab.id, tab.path)
+    // Claim all affected tabs before awaiting: a queued resync must not take
+    // ownership back from a newer file event while it waits on an earlier tab.
+    const candidates = deps.getOpenTabs().flatMap((tab) => {
+      if (!tab.path || !inScope(tab.path)) return []
+      const readTicket = Symbol()
+      pendingReads.set(tab.id, readTicket)
+      return [{ id: tab.id, path: tab.path, readTicket }]
+    })
+    try {
+      for (const { id, path, readTicket } of candidates) {
+        if (ticket !== generation || deps.getVault() !== vault) return
+        if (!currentTab(vault, id, path, ticket, readTicket)) continue
+        await examine(vault, id, path, ticket, readTicket)
+      }
+    } finally {
+      for (const { id, readTicket } of candidates) {
+        if (pendingReads.get(id) === readTicket) pendingReads.delete(id)
+      }
     }
   }
 
@@ -213,8 +234,8 @@ export function createExternalDocSync(deps: ExternalDocSyncDeps): ExternalDocSyn
    * path are examined, and each costs one read. A file event matches at most
    * the tabs holding that file, so ordinary note/image writes stay no-ops.
    */
-  async function examineTabsUnder(vault: string, path: string): Promise<void> {
-    await examineEach(vault, (open) => isUnder(open, path))
+  async function examineTabsUnder(vault: string, path: string, ticket: number): Promise<void> {
+    await examineEach(vault, (open) => isUnder(open, path), ticket)
   }
 
   /**
@@ -225,21 +246,22 @@ export function createExternalDocSync(deps: ExternalDocSyncDeps): ExternalDocSyn
    * alternative is a silent divergence that ends with the user's save
    * overwriting someone else's edit.
    */
-  async function resyncAll(vault: string): Promise<void> {
-    await examineEach(vault, () => true)
+  async function resyncAll(vault: string, ticket: number): Promise<void> {
+    await examineEach(vault, () => true, ticket)
   }
 
-  async function handle(e: FsChangeEvent): Promise<void> {
+  async function handle(e: FsChangeEvent, ticket: number): Promise<void> {
+    if (ticket !== generation) return
     // Every visual surface reacts, whether or not a document is involved.
     deps.onChange?.(e)
 
     const vault = deps.getVault()
     if (!vault) return
     if (e.kind === 'resync') {
-      await resyncAll(vault)
+      await resyncAll(vault, ticket)
       return
     }
-    await examineTabsUnder(vault, e.path)
+    await examineTabsUnder(vault, e.path, ticket)
   }
 
   return {
@@ -247,7 +269,7 @@ export function createExternalDocSync(deps: ExternalDocSyncDeps): ExternalDocSyn
       if (unlisten) return
       const mine = ++generation
       const off = await deps.onFsChange((e) => {
-        void handle(e)
+        void handle(e, mine)
       })
       if (mine !== generation) {
         off()
@@ -257,6 +279,7 @@ export function createExternalDocSync(deps: ExternalDocSyncDeps): ExternalDocSyn
     },
     stop(): void {
       generation++
+      pendingReads.clear()
       unlisten?.()
       unlisten = null
     },

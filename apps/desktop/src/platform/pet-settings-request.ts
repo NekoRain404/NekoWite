@@ -3,7 +3,8 @@
  *
  * §5.1's 设置定位 has two halves and this is the receiving one: the pet's right-click calls
  * `desktop_pet_open_settings`, the host raises the main window and confirms the page against its
- * own list, and then it emits on `pet-open-settings` with `{ page }`. What the main window does
+ * own list, and retains the request before signalling `pet-open-settings`. The listener consumes
+ * pending requests after mounting and on each signal. What the main window does
  * with that — open the dialog on the pet's section, or move the section already open — is the
  * shell's business; what arrives here is only the page the user clicked, already vouched for on
  * the Rust side (`commands/desktop_pet.rs`'s `SETTINGS_PAGES`).
@@ -22,11 +23,11 @@
  * the layers above stay free of the bridge.
  */
 
-import { listen } from '@tauri-apps/api/event'
+import { onPetNavigation } from './pet-navigation-listener'
 import type { PetSettingsPage } from './gateways/pet-contracts'
 import { PET_SETTINGS_CHANNEL } from './gateways/tauri-pet'
 
-/** What the host emits: the page, and nothing else — no section, no window label, no URL. */
+/** What the main-only consume command returns: no section, window label or URL. */
 interface PetSettingsRequest {
   page: PetSettingsPage
 }
@@ -41,9 +42,7 @@ interface PetSettingsRequest {
 export async function onPetSettingsRequest(
   cb: (page: PetSettingsPage) => void,
 ): Promise<() => void> {
-  try {
-    return await listen<PetSettingsRequest>(PET_SETTINGS_CHANNEL, (event) => cb(event.payload.page))
-  } catch {
-    return () => {}
-  }
+  return onPetNavigation<PetSettingsRequest>(
+    PET_SETTINGS_CHANNEL, 'desktop_pet_take_settings_requests', (request) => cb(request.page),
+  )
 }

@@ -348,24 +348,84 @@ describe('a save over an edit somebody else made', () => {
     expect(t.dirty).toBe(false)
   })
 
-  it('does not block a save whose file could not be read', async () => {
+  it('does not recreate a missing file before the watcher detaches its tab', async () => {
     disk.set('/vault/a.md', 'A before')
     const tabs = useTabsStore()
     tabs.setVault('/vault')
     await tabs.openTab('/vault/a.md')
     const a = tabs.tabs[0]
-    // Deleted outside the app. There are no bytes of ours to compare against,
-    // and the case belongs to the external-change service, which detaches the
-    // tab and asks where the text should go; a save the user asked for still
-    // puts their text somewhere rather than refusing on a comparison it could
-    // not make.
+    // A late watcher must not leave a window where autosave resurrects a file.
     disk.delete('/vault/a.md')
     a.content = 'A before plus my edit'
     tabs.markDirty(a.id)
 
     await tabs.saveActive()
 
-    expect(disk.get('/vault/a.md')).toBe('A before plus my edit')
+    expect(disk.has('/vault/a.md')).toBe(false)
+    expect(writeMock).not.toHaveBeenCalled()
+    expect(a.dirty).toBe(true)
+    expect(tabs.saveStateOf(a.id)).toBe('failed')
+  })
+
+  it.each(['permission denied', 'input/output error'])('preserves the conflict when a read fails: %s', async (error) => {
+    disk.set('/vault/a.md', 'original')
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    await tabs.openTab('/vault/a.md')
+    const tab = tabs.tabs[0]
+    tab.content = 'local edits'
+    tabs.markDirty(tab.id)
+    disk.set('/vault/a.md', 'external edits')
+    await tabs.saveTab(tab.id)
+    const conflict = tab.externalConflict
+    readMock.mockRejectedValue(new Error(error))
+
+    const seen = await messagesDuring(() => tabs.saveActive())
+
+    expect(writeMock).not.toHaveBeenCalled()
+    expect(disk.get('/vault/a.md')).toBe('external edits')
+    expect(tab.externalConflict).toEqual(conflict)
+    expect(tab.dirty).toBe(true)
+    expect(seen.length).toBeGreaterThan(0)
+  })
+
+  it('does not write after a failed disk read spanning a vault switch', async () => {
+    disk.set('/vault/a.md', 'original')
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    await tabs.openTab('/vault/a.md')
+    const tab = tabs.tabs[0]
+    tab.content = 'local edits'
+    tabs.markDirty(tab.id)
+    let rejectRead!: (error: Error) => void
+    readMock.mockImplementationOnce(() => new Promise<string>((_resolve, reject) => { rejectRead = reject }))
+    const saving = tabs.saveTab(tab.id)
+    await vi.waitFor(() => expect(rejectRead).toBeTypeOf('function'))
+    tabs.removeAllTabs()
+    tabs.setVault('/other')
+    rejectRead(new Error('input/output error'))
+    await expect(saving).resolves.toBe(false)
+    expect(writeMock).not.toHaveBeenCalled()
+  })
+
+  it('does not write the old path when renamed during the save preflight read', async () => {
+    disk.set('/vault/a.md', 'original')
+    const tabs = useTabsStore()
+    tabs.setVault('/vault')
+    await tabs.openTab('/vault/a.md')
+    const tab = tabs.tabs[0]
+    tab.content = 'local edits'
+    tabs.markDirty(tab.id)
+    let release!: (text: string) => void
+    readMock.mockImplementationOnce(() => new Promise<string>((resolve) => { release = resolve }))
+    const saving = tabs.saveTab(tab.id)
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    tabs.renamePathInTabs('/vault/a.md', '/vault/b.md')
+    release('original')
+    await expect(saving).resolves.toBe(false)
+    expect(writeMock).not.toHaveBeenCalled()
+    expect(tab.path).toBe('/vault/b.md')
+    expect(tab.dirty).toBe(true)
   })
 
   it('writes nothing while the note is still being read into its tab', async () => {

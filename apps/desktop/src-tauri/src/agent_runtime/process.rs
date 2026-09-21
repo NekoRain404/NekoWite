@@ -15,6 +15,7 @@
 //! different group, started by them — is never a candidate.
 
 use std::collections::VecDeque;
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;

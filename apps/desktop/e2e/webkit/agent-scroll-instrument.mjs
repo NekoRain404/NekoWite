@@ -903,16 +903,20 @@ window.__nkwPixelDiff = function (opts, done) {
       done({ why: 'the two screenshots are not the same size' }); return;
     }
     const ctxA = a.getContext('2d'), ctxB = b.getContext('2d');
-    const bw = 12;
-    const x0 = Math.max(0, Math.floor(box.left) - bw);
-    const y0 = Math.max(0, Math.floor(box.top) - bw);
-    const x1 = Math.min(a.width, Math.ceil(box.right) + bw);
-    const y1 = Math.min(a.height, Math.ceil(box.bottom) + bw);
+    // WebDriver may return device pixels or CSS pixels. Derive the mapping
+    // from the actual raster, not devicePixelRatio or the CSS box alone.
+    const scaleX = a.width / innerWidth, scaleY = a.height / innerHeight;
+    const raster = { left: box.left * scaleX, right: box.right * scaleX,
+                     top: box.top * scaleY, bottom: box.bottom * scaleY };
+    const x0 = Math.max(0, Math.floor(raster.left - 12 * scaleX));
+    const y0 = Math.max(0, Math.floor(raster.top - 12 * scaleY));
+    const x1 = Math.min(a.width, Math.ceil(raster.right + 12 * scaleX));
+    const y1 = Math.min(a.height, Math.ceil(raster.bottom + 12 * scaleY));
     if (x1 <= x0 || y1 <= y0) { done({ why: 'the box is off screen' }); return; }
     const da = ctxA.getImageData(x0, y0, x1 - x0, y1 - y0).data;
     const db = ctxB.getImageData(x0, y0, x1 - x0, y1 - y0).data;
-    const left = Math.round(box.left) - x0, top = Math.round(box.top) - y0;
-    const right = Math.round(box.right) - x0, bottom = Math.round(box.bottom) - y0;
+    const left = Math.round(raster.left) - x0, top = Math.round(raster.top) - y0;
+    const right = Math.round(raster.right) - x0, bottom = Math.round(raster.bottom) - y0;
     const width = x1 - x0;
     const band = { outside: 0, inside: 0, outsideDelta: 0, insideDelta: 0, sample: [],
                    strip: { left: 0, right: 0, top: 0, bottom: 0 },
@@ -963,6 +967,7 @@ window.__nkwPixelDiff = function (opts, done) {
     band.map = cells.map(function (row) { return row.join(''); });
 
     band.band = { x0: x0, y0: y0, x1: x1, y1: y1 };
+    band.scale = { x: scaleX, y: scaleY, width: a.width, height: a.height };
     band.box = { left: Math.round(box.left), top: Math.round(box.top), right: Math.round(box.right), bottom: Math.round(box.bottom) };
     band.relative = {
       dx: [Math.round(band.extent.minX) - left, Math.round(band.extent.maxX) - right],

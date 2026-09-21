@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { deleteNoteWithAssets, siblingAssetsDir } from './note-delete'
+import { deleteNoteWithAssets, siblingAssetsDir, noteAssetDirectoryExists } from './note-delete'
 
 /** The two fs calls this service needs, with the trash recorded. */
 function io(opts: { withAssets?: boolean; assetsDeleteFails?: boolean; noteDeleteFails?: boolean } = {}) {
@@ -95,12 +95,33 @@ describe('deleteNoteWithAssets', () => {
     expect(deps.trashed).toEqual([])
   })
 
-  it('treats an unreadable existence probe as "no assets" instead of failing the delete', async () => {
+  it('reports incomplete asset cleanup when its existence probe fails', async () => {
     // A probe that throws must not stop the delete the user asked for.
     const deps = io({ withAssets: true })
     deps.exists.mockRejectedValue(new Error('io'))
     const result = await deleteNoteWithAssets(deps, '/vault', '/vault/notes/a.md')
-    expect(result).toEqual({ assetsMoved: false, assetsFailed: false })
+    expect(result).toEqual({ assetsMoved: false, assetsFailed: true })
     expect(deps.trashed).toEqual(['/vault/notes/a.md'])
+  })
+})
+
+describe('note asset existence adapter', () => {
+  const path = '/vault/a_assets'
+  it('returns true after a successful stat', async () => {
+    await expect(noteAssetDirectoryExists({ stat: async () => ({}) }, '/vault', path)).resolves.toBe(true)
+  })
+  it.each([
+    `could not stat ${path}: no such file or folder (os error 2)`,
+    `could not stat ${path}: no such file or folder`,
+    `No such file in demo vault: ${path}`,
+  ])('returns false only for a missing target: %s', async (error) => {
+    await expect(noteAssetDirectoryExists({ stat: async () => { throw new Error(error) } }, '/vault', path)).resolves.toBe(false)
+  })
+  it.each([
+    'could not stat /vault/no such file or folder: permission denied (os error 13)',
+    'could not open the vault root /vault: no such file or folder (os error 2)',
+    'input/output error',
+  ])('propagates an unknown state: %s', async (error) => {
+    await expect(noteAssetDirectoryExists({ stat: async () => { throw error } }, '/vault', path)).rejects.toBe(error)
   })
 })

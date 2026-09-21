@@ -25,6 +25,7 @@ import { createRefusedSaveAnswer } from './refused-save'
 import { createSelfWrites } from './self-writes'
 import { createTabAssets } from './tab-assets'
 import { createTabSaveState } from './tab-save-state'
+import { createTabSaveQueue } from './tab-save-queue'
 import { createTabSettler } from './tab-settle'
 import { createWritePreconditions } from './tab-write-preconditions'
 import type { OpenTab } from './tabs'
@@ -39,7 +40,7 @@ export interface TabSaveFilePort {
   /** Read the bytes a save is about to replace. Not optional: the save does not
    *  write without looking first (see `tab-write-preconditions.ts`). */
   read(vault: string, path: string): Promise<string>
-  write(vault: string, path: string, content: string, maxHistory?: number): Promise<string | null>
+  write(vault: string, path: string, content: string, maxHistory?: number, expectedContent?: string): Promise<string | null>
   saveFileDialog(defaultName: string, startDir?: string): Promise<string | null>
   createDir(vault: string, path: string): Promise<string>
   renameEntry(vault: string, from: string, to: string): Promise<string>
@@ -122,49 +123,8 @@ export function createTabSave(deps: TabSaveDeps) {
   // somebody else made from our own saved text; see the module note.
   const preconditions = createWritePreconditions({ files, vault, t, notifyError })
 
-  /**
-   * Saves that have not settled yet, keyed by tab id.
-   *
-   * Saving was not serialized, and three things went wrong at once when two
-   * saves of one tab overlapped (Ctrl+S pressed twice, or the autosave timer
-   * firing while a manual save was still writing):
-   *
-   * - the file was written twice, which on the backend means two history
-   *   snapshots of the same edit;
-   * - `markSaved` is a set, so the first save to finish cleared the "saving"
-   *   state while the other was still in flight — the status line said "saved"
-   *   over an unfinished write;
-   * - the LAST one to finish won the state, not the last one started. A save
-   *   that began earlier but completed later wrote its older `savedContent`
-   *   and `dirty = false` over the newer one, so the tab looked saved while the
-   *   window's idea of the disk content was stale — and the next watcher event
-   *   (disk != savedContent) was then treated as an external edit.
-   *
-   * A second save now waits for the running one and only writes again if
-   * something new was typed in the meantime.
-   */
-  const inFlightSaves = new Map<string, Promise<boolean>>()
-
-  /** Returns true when the file is on disk with the intended content. */
-  async function saveTab(id: string, opts: TabSaveOptions = {}): Promise<boolean> {
-    const running = inFlightSaves.get(id)
-    if (running) {
-      const ok = await running.catch(() => false)
-      const current = tabs.value.find((x) => x.id === id)
-      // Gone (closed/removed) or the running save failed: nothing more to do
-      // here, and reporting success would be a lie.
-      if (!current || !ok) return false
-      // The running save wrote the text as it was when it started. If the user
-      // has not typed since, that IS this save — writing identical bytes again
-      // would only add a history snapshot.
-      if (!current.dirty) return true
-    }
-    const run = runSaveTab(id, opts).finally(() => {
-      if (inFlightSaves.get(id) === run) inFlightSaves.delete(id)
-    })
-    inFlightSaves.set(id, run)
-    return run
-  }
+  const saveQueue = createTabSaveQueue({ tabs, vault, run: runSaveTab })
+  const { saveTab } = saveQueue
 
   async function runSaveTab(id: string, opts: TabSaveOptions): Promise<boolean> {
     const tab = tabs.value.find((x) => x.id === id)
@@ -178,6 +138,7 @@ export function createTabSave(deps: TabSaveDeps) {
     // vault it is writing to.
     const vaultAtStart = vault.value
     let path = tab.path
+    const ownsTarget = () => vault.value === vaultAtStart && tabs.value.includes(tab) && tab.path === path
     // Save-As binds the tab to the picked name BEFORE the write, because
     // everything below (the asset relocation, the save itself) needs the
     // destination. A write that then FAILS leaves that binding standing — the
@@ -189,7 +150,7 @@ export function createTabSave(deps: TabSaveDeps) {
     if (!path) {
       // Untitled tab: an explicit save means "save as", not a silent no-op.
       const picked = await files.saveFileDialog('untitled.md', vault.value)
-      if (!picked) return false
+      if (!picked || !ownsTarget()) return false
       tab.path = picked
       path = picked
       pickedInThisSave = true
@@ -205,6 +166,7 @@ export function createTabSave(deps: TabSaveDeps) {
     // within its debounce window used to persist the previous text and then
     // re-apply it to the model, losing the keystrokes outright.
     await flushEdits()
+    if (!ownsTarget()) { markFailed(tab.id); return false }
     // A document the rendered model could not load must not be written — the
     // refusal, and the reason it is refused, are in
     // `tab-write-preconditions.ts`. The state this sets is this module's: the
@@ -219,12 +181,12 @@ export function createTabSave(deps: TabSaveDeps) {
     // `pendingAssetPaths.length > 0` — made an empty list mean "do not look",
     // and the list does not survive a restart, so a note restored by path could
     // never repair an image its first save left in `.tmp` (see `tab-assets.ts`).
-    await assets.relocate(tab, vault.value, path)
+    await assets.relocate(tab, vaultAtStart, path)
     // The flush and the asset relocation are both awaits, so the world can have
     // changed under us. Writing now would put this note into a vault it does not
     // belong to; leaving the tab dirty is the honest outcome (the user can save
     // it again in whichever vault is open).
-    if (vault.value !== vaultAtStart) return false
+    if (!ownsTarget()) { markFailed(tab.id); return false }
     const editor = getActiveEditor()
     const contentAtStart = tab.content
     // The evidence that decides whether this save may call the tab saved, read
@@ -239,12 +201,11 @@ export function createTabSave(deps: TabSaveDeps) {
     // how another program's version disappears with nobody told, and this is the
     // last moment the question can be asked — the flush and the relocation above
     // are both whole-document work of their own.
-    if (
-      !(await preconditions.fileHoldsOurBytes(tab, vaultAtStart, path, {
-        pickedPath: pickedInThisSave,
-        userAsked: opts.userAsked === true,
-      }))
-    ) {
+    const commit = await preconditions.fileHoldsOurBytes(tab, vaultAtStart, path, {
+      pickedPath: pickedInThisSave,
+      userAsked: opts.userAsked === true,
+    })
+    if (!commit || !ownsTarget()) {
       // Nothing was written, so nothing about a write happens: no `onSave` for a
       // save the app refused (the unrenderable refusal above is refused the same
       // way, for the same reason), and the flag this save raised comes back down
@@ -268,8 +229,13 @@ export function createTabSave(deps: TabSaveDeps) {
       // something optional around it was not. Most often "the previous version
       // could not be kept in history" — which the user has to hear about, because
       // the thing they trust for undo-after-the-fact is now missing.
-      const writeWarning = await files.write(vaultAtStart, path, content, settings.maxHistory)
+      const writeWarning = commit.expectedContent === undefined
+        ? await files.write(vaultAtStart, path, content, settings.maxHistory)
+        : await files.write(vaultAtStart, path, content, settings.maxHistory, commit.expectedContent)
       if (writeWarning) notifyError(writeWarning)
+      // A landed write belongs to its original path, not a detached or replaced
+      // buffer. In particular, deletion must never turn rescued text clean.
+      if (!ownsTarget()) return false
       // `savedContent` is what this tab believes is ON DISK, and after a landed
       // write that is exactly `content` — true whatever the user typed in the
       // meantime, because those keystrokes are not on disk yet.
@@ -307,16 +273,12 @@ export function createTabSave(deps: TabSaveDeps) {
       }
       // Otherwise: dirty stays true, and the autosave timer the keystroke armed
       // is still pending, so the newer text gets its own save.
-      // The write did land in the right vault (guarded above), but the tab set
-      // may have been replaced wholesale while it was in flight — a vault
-      // switch removes every tab. Touching a removed tab is harmless, touching
-      // a REUSED id would not be, so the lifecycle event is skipped too.
-      if (vault.value !== vaultAtStart) return true
       emitLifecycle('onSaved', editor, content)
       // Screen-reader status: a save round-trip landed (dirty → saved).
       announce(t('recovery.saved'))
       return true
     } catch (e) {
+      if (!ownsTarget()) return false
       // The write did not land, so a path this save was the one to pick names a
       // file the tab never wrote and has never read: give the tab back its
       // untitled state rather than leave it asserting an association that does
@@ -375,7 +337,7 @@ export function createTabSave(deps: TabSaveDeps) {
    *  tab set, or a later open (or a reused id) would inherit the stale
    *  remnants. */
   function resetSaveBookkeeping(): void {
-    inFlightSaves.clear()
+    saveQueue.reset()
     selfWrites.clear()
     saveState.reset()
   }

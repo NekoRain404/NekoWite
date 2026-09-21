@@ -40,8 +40,27 @@ export interface NoteDeleteIo {
 export interface NoteDeleteResult {
   /** True when the note's `_assets` folder existed and went to the trash. */
   assetsMoved: boolean
-  /** True when the `_assets` folder existed but could not be moved. */
+  /** True when the `_assets` folder could not be checked or moved. */
   assetsFailed: boolean
+}
+
+/** Adapt stat's missing-path error without hiding permission or IO failures. */
+export async function noteAssetDirectoryExists(
+  files: { stat(vault: string, path: string): Promise<unknown> },
+  vault: string,
+  path: string,
+): Promise<boolean> {
+  try {
+    await files.stat(vault, path)
+    return true
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    // Match the requested target, not a substring a filename could contain.
+    const missing = `could not stat ${path}: no such file or folder`
+    if (message === missing || message === `${missing} (os error 2)`
+      || message === `No such file in demo vault: ${path}`) return false
+    throw error
+  }
 }
 
 /**
@@ -74,11 +93,15 @@ export async function deleteNoteWithAssets(
   const assets = siblingAssetsDir(notePath)
   // Ask about the folder BEFORE the note is trashed: afterwards the note is
   // gone and an error here would be indistinguishable from "no assets".
-  const hadAssets = assets ? await io.exists(vault, assets).catch(() => false) : false
+  let probeFailed = false
+  const hadAssets = assets ? await io.exists(vault, assets).catch(() => {
+    probeFailed = true
+    return false
+  }) : false
 
   await io.deleteFile(vault, notePath)
 
-  if (!assets || !hadAssets) return { assetsMoved: false, assetsFailed: false }
+  if (!assets || !hadAssets) return { assetsMoved: false, assetsFailed: probeFailed }
   try {
     await io.deleteFile(vault, assets)
     return { assetsMoved: true, assetsFailed: false }

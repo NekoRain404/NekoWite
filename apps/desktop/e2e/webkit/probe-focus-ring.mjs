@@ -54,6 +54,7 @@ import { FOCUS_CONTROLS, CONTROL_SELECTORS } from './focus-controls.mjs'
 import { PAGE_SURFACES, MOUNTS, MOUNT_SCRIPT, UNMOUNT_SCRIPT, RING_PIXEL_STOPS } from './focus-surfaces.mjs'
 import { clickStatusButton, pressKeys } from './agent-scroll-driver.mjs'
 import { clickByText } from './probe-support.mjs'
+import { ensureFocusPermission } from './focus-permission-fixture.mjs'
 
 /** `--violate ringless`: the indicator suppressed in the page, so the checks can be shown red. */
 const VIOLATION = 'ringless'
@@ -143,6 +144,8 @@ export const focusRingProbe = {
                   toolbarCount: count ? count.textContent.trim() : null };`,
       )
     }
+
+    if (harness.agent) out.permissionFixture = await ensureFocusPermission(wd)
 
     // Keyboard modality, re-established after every pointer gesture and read as a measurement
     // rather than assumed. `:focus-visible` is the heuristic on the LAST INPUT's kind, so a
@@ -616,4 +619,3 @@ async function decode(wd, sel, before, after) {
     return { why: String(error.message || error) }
   }
 }
-

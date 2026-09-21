@@ -46,6 +46,8 @@ export const documents = {
       crashRecoveryMsg: 'It looks like the app was interrupted last time. Unsaved changes detected ({time}) — restore the latest version?',
       saveAttachmentFailed: 'Failed to save attachment; the image remains in the temp folder',
       saveFailed: 'Save failed; content is kept in the editor, please retry',
+      saveBlockedUnreadable:
+        'Not saved: {path} could not be read to check for external changes. Your text is kept in the editor; check the file location and read permissions before retrying.',
       // Not `saveFailed`: that one says "please retry", and a retry here is
       // refused again for the same document until it renders. The cause is the
       // point — otherwise the user retries, sees the same toast, and concludes
@@ -150,6 +152,8 @@ export const documents = {
       crashRecoveryMsg: '检测到上次程序中断，检测到未保存的更改（{time}），恢复最近版本？',
       saveAttachmentFailed: '保存附件失败，图片仍保留在临时目录',
       saveFailed: '保存失败，内容已保留在编辑器中，请重试',
+      saveBlockedUnreadable:
+        '未保存：无法读取 {path} 来核对外部改动。你的文字仍保留在编辑器中；请检查文件位置和读取权限后重试。',
       saveBlockedUnrenderable:
         '未保存：这篇笔记无法被渲染，编辑器无法为将要写入的内容担保。你的文字未改动。',
       saveBlockedReadOnly:

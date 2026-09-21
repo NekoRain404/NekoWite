@@ -1,71 +1,4 @@
-/**
- * The real agent gateway: the contract's `AgentGateway` on top of the window's IPC.
- *
- * It is the second implementation of the interface `platform/gateways/agent-contracts.ts`
- * states — `memory-agent.ts` is the other — and the two are interchangeable at the composition
- * site (§9: `app/agent-composition.ts` injects one or the other). Nothing in `features/agent`
- * may tell which one it has, and this file keeps that true from its own side: it imports no
- * JSON-RPC, no ACP type and no engine name, and every Tauri call it makes is behind the
- * `AgentIpc` port in `tauri-agent/ipc.ts`.
- *
- * ## What the double gets for free and this file has to do
- *
- * The double *is* the runtime and the gateway in one object; here they are a process away, and
- * four things that cost nothing there are deliberate work here — each in its own module, by
- * subject:
- *
- *  - **`frames.ts` / `tools.ts`** — the mapping from the runtime's frames to the contract's
- *    events, which is where the two vocabularies are reconciled. It is the reason this task
- *    exists; `frames.ts`'s header states all three disagreements and which side moved.
- *  - **`session.ts`** — the session handle, which only a gateway may mint, and the model
- *    catalog projected from the option the host names.
- *  - **`channel.ts`** — one removable registration of the host's event channel, and the
- *    snapshot-then-subscribe handshake §6.2 requires.
- *
- * What is left here is the gateway surface itself and the two pieces of bookkeeping that belong
- * to no single one of those: the runtime handle, and the promises of the turns in flight.
- *
- * ## The turn promises, and why the frames settle them
- *
- * `prompt` resolves when the turn ends, and a turn ends as an *event*: the Rust runtime's
- * `prompt` returns the host's run id immediately (`runs.rs`) and the story is finished by
- * `run-finished` or `run-failed`. So a promise here is settled by the frame stream — with the
- * ordering race the store documents in its own header, in which the engine's reaction can be
- * delivered *before* the call that asked for it returns, which is why an ending for a run whose
- * id has not been learned yet is parked rather than dropped.
- *
- * ## The latch, and what may release it
- *
- * One turn at a time per session (§6.2), held in this adapter's own `running` table. Its invariant
- * is "a turn is in flight", so **anything that proves no turn is in flight releases it** — and
- * that set, not the ending frame alone, is what this adapter holds to:
- *
- *  - an ending frame for the run (the ordinary path), or `ipc.prompt` rejecting, which means no
- *    run was started at all;
- *  - **`closeSession`**: the engine has let the session go (`agent_close_session` drops the host's
- *    slot, and `runs.rs`'s `finish_run` publishes nothing for a slot that is gone), so nothing can
- *    be in flight on it — and the turn is ended here rather than abandoned, because the ending it
- *    was waiting for can never be sent;
- *  - **`stop`**: the runtime that could hold a turn is over, whatever the bookkeeping was in the
- *    middle of, so every latch it minted goes with it.
- *
- * Deliberately *not* in that set is `cancel`. This repository's ruling is that a cancel is a
- * request and not an outcome (`features/agent/stores/agent-session.ts`: "Marking it locally would
- * be the host claiming an ending it has not been told about"), and a latch released on one would
- * let a second turn onto a session whose first may still be running — the interleaving §6.2
- * forbids, and the reason the refusal exists at all.
- *
- * **A latch held past the runtime's own bound is reported rather than kept.** The bound — the
- * host's own on a generation, plus a delivery allowance — is `turn-bound.ts`'s subject, and what
- * this file does with it is arm one deadline per turn: past it, the turn is failed as `timeout`
- * rather than waited on forever. Without that net, an engine whose ending never arrives (a host
- * that publishes none, a transport that says nothing) leaves the session unsendable for the life
- * of the runtime; with it, the worst case is a reported turn rather than a silent one.
- *
- * Every release is matched on the turn's own token, so a turn winding down cannot free the latch
- * of the turn that replaced it — a release that could would be the interleaving §6.2 forbids,
- * arrived at by repair.
- */
+/** Tauri agent gateway: session ownership and IPC projection, with per-session turns. */
 
 import {
   AgentFailure,
@@ -80,13 +13,11 @@ import {
   type AgentIdentity,
   type AgentOpenRequest,
   type AgentPromptAttachment,
-  type AgentRunResult,
   type AgentSession,
   type AgentSessionHistory,
   type AgentSessionSnapshot,
 } from './agent-contracts'
 import { createEventChannel, checkSnapshot, mapAll, readHostState } from './tauri-agent/channel'
-import { KEY_SEPARATOR } from './tauri-agent/fields'
 import { ToolProjection } from './tauri-agent/tools'
 import {
   createTauriAgentIpc,
@@ -94,7 +25,7 @@ import {
   type AgentRuntimeHandle,
 } from './tauri-agent/ipc'
 import { createSessionBook, readRefreshedOptions } from './tauri-agent/session'
-import { expiredTurn, TURN_LIVENESS_BOUND_MS } from './tauri-agent/turn-bound'
+import { createAgentTurns } from './tauri-agent/turns'
 
 export { AGENT_EVENT_CHANNEL, createTauriAgentIpc } from './tauri-agent/ipc'
 export type { AgentIpc, AgentRuntimeHandle } from './tauri-agent/ipc'
@@ -127,41 +58,12 @@ export interface TauriAgentOptions {
   onUnmappable?: (failure: AgentFailure) => void
 }
 
-/** A prompt that has been sent and not yet ended. */
-interface PendingRun {
-  settle(result: AgentRunResult): void
-  fail(failure: AgentFailure): void
-  /** The host's id for the run, once `agent_prompt` has returned it. */
-  runId: string | null
-  /**
-   * The session the turn belongs to.
-   *
-   * Kept because one caller has only the *id* to go on: `closeSession` takes a session id
-   * (`AgentGateway.closeSession`), and it is the call that has to end the turn that id was
-   * running.
-   */
-  sessionId: string
-}
-
 export function createTauriAgentGateway(options: TauriAgentOptions): AgentGateway {
   const ipc = options.ipc ?? createTauriAgentIpc()
   const report =
     options.onUnmappable ??
     ((failure) => console.error(`[NekoWite] an agent frame was dropped: ${failure.message}`))
   const tools = new ToolProjection()
-  const pending = new Map<string, PendingRun>()
-  /**
-   * The turn each session has in flight, by session id — §6.2's one active generation per session.
-   *
-   * The value is the turn's own token rather than a marker, because a release has to belong to the
-   * turn making it: a `finally` can run after the session was reopened and a new turn took the
-   * latch, and a release matched on the id alone would free a latch it no longer owns — which is
-   * precisely the interleaving this holds shut (see the header).
-   */
-  const running = new Map<string, symbol>()
-  /** A session whose `agent_prompt` call is in flight, the turn that is starting, and any ending
-   *  that arrived first. */
-  let starting: { sessionId: string; turn: symbol; parked: AgentEvent[] } | null = null
   /** The live runtime instance, or null before `start` / after `stop`. */
   let runtime: AgentRuntimeHandle | null = null
 
@@ -187,88 +89,11 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
     tools,
     report,
     onFrame(event) {
-      if (event.kind === 'run-finished' || event.kind === 'run-failed') settle(event)
+      if (event.kind === 'run-finished' || event.kind === 'run-failed') turns.settle(event)
     },
   })
 
-  function runKey(identity: AgentIdentity, runId: string): string {
-    return [identity.agentId, identity.profileId, identity.runtimeEpoch, identity.sessionId,
-      runId].join(KEY_SEPARATOR)
-  }
-
-  /**
-   * Give a session's latch back — if this turn is the one holding it.
-   *
-   * The check is the whole of the function, and it is what keeps the release from being a way
-   * around the latch: a turn that failed after its session was reopened must not free the latch
-   * its successor took, or the next prompt would be allowed onto a session that already has a turn
-   * in flight (§6.2, and the header's own account of what that costs).
-   */
-  function releaseTurn(sessionId: string, turn: symbol): void {
-    if (running.get(sessionId) === turn) running.delete(sessionId)
-  }
-
-  /**
-   * End the turn a session was running, because the session itself is gone.
-   *
-   * `closeSession` is the one caller. `agent_close_session` drops the host's slot and `runs.rs`'s
-   * `finish_run` publishes no ending for a slot that is gone, so the frame this turn was waiting
-   * for can never be sent: the promise is ended here with the host's own word for a turn that was
-   * stopped rather than finished, and the latch is released by that turn's own `finally`.
-   */
-  function endTurnFor(sessionId: string, message: string): void {
-    for (const run of pending.values()) {
-      if (run.sessionId !== sessionId) continue
-      run.fail(new AgentFailure('cancelled', message))
-      return
-    }
-    // No pending entry: the turn is still inside its own `agent_prompt` call, which cannot be
-    // failed from here. Its latch is released by the token it took — safely, because that token is
-    // this session's only turn — and its call will fail on its own, the host it addressed no
-    // longer holding the session.
-    if (starting !== null && starting.sessionId === sessionId) {
-      releaseTurn(sessionId, starting.turn)
-    }
-  }
-
-  /**
-   * Settle the promise of the turn this frame ends.
-   *
-   * The parked half is the race, not a precaution: `run-finished` for a run whose id the
-   * adapter has not learned yet would otherwise be dropped, leaving `prompt` waiting on a turn
-   * that is over — which is the failure mode the whole task is about.
-   */
-  function settle(event: AgentEvent): void {
-    if (event.runId === null) return
-    const run = pending.get(runKey(event, event.runId))
-    if (run) {
-      finish(run, event)
-      return
-    }
-    if (starting !== null && starting.sessionId === event.sessionId) {
-      starting.parked.push(event)
-    }
-  }
-
-  function finish(run: PendingRun, event: AgentEvent): void {
-    // Removed before settling: the promise's continuation may start the next turn, and a key
-    // that is still present would make that turn's first frame look like this one's.
-    for (const [key, entry] of pending) {
-      if (entry === run) pending.delete(key)
-    }
-    // A switch rather than a pair of ifs: `AgentEvent` is a mapped union, and switching on the
-    // discriminant is what narrows `payload` to the arm the kind names.
-    switch (event.kind) {
-      case 'run-finished':
-        run.settle({ stopReason: event.payload.stopReason, usage: event.payload.usage })
-        return
-      case 'run-failed':
-        run.fail(new AgentFailure(event.payload.code, event.payload.message))
-        return
-      default:
-        return
-    }
-  }
+  const turns = createAgentTurns(ipc, channel)
 
   /**
    * Move one of the session's own options, whichever one it is.
@@ -306,18 +131,7 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
       if (runtime === null) return
       await ipc.stop()
       runtime = null
-      // The turns in flight are ended rather than abandoned, and the caller's promise rejects:
-      // the request that would have answered it is gone with the runtime.
-      const failure = new AgentFailure('cancelled', 'the runtime stopped while the turn was running')
-      for (const run of [...pending.values()]) run.fail(failure)
-      pending.clear()
-      // The latch goes with the runtime, and not only through the turns that were pending: a turn
-      // whose `agent_prompt` call has not answered yet has no pending entry to fail, and it is the
-      // one that would have held its session for the life of the next runtime. A turn cannot be in
-      // flight in a runtime that is over, so nothing is claimed by clearing this — and the release
-      // a still-winding-down turn performs on its way out is matched on its own token, so it
-      // cannot free a later turn's latch (see `releaseTurn`).
-      running.clear()
+      turns.stop()
       // The handles name a runtime that is over, and the projection is keyed by its epoch. The
       // listed names go with them: a session id is the engine's, but "the last list this window
       // read" is not, and a row picked before the stop is not one the next runtime answered for.
@@ -404,7 +218,7 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
       // the reader's next send on a session the engine has already let go — including the reopened
       // handle they would take from the very row they just freed, whose engine id is the same one
       // this latch is keyed by.
-      endTurnFor(sessionId, `session ${sessionId} was closed while the turn was running`)
+      turns.closeSession(sessionId)
     },
 
     setConfigOption,
@@ -430,70 +244,9 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
       session: AgentSession,
       text: string,
       attachments: readonly AgentPromptAttachment[] = [],
-    ): Promise<AgentRunResult> {
+    ) {
       const record = book.recordFor(session)
-      // One turn at a time per session (§6.2): a second would interleave two runs into one
-      // stream with no way to tell which text belongs to which — and the refusal says *that*,
-      // rather than `buffer-conflict`'s "this stream cannot be continued" (`channel.ts`) or "this
-      // view is larger than the host will hold" (`agent-event-reducer.ts`).
-      if (running.has(session.sessionId)) {
-        throw new AgentFailure(
-          'turn-in-flight',
-          `session ${session.sessionId} already has a turn in flight`,
-        )
-      }
-      const turn = Symbol('turn')
-      running.set(session.sessionId, turn)
-      await channel.handle()
-      let settleRun!: (result: AgentRunResult) => void
-      let failRun!: (failure: AgentFailure) => void
-      const ended = new Promise<AgentRunResult>((resolve, reject) => {
-        settleRun = resolve
-        failRun = reject
-      })
-      // Owned from the moment it exists, and that is not the same as being awaited: the deadline
-      // below can fire while `agent_prompt` is still outstanding, and it would reject a promise
-      // whose rejection the caller only reads a moment later — an unhandled rejection in the
-      // window between, which this codebase treats as a reported error rather than a private one
-      // (see the vitest config's own note). This handler does not swallow the failure: `await
-      // ended` further down is still what carries it to the caller, once, with the same value.
-      void ended.catch(() => {})
-      // The turn's own deadline, armed here rather than at some frame that would end it: nothing
-      // is promised to arrive, so the only thing this window can do about a turn that outlives the
-      // host's own bound is end it itself and say which fact that was (`turn-bound.ts` holds the
-      // number and the sentence).
-      const bound = setTimeout(() => failRun(expiredTurn()), TURN_LIVENESS_BOUND_MS)
-      const run: PendingRun = {
-        runId: null,
-        sessionId: session.sessionId,
-        settle: settleRun,
-        fail: failRun,
-      }
-      starting = { sessionId: session.sessionId, turn, parked: [] }
-      let runId: string | null = null
-      try {
-        runId = await ipc.prompt(session.sessionId, text, attachments)
-        run.runId = runId
-        pending.set(runKey(record.identity, runId), run)
-        // An ending that arrived while the call was in flight belongs to this run — the engine
-        // cannot have ended a run the host had not started — so it settles now, in order.
-        const parked = starting.parked
-        starting = null
-        for (const event of parked) {
-          if (event.runId === runId) finish(run, event)
-        }
-        return await ended
-      } finally {
-        // One place for the whole of what a turn leaves behind, reached however it ended: an
-        // ending frame, a call the host refused, the deadline above, or a session that was let go
-        // underneath it. The latch is released by the token this turn took, so a turn winding down
-        // here after its session was reopened cannot free its successor's (see `releaseTurn`).
-        if (runId !== null) pending.delete(runKey(record.identity, runId))
-        if (starting !== null && starting.turn === turn) starting = null
-        clearTimeout(bound)
-        releaseTurn(session.sessionId, turn)
-        await channel.release()
-      }
+      return turns.prompt(record.identity, text, attachments)
     },
 
     async recoverChange(session: AgentSession, path: string): Promise<AgentChangeRecovery> {

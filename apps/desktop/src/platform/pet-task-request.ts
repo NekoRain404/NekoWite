@@ -2,7 +2,8 @@
  * The pet's click on a task, as the main window hears it.
  *
  * §6.2's 点击返回任务 has two halves, and this is the receiving one: the pet window's row calls
- * `desktop_pet_open_task`, the host raises this window and emits on `pet-open-task`, and what
+ * `desktop_pet_open_task`, the host raises this window and retains a request before signalling
+ * `pet-open-task`. This listener consumes pending requests after mounting and on each signal. What
  * arrives here is D1's `PetTaskKey` — the session, the profile, the engine, the epoch, the session
  * id and the run — and nothing else. No URL, no path, no command: §6.3 requires a notification's
  * action to be a host-issued target, and the key is the only shape the host mints.
@@ -24,7 +25,7 @@
  * is handed a no-op release and the layers above stay free of the bridge.
  */
 
-import { listen } from '@tauri-apps/api/event'
+import { onPetNavigation } from './pet-navigation-listener'
 import { isPetTaskKey, type PetTaskKey } from './gateways/pet-contracts'
 import { PET_TASK_OPEN_CHANNEL } from './gateways/tauri-pet'
 
@@ -41,18 +42,16 @@ import { PET_TASK_OPEN_CHANNEL } from './gateways/tauri-pet'
  * the console rather than swallowed, because the only producer of this channel is the host.
  */
 export async function onPetTaskRequest(cb: (key: PetTaskKey) => void): Promise<() => void> {
-  try {
-    return await listen<unknown>(PET_TASK_OPEN_CHANNEL, (event) => {
-      if (!isPetTaskKey(event.payload)) {
+  return onPetNavigation<unknown>(
+    PET_TASK_OPEN_CHANNEL, 'desktop_pet_take_task_requests', (request) => {
+      if (!isPetTaskKey(request)) {
         console.error(
           `[NekoWite] a ${PET_TASK_OPEN_CHANNEL} payload was not a task key, so nothing was focused`,
-          event.payload,
+          request,
         )
         return
       }
-      cb(event.payload)
-    })
-  } catch {
-    return () => {}
-  }
+      cb(request)
+    },
+  )
 }

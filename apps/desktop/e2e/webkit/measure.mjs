@@ -180,7 +180,7 @@ async function main() {
   })
 
   const wd = new WebDriver(driverPort)
-  const results = { engine: null, viewport: null, scenario, agent, chat, probes: {} }
+  const results = { engine: null, viewport: null, scenario, agent, chat, only, probes: {} }
   watchdog(Number(arg('watchdog', '300000')))
   try {
     stage('session')
@@ -257,9 +257,12 @@ async function main() {
         '\n',
     )
   }
-  // The drivers and the dev server are children of this process and their
-  // handles keep the event loop alive after the session is over, which turns a
-  // finished run into a hang with the answer already printed.
+  // Forced exit is needed for the driver's lingering handles, but only after
+  // both pipe buffers drain; immediate exit truncates large machine-readable reports.
+  await Promise.all([
+    new Promise((resolve) => process.stdout.write('', resolve)),
+    new Promise((resolve) => process.stderr.write('', resolve)),
+  ])
   process.exit(results.verdict?.failed ? 1 : 0)
 }
 

@@ -411,6 +411,9 @@ test.describe('the settings dialog, when its content is swapped', () => {
 async function swap(page: Page, from: string, to: string, offset: number): Promise<Landing> {
   await page.locator(`.pet-settings__tab[data-page="${from}"]`).click()
   await page.waitForTimeout(300)
+  // Prepare the next press only after the source page's layout has settled;
+  // a fixed delay can still land inside its transition under load.
+  await settled(page, SETTLES)
   await page.evaluate((top: number) => {
     ;(document.querySelector('.dialog-content') as HTMLElement).scrollTop = top
   }, offset)

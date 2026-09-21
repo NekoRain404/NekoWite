@@ -96,7 +96,7 @@ describe('closeOthers', () => {
     expect(s.tabs).toHaveLength(1)
     expect(s.tabs[0].id).toBe(keep.id)
     expect(s.activeId).toBe(keep.id)
-    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'abc', 10)
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'abc', 10, 'abc')
   })
 })
 
@@ -211,7 +211,7 @@ describe('closeAll cleanup', () => {
     // Exactly one write — the flush that closing does on purpose. The timer armed
     // before the close must not fire a second one afterwards.
     expect(writeMock).toHaveBeenCalledTimes(1)
-    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'changed', expect.anything())
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'changed', expect.anything(), 'abc')
     await vi.advanceTimersByTimeAsync(30000)
     expect(writeMock).toHaveBeenCalledTimes(1)
     vi.useRealTimers()
@@ -235,7 +235,7 @@ describe('closeAll never silently discards unsaved work', () => {
 
     await expect(s.closeAll()).resolves.toBe(true)
 
-    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'edited but never saved', expect.anything())
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'edited but never saved', expect.anything(), 'on disk')
     expect(s.tabs).toHaveLength(0)
   })
 

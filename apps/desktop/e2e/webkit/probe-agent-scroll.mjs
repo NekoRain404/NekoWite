@@ -641,6 +641,13 @@ async function keyboardPhase(wd, violated) {
   out.focus.wheelToEnd = await wheel(wd, TIMELINE, 6000)
   await quiet()
   out.focus.wheelBack = await wheel(wd, TIMELINE, -900)
+  // Driver acknowledgement precedes delivery of native wheel input. Do not
+  // attribute that pending movement to the focus or PageDown that follows it.
+  await until(async () => {
+    const position = await wd.execute(`return window.__nkwRead('${TIMELINE}')`)
+    return position && position.scrollTop < position.max
+  }, { timeout: 5000, what: 'the backward wheel to move the transcript off its end' })
+  await quiet()
   out.focus.parked = await wd.execute(`return window.__nkwRead('${TIMELINE}')`)
   // Re-tag: the walk above left its tag behind, and the tag is how a known element is focused
   // before the driver's own Tab does the entering.
@@ -1381,4 +1388,3 @@ async function fitPhase(wd) {
   await applyRailWidth(wd, 300)
   return out
 }
-

@@ -167,6 +167,8 @@ export async function openNote(page: Page, options: HarnessOptions = {}): Promis
           return `${attachmentDir(dir)}/${String(args.file_name ?? 'image.png')}`
         }
         if (cmd === 'list_history') return []
+        // This editor fixture has no pending requests from a pet window.
+        if (cmd === 'desktop_pet_take_settings_requests' || cmd === 'desktop_pet_take_task_requests') return []
         if (cmd === 'plugin:event|listen') return ++n
         return undefined
       },

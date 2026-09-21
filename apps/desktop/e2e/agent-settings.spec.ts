@@ -781,8 +781,7 @@ test.describe('what a permission prompt can and cannot promise', () => {
       // page is read with no session running.
       optionKinds: [],
       limits: ['not-a-sandbox', 'no-isolation', 'stale-requests', 'no-silent-approval'],
-      // The engine's own answer that it holds nothing. Drawn as that statement, and it is the one
-      // arm where this page has nothing to press.
+      // An empty persistent store cannot establish absence of temporary ACP grants.
       grants: { kind: 'listed', grants: [] },
     })
 
@@ -793,9 +792,9 @@ test.describe('what a permission prompt can and cannot promise', () => {
     // §6.3's closing paragraph, on screen: an unbuilt sandbox must not be displayed as one.
     await expect(row(page, '[data-test="permission-limit-not-a-sandbox"]')).toContainText('not a sandbox')
     await expect(row(page, '[data-test="permission-limit-no-isolation"]')).toContainText('nothing here is isolated')
-    // Nothing to take back, so nothing to press: the only control on this page is a row's own
-    // revoke, and there are no rows.
-    await expect(row(page, '[data-test="grants-empty"]')).toContainText('holds no lasting permission')
+    // Only listed persistent rows can be revoked through this page.
+    await expect(row(page, '[data-test="grants-empty"]')).toContainText('no saved permission rules')
+    await expect(row(page, '[data-test="grants-empty"]')).toContainText('does not mean there are no active temporary grants')
     expect(await page.locator(`#${SECTIONS.permission.host} button`).count()).toBe(0)
   })
 

@@ -148,7 +148,7 @@ describe('lifecycle broadcast from tabs store', () => {
     await s.openTab('/vault/a.md')
     const tab = s.tabs[0]
     await s.saveActive()
-    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'abc!', 10)
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'abc!', 10, 'abc')
     expect(tab.content).toBe('abc!')
     expect(tab.savedContent).toBe('abc!')
   })
@@ -176,7 +176,7 @@ describe('lifecycle broadcast from tabs store', () => {
     readMock.mockResolvedValue('abc')
     await s.openTab('/vault/a.md')
     await s.saveActive()
-    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'abc', 10)
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'abc', 10, 'abc')
     expect(savedSpy).toHaveBeenCalledWith(ctx, null, 'abc')
   })
 
@@ -282,7 +282,7 @@ describe('lifecycle broadcast from tabs store', () => {
     const tab = s.tabs[0]
     tab.dirty = true
     await s.saveActive()
-    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'abc!', 10)
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'abc!', 10, 'abc')
     expect(tab.content).toBe('abc')
     expect(tab.savedContent).toBe('abc')
     expect(tab.dirty).toBe(true)
@@ -324,6 +324,7 @@ describe('saveTab flushes the source pane first', () => {
       '/vault/a.md',
       'start plus the pending keystrokes',
       expect.anything(),
+      'start',
     )
   })
 
@@ -521,8 +522,8 @@ describe('hasUnsavedWork and flushDirty', () => {
 
     const ok = await s.flushDirty()
     expect(ok).toBe(true)
-    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'changed a', 10)
-    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/b.md', 'changed b', 10)
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'changed a', 10, 'abc')
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/b.md', 'changed b', 10, 'abc')
     expect(a.dirty).toBe(false)
     expect(b.dirty).toBe(false)
   })

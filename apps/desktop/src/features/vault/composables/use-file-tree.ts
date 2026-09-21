@@ -24,6 +24,7 @@ import { useTabsStore } from '../../../stores/tabs'
 import { notifyError } from '../../../services/errors'
 import { dirName } from '../../../services/paths'
 import { moveOrRepair } from '../../../services/note-move-flow'
+import { noteAssetDirectoryExists } from '../../../services/note-delete'
 import { t } from '../../../i18n'
 import { createVaultFileActions } from '../services/vault-file-actions'
 import type { VaultFileActions } from '../services/vault-file-actions'
@@ -81,10 +82,7 @@ export function useFileTree(options: UseFileTreeOptions) {
       deleteFile: (vault, path) => fsService.deleteFile(vault, path),
       // `stat` is the existence probe the note pair-delete uses to decide
       // whether a `<name>_assets` folder has to go to the trash with its note.
-      exists: async (vault, path) => {
-        await fsService.stat(vault, path)
-        return true
-      },
+      exists: (vault, path) => noteAssetDirectoryExists(fsService, vault, path),
     },
     // The shared flow, not a copy of it: it flushes pending edits, arms the
     // self-write/move claims the external-change service reads, and repairs the

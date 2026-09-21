@@ -11,8 +11,9 @@
 import type { Ref } from 'vue'
 import type { NoteMoveResult } from '../services/note-move'
 import { rewriteNoteRefs } from '../services/note-move'
-import { deleteNoteWithAssets } from '../services/note-delete'
+import { deleteNoteWithAssets, noteAssetDirectoryExists } from '../services/note-delete'
 import type { NoteDeleteResult } from '../services/note-delete'
+import { flushEdits } from '../services/editor-ownership'
 import type { OpenTab } from './tabs'
 
 /** The slice of the fs gateway the tab file operations use. */
@@ -33,6 +34,8 @@ export interface TabFileOperationsDeps {
   /** Attribute the app's own writes to us, so the fs watcher does not read
    *  them back as external edits. */
   noteSelfWrite(path: string): void
+  /** Counts keystrokes before debounced editor publication reaches content. */
+  revisionOf(id: string): number
   /** Remove a tab from the tab set WITHOUT flushing. Lifecycle owns the tab
    *  set; the path-rewrite and delete flows only get to trigger a removal. */
   removeTab(id: string): void
@@ -51,6 +54,7 @@ export function createTabFileOperations(deps: TabFileOperationsDeps) {
    * its file.
    */
   const pendingMoves = new Set<string>()
+  const pendingReloads = new WeakMap<OpenTab, symbol>()
 
   function beginMove(from: string): void {
     pendingMoves.add(from)
@@ -113,6 +117,10 @@ export function createTabFileOperations(deps: TabFileOperationsDeps) {
     const tab = tabs.value.find((x) => x.id === id)
     if (!tab || !tab.path || !vault.value) return
     const path = tab.path
+    const vaultAtStart = vault.value
+    const originals = new Map(tabs.value.filter((open) => open.path === path).map((open) => [open, {
+      content: open.content, revision: deps.revisionOf(open.id),
+    }]))
     let result: NoteDeleteResult
     try {
       // Suppress the delete's own fs-change so the tab is not reloaded from a
@@ -124,12 +132,9 @@ export function createTabFileOperations(deps: TabFileOperationsDeps) {
       result = await deleteNoteWithAssets(
         {
           deleteFile: (v, p) => files.deleteFile(v, p),
-          exists: async (v, p) => {
-            await files.stat(v, p)
-            return true
-          },
+          exists: (v, p) => noteAssetDirectoryExists(files, v, p),
         },
-        vault.value,
+        vaultAtStart,
         path,
       )
     } catch {
@@ -139,10 +144,19 @@ export function createTabFileOperations(deps: TabFileOperationsDeps) {
     // The note is in the trash; its images are not. Say so rather than report a
     // clean delete - the user has to be able to find them if they want them.
     if (result.assetsFailed) notifyError(t('tabs.deleteAssetsFailed'))
-    // Close every tab on that path: autosave from a leftover tab would
-    // resurrect the deleted file from stale content.
+    if (vault.value !== vaultAtStart) return
+    await flushEdits()
+    if (vault.value !== vaultAtStart) return
+    // Delete consent belongs to the original buffers. New edits and replacement
+    // tabs survive as untitled work, without a path autosave could resurrect.
     for (const open of [...tabs.value]) {
-      if (open.path === path) removeTab(open.id)
+      if (open.path !== path) continue
+      const original = originals.get(open)
+      if (original && original.content === open.content && original.revision === deps.revisionOf(open.id)) {
+        removeTab(open.id)
+      } else {
+        detachMissingPath(open.id)
+      }
     }
   }
 
@@ -217,15 +231,25 @@ export function createTabFileOperations(deps: TabFileOperationsDeps) {
     const contentAtStart = tab.content
     const path = tab.path
     const vaultAtStart = vault.value
+    const reload = Symbol()
+    // Even unchanged bytes from a newer read supersede an older disk snapshot.
+    pendingReloads.set(tab, reload)
+    // A rename changes which document this read belongs to, even when the tab
+    // and vault survive. Explicit reload consent belongs to that same path.
+    const isCurrent = () => vault.value === vaultAtStart && tabs.value.includes(tab)
+      && tab.path === path && !isPendingMove(path) && pendingReloads.get(tab) === reload
     try {
+      if (!isCurrent()) return
       const disk = await files.read(vaultAtStart, path)
-      if (vault.value !== vaultAtStart || !tabs.value.includes(tab)) return
+      if (!isCurrent()) return
       if (!opts.explicit && (tab.content !== contentAtStart || tab.dirty)) return
       tab.content = disk
       tab.savedContent = disk
       tab.dirty = false
     } catch {
-      notifyError(t('tabs.reloadFailed', { path }))
+      if (isCurrent()) notifyError(t('tabs.reloadFailed', { path }))
+    } finally {
+      if (pendingReloads.get(tab) === reload) pendingReloads.delete(tab)
     }
   }
 

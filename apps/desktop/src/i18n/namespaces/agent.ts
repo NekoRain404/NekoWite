@@ -434,18 +434,9 @@ export const agent = {
         argumentsPending: 'The engine has not sent the arguments yet',
         argumentsUnreadable: 'The engine sent arguments this app could not read',
         expired: 'No longer waiting — this request has already been resolved',
-        /* Shown under the options, and only when the engine offered a lasting grant. The engine's
-           own label for that option is "Always allow", which does not say how long: it is the one
-           answer whose consequence is invisible afterwards, because the question stops arriving
-           and this app is never told again. Measured — see the report.
-           The three slots name where what the engine wrote is read back and taken back, and the
-           names are the ones those places wear there: `settings.section.agents` on the settings
-           rail, `agent.settings.permission.section.title` on the page, and
-           `agent.settings.permission.grants.title` on the list itself. A sentence that denied that
-           list existed shipped until the page landed — «this app … has no surface that lists or
-           takes it back» — and a reader decides on this sentence, so it is drawn from the same
-           catalogue the page is. */
-        lastingGrant: '“Always allow” is not just this once. The engine stops asking about this tool and writes the grant down, so it outlives this session — and this app is never told again. What it wrote is listed in Settings, under {section} → {page}, in “{surface}”, and can be taken back there.',
+        /* ACP temporary grants and the engine's saved-rule API are different stores.
+           Consent must not promise that the settings list can revoke both. */
+        lastingGrant: '“Always allow” can suppress later prompts, including in other sessions. Its lifetime depends on the engine. Settings → {section} → {page} → “{surface}” lists saved rules only: bundled OpenCode ACP keeps temporary grants in memory that this list cannot revoke. Choose “Allow once” for limited approval.',
       },
       registry: {
         section: {
@@ -1043,13 +1034,13 @@ export const agent = {
              sentences on purpose: either one drawn as an empty list would be this page claiming
              "you have granted nothing" from a question it never managed to ask. */
           grants: {
-            title: 'Lasting permissions you have given',
-            hint: 'Each row is one "Always allow" you answered. The engine wrote it down itself, keyed by the tool it covers, what that answer applies to, and the engine’s own project key — so it outlives the session you gave it in and the engine stops asking. This list is the engine’s, read from the engine; revoking asks the engine to drop the row, and it asks again from the next tool call on.',
+            title: 'Saved permission rules',
+            hint: 'Only rules returned by the engine’s saved-permission API appear here. Bundled OpenCode ACP also keeps temporary “Always allow” grants in memory; this list cannot revoke those grants. Removing a saved rule does not guarantee another prompt while a temporary grant remains active.',
             loading: 'Reading the engine’s saved permissions...',
             unreadable: 'The engine was asked for its saved permissions and did not answer. Nothing is being claimed about them here — try again, or check that the agent is still running.',
             unsupported: 'This agent does not report the permissions it has written down, so this page cannot list or revoke them. That is not the same as having given none: nothing here has asked.',
             notRunning: 'No agent is running, so there is nothing to ask. Start a session and this list is read from the engine itself — a profile’s saved permissions live in the engine’s own database, not in this app.',
-            empty: 'The engine holds no lasting permission for this profile. This is the engine’s own answer, not an empty list standing in for one it could not give.',
+            empty: 'The engine reports no saved permission rules. This does not mean there are no active temporary grants.',
             project: 'Project',
             revoke: 'Revoke',
             revoking: 'Revoking...',
@@ -1573,7 +1564,7 @@ export const agent = {
         argumentsPending: '引擎还没有发送参数',
         argumentsUnreadable: '引擎发送了本应用无法读取的参数',
         expired: '已不再等待——该请求已被处理',
-        lastingGrant: '「始终允许」不只是这一次。引擎不会再就这个工具发问，并会把这次授权记录下来，因此它在本次会话结束后依然有效——本应用不会再收到通知。它记下的授权列在「设置 → {section} → {page}」的「{surface}」中，也可以在那里收回。',
+        lastingGrant: '「始终允许」可能让后续操作不再询问，包括其他会话中的操作；有效期由引擎决定。「设置 → {section} → {page} → {surface}」只列出持久化规则，内置 OpenCode ACP 的内存临时授权无法在那里撤销。仅批准本次操作请选择「允许一次」。',
       },
       registry: {
         section: {
@@ -2122,13 +2113,13 @@ export const agent = {
             noSilentApproval: '危险请求如果始终无人回答，就永远不会被批准。等待不是同意，这里也不会因为提示被放着不管就授予权限。',
           },
           grants: {
-            title: '你已给出的长期授权',
-            hint: '每一行都是你回答过的一次「始终允许」。引擎自己把它记了下来，以它覆盖的工具、该授权适用的范围和引擎自己的项目键为索引——因此它比你给出它的那次会话活得更久，引擎也不再询问。这份列表是引擎的，从引擎读来；撤销即是请引擎删掉那一行，此后下一次工具调用它就会重新询问。',
+            title: '已保存的权限规则',
+            hint: '这里只显示引擎持久化授权接口返回的规则。内置 OpenCode ACP 还会在内存中保留「始终允许」临时授权，本列表无法撤销它们。临时授权仍有效时，删除持久化规则不保证下一次操作重新询问。',
             loading: '正在读取引擎保存的授权…',
             unreadable: '已向引擎询问它保存的授权，但没有得到回答。这里对它们不做任何断言——请重试，或确认智能体仍在运行。',
             unsupported: '这个智能体不上报它记录下来的授权，因此本页无法列出或撤销它们。这与「你什么都没给过」不是一回事：这里什么都没问到。',
             notRunning: '没有智能体在运行，无处可问。开始一次会话后，这份列表会从引擎本身读来——配置档案的授权保存在引擎自己的数据库里，不在本应用里。',
-            empty: '引擎在这个配置档案下没有任何长期授权。这是引擎自己的回答，不是用一个空列表来代替它给不出的答案。',
+            empty: '引擎没有返回已保存的权限规则，但仍可能存在有效的内存临时授权。',
             project: '项目',
             revoke: '撤销',
             revoking: '正在撤销…',

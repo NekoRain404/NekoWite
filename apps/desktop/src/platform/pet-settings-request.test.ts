@@ -8,13 +8,17 @@
  * outside Tauri there is no listener to register, and the caller still gets a release rather than
  * a `null` it has to remember to guard.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listenMock = vi.hoisted(() => vi.fn())
+const invokeMock = vi.hoisted(() => vi.fn().mockResolvedValue([]))
 vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 
 import { onPetSettingsRequest } from './pet-settings-request'
 import { PET_SETTINGS_CHANNEL } from './gateways/tauri-pet'
+
+beforeEach(() => { invokeMock.mockResolvedValue([]) })
 
 describe('the pet’s settings request', () => {
   it('listens on the pet’s channel and hands over the page it named', async () => {
@@ -38,10 +42,12 @@ describe('the pet’s settings request', () => {
     // The payload the host emits is `{ page }` and nothing else (`commands/desktop_pet.rs`
     // validates the page against its own list before emitting), so the caller is handed the page
     // rather than the envelope.
+    invokeMock.mockResolvedValueOnce([{ page: 'care' }])
     delivered[0]?.({ payload: { page: 'care' } })
-    expect(seen).toEqual(['care'])
+    await vi.waitFor(() => expect(seen).toEqual(['care']))
 
-    expect(stop).toBe(release)
+    stop()
+    expect(release).toHaveBeenCalledOnce()
   })
 
   it('answers a window with no such channel with a release that does nothing', async () => {

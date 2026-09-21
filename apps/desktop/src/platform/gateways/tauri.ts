@@ -29,12 +29,13 @@ export const tauriFsPort: FsPort = {
   registerVault: (vault) => invoke<void>('register_vault', { vault_root: vault }),
   read: (vault, path) => invoke<string>('read_file', { vault_root: vault, path }),
   stat: (vault, path) => invoke<FileStat>('stat_file', { vault_root: vault, path }),
-  write: (vault, path, content, maxHistory) =>
+  write: (vault, path, content, maxHistory, expectedContent) =>
     invoke<string | null>('write_file', {
       vault_root: vault,
       path,
       content,
       max_history: maxHistory ?? null,
+      ...(expectedContent === undefined ? {} : { expected_content: expectedContent }),
     }),
   list: (vault, dir) => invoke<FileEntry[]>('list_dir', { vault_root: vault, path: dir }),
   watch: (vault) => invoke<void>('watch_folder', { vault_root: vault, path: null }),

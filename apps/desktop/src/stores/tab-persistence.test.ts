@@ -68,7 +68,7 @@ describe('autosave debounce', () => {
     expect(writeMock).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(2000)
     expect(writeMock).toHaveBeenCalledTimes(1)
-    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'changed', 10)
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/a.md', 'changed', 10, 'abc')
   })
 
   it('collapses repeated schedules within the interval to one write', async () => {

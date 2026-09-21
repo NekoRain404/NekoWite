@@ -136,7 +136,7 @@ export function createWritePreconditions(deps: WritePreconditionDeps) {
   }
 
   /**
-   * Whether this save may replace what is at `path`. True means write.
+   * Return the observed bytes to check again at commit, or null to refuse.
    *
    * `savedContent` is what this tab last READ or last WROTE, so the comparison
    * answers exactly one question: has anybody else touched this file since? The
@@ -153,20 +153,18 @@ export function createWritePreconditions(deps: WritePreconditionDeps) {
    *     "Keep local" outranks that: the user answered the prompt, so any save
    *     carries their answer.
    *
-   * A read that fails is not a divergence. A path with nothing at it — the first
-   * save of a document under a name the user just chose, or a file this machine
-   * will not give us — has no bytes of ours to compare against, and refusing
-   * there would block a save that has nothing to overwrite. The
-   * renamed-or-deleted-outside-the-app case is not this check's to answer: the
-   * external-change service detaches the tab and asks where the text should go.
+   * A failed read is unknown disk state, never permission to overwrite. Even
+   * absence must not silently resurrect a deleted file before its watcher event
+   * arrives. Explicit Save-As is separate consent; ordinary saves retain their
+   * buffer and conflict evidence until the file can be checked or detached.
    */
   async function fileHoldsOurBytes(
     tab: PreconditionTab,
     vaultAtStart: string,
     path: string,
     conds: WriteConditions = {},
-  ): Promise<boolean> {
-    if (conds.pickedPath) return true
+  ): Promise<{ expectedContent?: string } | null> {
+    if (conds.pickedPath) return {}
     // A tab whose first read has not landed holds an empty placeholder wearing
     // the note's path, so it has no text of its own to write and the file's text
     // is not it: saving here (Ctrl+S before the note arrives) would put the
@@ -174,35 +172,37 @@ export function createWritePreconditions(deps: WritePreconditionDeps) {
     // has been decided — the read that is still running settles it, and a
     // keystroke in the meantime is `commitRead`'s to rescue, which announces
     // itself.
-    if (tab.loading) return false
+    if (tab.loading) return null
     let disk: string
     try {
       disk = await files.read(vaultAtStart, path)
     } catch {
-      tab.externalConflict = null
-      return true
+      if (vault.value === vaultAtStart && tab.path === path) {
+        notifyError(t('tabs.saveBlockedUnreadable', { path }))
+      }
+      return null
     }
     // The read was an await. The caller checks the vault before it starts the
     // write for the same reason; this one covers the window the read adds.
-    if (vault.value !== vaultAtStart) return false
+    if (vault.value !== vaultAtStart || tab.path !== path) return null
     if (disk === tab.savedContent) {
       tab.externalConflict = null
-      return true
+      return { expectedContent: disk }
     }
     const known = tab.externalConflict
     if (known && known.disk === disk) {
-      if (known.answer === 'keep-local') return true
+      if (known.answer === 'keep-local') return { expectedContent: disk }
       if (conds.userAsked) {
         known.answer = 'keep-local'
-        return true
+        return { expectedContent: disk }
       }
-      return false
+      return null
     }
     tab.externalConflict = { disk, answer: 'pending' }
     // The reason is the point: a sentence that only said "not saved" would send
     // the user back to a save that refuses again for a cause they cannot see.
     notifyError(t('tabs.saveBlockedExternalChange', { path }))
-    return false
+    return null
   }
 
   /** The tab's bytes are the file's again: nothing about it is outstanding. The

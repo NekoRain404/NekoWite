@@ -206,6 +206,53 @@ describe('reloadFromDisk', () => {
     resetFsMocks()
   })
 
+  it.each([false, true])('keeps the latest reload when older bytes arrive last (explicit=%s)', async (explicit) => {
+    readMock.mockResolvedValueOnce('current text')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    let release!: (text: string) => void
+    readMock.mockImplementationOnce(() => new Promise<string>((resolve) => { release = resolve }))
+    const old = s.reloadFromDisk(s.activeId!, { explicit })
+    readMock.mockResolvedValueOnce('current text')
+    await s.reloadFromDisk(s.activeId!, { explicit })
+    release('obsolete disk snapshot')
+    await old
+    expect(s.tabs[0].content).toBe('current text')
+    expect(s.tabs[0].savedContent).toBe('current text')
+  })
+
+  it.each([false, true])('ignores a read from before an in-app rename (explicit=%s)', async (explicit) => {
+    readMock.mockResolvedValueOnce('current text')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    let release!: (text: string) => void
+    readMock.mockImplementationOnce(() => new Promise<string>((resolve) => { release = resolve }))
+    const pending = s.reloadFromDisk(s.activeId!, { explicit })
+    s.renamePathInTabs('/vault/a.md', '/vault/b.md')
+    release('stale bytes from old path')
+    await pending
+    expect(s.tabs[0].path).toBe('/vault/b.md')
+    expect(s.tabs[0].content).toBe('current text')
+    expect(s.tabs[0].savedContent).toBe('current text')
+  })
+
+  it('does not apply a reload while its file is being moved', async () => {
+    readMock.mockResolvedValueOnce('current text')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab('/vault/a.md')
+    let release!: (text: string) => void
+    readMock.mockImplementationOnce(() => new Promise<string>((resolve) => { release = resolve }))
+    const pending = s.reloadFromDisk(s.activeId!)
+    s.beginMove('/vault/a.md')
+    release('stale bytes from old path')
+    await pending
+    expect(s.tabs[0].content).toBe('current text')
+    s.endMove('/vault/a.md')
+  })
+
   it('does not throw away keystrokes typed while an external reload is reading', async () => {
     readMock.mockResolvedValueOnce('start')
     const s = useTabsStore()

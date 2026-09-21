@@ -44,6 +44,10 @@ async function save(page: Page): Promise<void> {
  * each case switch to the pane it wants to assert on.
  */
 async function reopen(page: Page): Promise<void> {
+  // Clicking an already-open tree entry only focuses its existing buffer.
+  // Dispose that buffer first so this assertion exercises a fresh disk read.
+  await page.locator('.tab.active .tab-close').click()
+  await expect(page.locator('.tab.active')).toHaveCount(0)
   await page.locator('.tree-name', { hasText: 'welcome.md' }).first().click()
   await expect(page.locator('.pane.rendered .ProseMirror')).toBeAttached()
   await page.waitForTimeout(200)
@@ -146,15 +150,14 @@ test.describe('save round trips', () => {
     await page.waitForTimeout(150)
 
     const addProps = page.getByRole('button', { name: await label(page, 'frontmatter.addProps') })
-    if (await addProps.count()) {
-      await addProps.first().click()
-      await page.waitForTimeout(200)
-      await save(page)
-      // Whatever the panel wrote must be a valid frontmatter block on disk.
-      const text = (await diskFiles(page))[NOTE]
-      expect(text.startsWith('---\n')).toBe(true)
-      expect(text).toContain('title:')
-    }
+    await expect(addProps.first()).toBeVisible()
+    await addProps.first().click()
+    await page.waitForTimeout(200)
+    await save(page)
+    // Missing controls must fail rather than silently skip the persistence assertion.
+    const text = (await diskFiles(page))[NOTE]
+    expect(text.startsWith('---\n')).toBe(true)
+    expect(text).toContain('title:')
   })
 
   test('an edit made in split mode survives a save and reopen', async ({ page }) => {

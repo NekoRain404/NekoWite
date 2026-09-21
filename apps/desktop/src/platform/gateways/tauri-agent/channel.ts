@@ -79,6 +79,11 @@ export function createEventChannel(deps: ChannelDeps): EventChannel {
   const subscribers = new Set<Subscriber>()
   let channel: Promise<() => void> | null = null
   let channelUsers = 0
+  let generation = 0
+
+  function reportCleanup(error: unknown): void {
+    deps.report(new AgentFailure('runtime-unavailable', `agent listener cleanup failed: ${String(error)}`))
+  }
 
   function dispatch(raw: unknown): void {
     const event = mapHostFrame(raw, tools)
@@ -102,7 +107,10 @@ export function createEventChannel(deps: ChannelDeps): EventChannel {
   return {
     async handle(): Promise<void> {
       channelUsers += 1
-      if (channel === null) channel = ipc.onEvent(dispatch)
+      if (channel === null) {
+        const mine = generation
+        channel = ipc.onEvent((raw) => { if (mine === generation) dispatch(raw) })
+      }
       await channel
     },
 
@@ -114,14 +122,21 @@ export function createEventChannel(deps: ChannelDeps): EventChannel {
       // Removed by the function `listen` answered with, never by re-registering: a second
       // `listen` on the same channel installs a second listener rather than replacing the
       // first, and the leak would be invisible — every frame would simply be delivered twice.
-      const unlisten = await registration
-      unlisten()
+      // Registration errors are delivered to handle()'s caller; there is no listener to remove.
+      const unlisten = await registration.catch(() => null)
+      unlisten?.()
     },
 
     async closeAll(): Promise<void> {
+      generation += 1
       for (const subscriber of [...subscribers]) subscriber.closed = true
       subscribers.clear()
-      while (channelUsers > 0) await this.release()
+      const registration = channel
+      channel = null
+      channelUsers = 0
+      // Detach atomically before awaiting anything. Pending registration must not block shutdown
+      // or let an old cleanup consume the next runtime's listener reference.
+      if (registration) void registration.then((unlisten) => unlisten(), () => {}).catch(reportCleanup)
     },
 
     async subscribe(record, from, onEvent): Promise<() => void> {
@@ -142,10 +157,18 @@ export function createEventChannel(deps: ChannelDeps): EventChannel {
       // The registration comes first and the snapshot second, in this order and not the other
       // way round: a frame that arrives in between is then either in the host's tail or in the
       // buffer, never in neither.
-      await this.handle()
+      const mine = generation
       subscribers.add(subscriber)
+      const requireCurrent = () => {
+        if (mine !== generation || subscriber.closed) {
+          throw new AgentFailure('cancelled', 'the subscription ended during its handshake')
+        }
+      }
       try {
+        await this.handle()
+        requireCurrent()
         const host = await ipc.snapshot(record.identity.sessionId)
+        requireCurrent()
         checkSnapshot(record, host)
         if (from.sequence > host.sequence) {
           throw new AgentFailure(
@@ -171,24 +194,26 @@ export function createEventChannel(deps: ChannelDeps): EventChannel {
           )
         }
         for (const event of mapAll(host.events, tools, deps.report)) {
+          requireCurrent()
           if (event.sequence > from.sequence) subscriber.reader(event)
         }
         subscriber.live = true
         for (const event of subscriber.buffered) {
+          requireCurrent()
           if (event.sequence > host.sequence) subscriber.reader(event)
         }
         subscriber.buffered = []
       } catch (error) {
         subscriber.closed = true
         subscribers.delete(subscriber)
-        await this.release()
+        if (mine === generation) await this.release()
         throw error
       }
       return () => {
         if (subscriber.closed) return
         subscriber.closed = true
         subscribers.delete(subscriber)
-        void this.release()
+        void this.release().catch(reportCleanup)
       }
     },
   }

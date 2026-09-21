@@ -60,8 +60,11 @@ export function createFileOpsArea(deps: FileOpsAreaDeps): FileOpsArea {
       }
       return content
     },
-    write: async (_vault, path, content, maxHistory) => {
+    write: async (_vault, path, content, maxHistory, expectedContent) => {
       const old = deps.files.get(path)
+      if (expectedContent !== undefined && old !== expectedContent) {
+        throw new Error(`Save conflict: file changed or disappeared: ${path}`)
+      }
       if (old !== undefined && old !== '' && old !== content) {
         deps.snapshot(path, old, maxHistory)
       }

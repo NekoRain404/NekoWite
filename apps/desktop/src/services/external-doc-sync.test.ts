@@ -40,7 +40,7 @@ function harness(overrides: {
   const onChange = vi.fn()
   const onMissing = vi.fn()
   const read = vi.fn(async (_vault: string, p?: string) => {
-    if (p && (overrides.unreadable ?? []).includes(p)) throw new Error('not found')
+    if (p && (overrides.unreadable ?? []).includes(p)) throw new Error(`No such file in demo vault: ${p}`)
     const bytes = p && p in (overrides.diskByPath ?? {})
       ? overrides.diskByPath![p]
       : (overrides.disk ?? 'disk text')

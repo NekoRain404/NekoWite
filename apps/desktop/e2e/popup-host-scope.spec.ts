@@ -686,27 +686,31 @@ test('the AI model combobox’s list resolves the shell’s appearance', async (
   // `resize` dispatch this used to need is what that fix made unnecessary. A popup that has to be
   // poked into place is a control that lies about what it is attached to, and the assertion below
   // is where that lie would show.
-  const placement = await page.evaluate(() => {
-    const list = document.querySelector('.combo-popup')
-    const field = document.querySelector('#settings-ai-model')
-    if (!list || !field) throw new Error('the list or its field is not in the document')
-    const a = field.getBoundingClientRect()
-    const b = list.getBoundingClientRect()
-    const above = a.top - b.bottom
-    const below = b.top - a.bottom
-    return {
-      gap: above > 0 ? above : below,
-      dx: b.left - a.left,
-      inside: b.left >= 0 && b.right <= window.innerWidth && b.top >= 0
-        && b.bottom <= window.innerHeight,
-      viewport: { width: window.innerWidth, height: window.innerHeight },
-      rect: { top: b.top, left: b.left, right: b.right, bottom: b.bottom },
-    }
-  })
-  expect(
-    placement.gap,
-    `the list hangs ${placement.gap}px off the field, ${JSON.stringify(placement.rect)} in a ${placement.viewport.width}x${placement.viewport.height} window`,
-  ).toBeCloseTo(4, 1)
-  expect(Math.abs(placement.dx)).toBeLessThanOrEqual(2)
-  expect(placement.inside).toBe(true)
+  // Springs can still be settling under parallel browser load after 400ms.
+  // Retry the same geometry contract rather than accepting a larger position error.
+  await expect(async () => {
+    const placement = await page.evaluate(() => {
+      const list = document.querySelector('.combo-popup')
+      const field = document.querySelector('#settings-ai-model')
+      if (!list || !field) throw new Error('the list or its field is not in the document')
+      const a = field.getBoundingClientRect()
+      const b = list.getBoundingClientRect()
+      const above = a.top - b.bottom
+      const below = b.top - a.bottom
+      return {
+        gap: above > 0 ? above : below,
+        dx: b.left - a.left,
+        inside: b.left >= 0 && b.right <= window.innerWidth && b.top >= 0
+          && b.bottom <= window.innerHeight,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        rect: { top: b.top, left: b.left, right: b.right, bottom: b.bottom },
+      }
+    })
+    expect(
+      placement.gap,
+      `the list hangs ${placement.gap}px off the field, ${JSON.stringify(placement.rect)} in a ${placement.viewport.width}x${placement.viewport.height} window`,
+    ).toBeCloseTo(4, 1)
+    expect(Math.abs(placement.dx)).toBeLessThanOrEqual(2)
+    expect(placement.inside).toBe(true)
+  }).toPass({ timeout: 5000 })
 })

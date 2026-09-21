@@ -493,7 +493,7 @@ export function verify(results) {
     // A run that never asked for the panel claims nothing about it, and says so rather than
     // passing: the skip is visible in the probe's own JSON and costs no check either way. The
     // same shape `note-switch` has under a scenario with one note.
-  } else if (results.agent && !agent) {
+  } else if (results.agent && !agent && (!results.only || results.only === 'agent-scroll')) {
     c.run('agent scroll: the run asked for the panel and nothing measured it', 'no agent-scroll result', false)
   } else if (agent?.skipped) {
     c.run(

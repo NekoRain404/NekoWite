@@ -10,7 +10,7 @@
 import { computed, ref, type ComputedRef } from 'vue'
 import { fsService } from '../../../platform/gateways/fs'
 import { t } from '../../../i18n'
-import { deleteNoteWithAssets } from '../../../services/note-delete'
+import { deleteNoteWithAssets, noteAssetDirectoryExists } from '../../../services/note-delete'
 import { notifyError } from '../../../services/errors'
 
 /** The tab bookkeeping a delete performs. Wired to the tabs store by the
@@ -96,10 +96,7 @@ export function useNoteDelete(options: UseNoteDeleteOptions): NoteDeleteModel {
         const result = await deleteNoteWithAssets(
           {
             deleteFile: (v, p) => fsService.deleteFile(v, p),
-            exists: async (v, p) => {
-              await fsService.stat(v, p)
-              return true
-            },
+            exists: (v, p) => noteAssetDirectoryExists(fsService, v, p),
           },
           vault,
           path,

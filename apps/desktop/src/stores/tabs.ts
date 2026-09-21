@@ -201,6 +201,7 @@ export const useTabsStore = defineStore('tabs', () => {  const tabs = ref<OpenTa
     notifyError,
     cancelAutosave: persistence.cancelAutosave,
     noteSelfWrite: save.noteSelfWrite,
+    revisionOf: save.revisionOf,
     removeTab: lifecycle.removeTab,
   })
 

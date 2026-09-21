@@ -10,10 +10,12 @@
  * something to call: outside Tauri there is no listener to register, and the caller still gets a
  * release rather than a `null` it has to remember to guard.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listenMock = vi.hoisted(() => vi.fn())
+const invokeMock = vi.hoisted(() => vi.fn().mockResolvedValue([]))
 vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 
 import { onPetTaskRequest } from './pet-task-request'
 import { PET_TASK_OPEN_CHANNEL } from './gateways/tauri-pet'
@@ -43,8 +45,11 @@ function registered(): { delivered: Array<(event: { payload: unknown }) => void>
   return { delivered, release }
 }
 
+beforeEach(() => { invokeMock.mockResolvedValue([]) })
+
 afterEach(() => {
   listenMock.mockReset()
+  invokeMock.mockReset().mockResolvedValue([])
   vi.restoreAllMocks()
 })
 
@@ -59,10 +64,12 @@ describe('the pet’s task request', () => {
 
     // The payload the host emits is D1's `PetTaskKey` and nothing else — no URL, no path, no
     // command (`commands/desktop_pet.rs`'s own doc) — so the caller is handed the key itself.
+    invokeMock.mockResolvedValueOnce([KEY])
     delivered[0]?.({ payload: { ...KEY } })
-    expect(seen).toEqual([KEY])
+    await vi.waitFor(() => expect(seen).toEqual([KEY]))
 
-    expect(stop).toBe(release)
+    stop()
+    expect(release).toHaveBeenCalledOnce()
   })
 
   it('refuses a payload that is not a key, and focuses nothing with it', async () => {
@@ -79,11 +86,12 @@ describe('the pet’s task request', () => {
     const withoutRun: Partial<PetTaskKey> = { ...KEY }
     delete withoutRun.runId
     for (const payload of [withoutRun, { ...KEY, sessionId: '' }, null, 'pet-open-task', 42]) {
+      invokeMock.mockResolvedValueOnce([payload])
       delivered[0]?.({ payload })
     }
 
     expect(seen).toEqual([])
-    expect(refused).toHaveBeenCalledTimes(5)
+    await vi.waitFor(() => expect(refused).toHaveBeenCalledTimes(5))
     // Stated rather than swallowed: the host is the only producer of this channel, so a payload
     // that is not a key is a wire that drifted and not a user doing something odd.
     expect(String(refused.mock.calls[0]?.[0])).toContain(PET_TASK_OPEN_CHANNEL)

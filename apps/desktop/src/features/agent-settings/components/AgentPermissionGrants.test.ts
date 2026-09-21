@@ -91,9 +91,11 @@ describe('the grants the engine holds', () => {
     expect(row('grant-psv_2')).not.toBeNull()
   })
 
-  it('says the engine holds nothing, and draws no control', async () => {
+  it('does not mistake an empty persistent list for absence of temporary ACP grants', async () => {
     await mount(client({ kind: 'listed', grants: [] }))
-    expect(row('grants-empty')?.textContent).toContain('no lasting permission')
+    expect(row('grants-empty')?.textContent).toContain('no saved permission')
+    expect(row('grants-empty')?.textContent).toContain('temporary')
+    expect(document.body.textContent).toContain('cannot revoke')
     expect(row('grants-unsupported')).toBeNull()
     expect(row('grants-not-running')).toBeNull()
     expect(document.querySelectorAll('button')).toHaveLength(0)
