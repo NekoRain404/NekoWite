@@ -20,6 +20,7 @@ import {
   attachmentKey,
   attachmentStanding,
   describeRefusal,
+  featureFor,
   imageAttachment,
   imagesFromDataTransfer,
   mediaTypeOf,
@@ -282,6 +283,14 @@ describe('what a paste or a drop carries', () => {
 })
 
 describe('what the engine’s report licenses', () => {
+  it('names the feature each kind of attachment is gated on, in one place', () => {
+    // The rule the composer reads instead of spelling the two names out (finding U2): an image is
+    // what `image-attachments` licenses and everything else is `embedded-context`, and both call
+    // sites ask this rather than remembering which arm needs which.
+    expect(featureFor('image')).toBe('image-attachments')
+    expect(featureFor('resource')).toBe('embedded-context')
+  })
+
   /** One row of a report, about images unless the case says otherwise. */
   function row(finding: AgentCapabilityReport['finding']): AgentCapabilityReport {
     return {

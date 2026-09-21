@@ -14,7 +14,7 @@
 import { fsService } from '../platform/gateways/fs'
 import { buildComponentRenderers } from './export-renderers'
 import { exportPageCss, injectExportPageCss } from './export-page'
-import { IMAGE_MIME, renderHtmlToImage, type ExportImageFormat } from './export-image'
+import { renderHtmlToImage, type ExportImageFormat } from './export-image'
 import { htmlTablesToCsv, htmlToPlainText } from './export-text'
 import {
   exportSettings,
@@ -186,10 +186,4 @@ export async function renderPlainText(source: string, opts: ExportUiOptions): Pr
 export async function renderCsv(source: string, opts: ExportUiOptions): Promise<string | null> {
   const html = await renderExportDocument(source, opts, 'display')
   return htmlTablesToCsv(html)
-}
-
-/** The MIME of an image export, so a caller can label what it is about to
- *  write without a second table of formats. */
-export function imageMime(format: ExportImageFormat): string {
-  return IMAGE_MIME[format]
 }

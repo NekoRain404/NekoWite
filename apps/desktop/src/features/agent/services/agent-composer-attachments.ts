@@ -69,11 +69,16 @@ const NO_REPORT =
 /** The two features an attachment is gated on, named as the report names them. */
 export type AgentAttachmentFeature = 'image-attachments' | 'embedded-context'
 
-/** Whether a `resource` attachment is what a given feature licenses, so the two call sites that
- *  have to agree about which arm needs which capability agree by reading this rather than by
- *  remembering. */
-export function featureFor(attachment: AgentPromptAttachment): AgentAttachmentFeature {
-  return attachment.kind === 'image' ? 'image-attachments' : 'embedded-context'
+/** Which capability licenses an attachment of this kind, so the sites that have to agree about
+ *  which arm needs which feature agree by reading this rather than by remembering.
+ *
+ *  **It takes the kind and not the whole attachment**, and that is what made it callable: it only
+ *  ever read `kind`, and every caller holds a kind (a refusal is decided before the attachment
+ *  exists) rather than a constructed value. It was written with the attachment-shaped parameter and
+ *  then called by nobody — the call site spelled the two names out instead, which is the duplication
+ *  this function's own sentence is about (finding U2 in `docs/audits/2026-09-21-code-review.md`). */
+export function featureFor(kind: AgentPromptAttachment['kind']): AgentAttachmentFeature {
+  return kind === 'image' ? 'image-attachments' : 'embedded-context'
 }
 
 /**

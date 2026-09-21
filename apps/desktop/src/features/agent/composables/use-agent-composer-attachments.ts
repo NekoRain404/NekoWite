@@ -46,6 +46,7 @@ import { baseName } from '../../../services/paths'
 import {
   attachmentKey,
   attachmentStanding,
+  featureFor,
   imageAttachment,
   imagesFromDataTransfer,
   mediaTypeOf,
@@ -118,17 +119,16 @@ export function useAgentComposerAttachments(
 ): AgentComposerAttachments {
   const held = ref<AgentPromptAttachment[]>([])
 
-  const imageStanding = computed(() =>
-    attachmentStanding(options.capabilities(), 'image-attachments'),
-  )
-  const resourceStanding = computed(() =>
-    attachmentStanding(options.capabilities(), 'embedded-context'),
-  )
-
   /** What the engine's report says about one kind of attachment. Taken by kind rather than by
-   *  value, so the read a decision is made on cannot be a different attachment's. */
+   *  value, so the read a decision is made on cannot be a different attachment's.
+   *
+   *  **The kind-to-feature rule is `featureFor`'s and not this file's.** It used to be spelled here
+   *  twice over — two computeds holding the feature names, and the ternary below choosing between
+   *  them — which is three places holding one rule, and exactly the duplication that function's own
+   *  docblock says it exists to prevent. It was written and then not called (finding U2 in
+   *  `docs/audits/2026-09-21-code-review.md`); this is the call site it was for. */
   function standingFor(kind: AgentPromptAttachment['kind']): AgentAttachmentStanding {
-    return kind === 'image' ? imageStanding.value : resourceStanding.value
+    return attachmentStanding(options.capabilities(), featureFor(kind))
   }
 
   /**
@@ -171,7 +171,7 @@ export function useAgentComposerAttachments(
     // engine that does not read images must not make this window base64-encode one to find out,
     // and the reader must still be told. Reporting is what `accept` would have done with the same
     // attachments had the encode happened; what is skipped is the encode.
-    const standing = imageStanding.value
+    const standing = standingFor('image')
     if (standing.kind !== 'allowed') {
       const carried = collectClipboardImages(data).accepted
       if (carried.length === 0) return
