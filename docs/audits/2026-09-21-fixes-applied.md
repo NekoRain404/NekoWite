@@ -1026,6 +1026,85 @@ unchanged — and the gate below is the frontend and Rust half.
 | full suite, `NEKOWITE_REQUIRE_PROCESS_TESTS=1` | **79 targets · 1408 passed · 0 failed · 5 ignored · 0 skip announcements** — the same counts as the previous round, which is what a round that changed no Rust source should produce |
 | e2e | not re-run, and the reason is in the section above: no shipped behaviour changed |
 
+---
+
+## 12. The round after that: the gate itself, and the dialect the AI path could not reach
+
+Two findings, and the first is about the instrument every other reading in this document depends on.
+
+**The gate was a tool that said the wrong thing.** It lived in a git-ignored scratch directory
+(`src-tauri/target/review-2026-09-21/final-gate.sh`) and it had two properties nobody could see from
+its output: a step's failure did not stop the next step, and the script's exit code was the *last*
+command's — so a red `cargo test` followed by a successful `rm`/`ls` reported success. It did exactly
+that on §9's first gate run: the suite failed, the script exited 0, and only reading the output showed
+it. That is the class this programme keeps finding in the repository's tools, in the one place where
+it matters most, because everything else is verified **by** this.
+
+`scripts/gate.sh` is that sequence, committed and honest:
+
+- every step runs even after one fails — a summary of all of them is worth more than the first
+  failure — and each step's status is recorded;
+- the exit code is **1 if any step failed**, with `FAIL: N of M step(s) failed: <names>` on stderr;
+- the summary prints the counts a green run is judged by, not just the names: the Rust suite's target
+  count and passed/failed totals, `pnpm verify`'s test count, clippy's warning lines;
+- `--only <steps>` for a subset, `--with-e2e` for the Playwright suite, logs under
+  `target/gate/<step>.log`;
+- it stages the verified engine before the Rust suite and removes it afterwards, and it runs that
+  suite with `NEKOWITE_REQUIRE_PROCESS_TESTS=1` — so a process-level case that cannot run fails
+  instead of skipping (finding T1's rule, now in the gate rather than in one script's memory).
+
+**Proven by breaking it**: with a deliberately misformatted item added to `src/errors.rs`,
+`bash scripts/gate.sh --only fmt,clippy` printed `FAIL fmt (exit 1)` **and** `PASS clippy
+(exit 0) — 97 warning lines` in the same run — both steps ran — and the script exited **1** with
+`FAIL: 1 of 2 step(s) failed: fmt`. The mutation was removed and the file restored byte-identically
+(md5 `0a5fea6fc641c26d4808c9925c176027` before and after).
+
+**The live AI run had a branch no run could reach.** `ai_live_test.rs` drives the app's own AI path
+against the real gateway, and its one paid turn asked for `deepseek-v4.1-flash` — which never streams
+`delta.reasoning_content`. Every run therefore printed `reasoning seen: false`, the counter for
+reasoning events could only ever be zero, and `extract_openai_reasoning` had no live witness at all. A
+second paid case now asks `deepseek-v4-flash`, which streams its thinking before its answer, and
+asserts the two facts separately: reasoning arrived at all (`completion.saw_reasoning()`, the app's own
+reader), and **the answer still arrived after it** — the half a partly-working reader fails, since the
+two arrive on different fields separated by a long run of thinking frames. `verify-ai-live.sh` requires
+both evidence lines independently for exactly that reason, and its cost note now says two turns, with
+the measured sizes: the first bills 17 prompt + 2 completion (stable), the reasoning one 89 prompt and
+a completion side that moves with how long the model thinks (20 and 31 across runs, of which 17 and 28
+were reported as reasoning tokens).
+
+**Read both ways**, which is what makes it coverage rather than a green line: with
+`extract_openai_reasoning` mutated to return `None`, the new case fails with its own sentence, the
+counter reads `0 byte(s) of thinking`, and `verify-ai-live.sh` itself exits 1 — so the script's marker
+discipline is a gate too, not a decoration. The source was restored byte-identically
+(md5 `8d081748f7ae2902a46bb0ace5240466`) and the green run after it read `112 byte(s) of thinking in
+25 chunk(s), then 4 byte(s) of answer`. The byte counts differ per run by design; the assertions are
+about arrival and order, never size.
+
+### The gate
+
+Run for the first time by the committed script — `bash scripts/gate.sh` — and green on all six steps.
+The readings below are its summary, which is where the counts a green run is judged by now live:
+
+| Step | Result |
+|---|---|
+| `verify` | PASS — **5919 tests across 3 package runs** (editor-core 959, plugin-host 132, the renderer 4828), lint at its ceiling, perf's 10, the renderer build and `check:export-css` |
+| `fmt` | PASS |
+| `clippy` | PASS — 97 warning lines, unchanged for a fourth round |
+| `instruments` | PASS — `check-reachability.py`, `check-dead-exports.py`, `check-channels.py`, all three now honest about what they list |
+| `build` | PASS — `tauri build --no-bundle`, with the verified engine staged for the suite and removed after |
+| `rust` | PASS — **79 targets, 1409 passed, 0 failed** (one more than the previous round: the live reasoning case), no skip announcements |
+
+Two things about that run are worth recording because they are the reason the script exists. The
+summary's `verify` line first reported **perf's ten tests** — the last `Tests N passed` line in the
+log — which is a reading that looks like the suite's and is not; the line now sums the three package
+runs, and the corrected reading is the 5919 above. And `--with-e2e`/`--only` were exercised rather
+than assumed: `--only nosuchstep` exits 2 with `FAIL: no step matched`, and `--with-e2e --only e2e`
+ran the Playwright suite through the same harness and reported **293 passed** on its summary line —
+the count matters there for the same reason it does everywhere else, since a run that collected no
+tests exits 0 and prints no such line.
+
+
+
 
 
 

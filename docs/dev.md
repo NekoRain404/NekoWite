@@ -646,6 +646,19 @@ pnpm verify
 `--max-warnings 462` 上限——462 是当前渲染进程的真实告警数，只会往下走：新增告警会让 lint 失败，
 修掉告警不需要改这个数字。e2e 需要浏览器，`pnpm e2e` 是它自己的名字。）
 
+**整条门禁（含 Rust 与三个仪器）用一条命令跑，并且它会在任何一步失败时失败**：
+
+```bash
+bash scripts/gate.sh              # pnpm verify、fmt、clippy、三个仪器、构建、Rust 全套
+bash scripts/gate.sh --with-e2e   # 再加 Playwright
+bash scripts/gate.sh --only fmt   # 只跑某几步
+```
+
+（每一步即使前面有失败也照跑——一份完整的清单比第一个失败更有用——最后打印带计数的汇总，任何一步非零
+就以 1 退出。Rust 全套在 **`NEKOWITE_REQUIRE_PROCESS_TESTS=1`** 下运行，所以「起不来就跳过」的用例
+会变成失败而不是静静的通过；引擎在跑之前被放置到构建产物旁边，跑完移除，理由见 docs/HANDOVER.md §9.1。
+日志在 `apps/desktop/src-tauri/target/gate/<step>.log`。）
+
 性能变更额外运行：
 
 ```bash
