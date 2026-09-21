@@ -227,10 +227,12 @@ impl EngineConnection {
             // It is awaited because attaching waits for the engine's end of stderr to
             // close before it quotes the log: an engine that has just died is a task
             // hop away from having said its last word, and a sentence built before then
-            // would carry nothing.
+            // would carry nothing. Which failure a closure is read as is
+            // `failure_of_call`'s, and it is the one place the engine's own end is
+            // allowed to correct it.
             Ok(Err(error)) => {
                 let error = self
-                    .with_engine_stderr(self.trip_reason().unwrap_or_else(|| classify(error)))
+                    .with_engine_stderr(self.failure_of_call(method, error).await)
                     .await;
                 Err(error)
             }
@@ -238,6 +240,46 @@ impl EngineConnection {
                 method: method.to_string(),
             }),
         }
+    }
+
+    /// What a call that got no answer from the engine is reported as.
+    ///
+    /// The reason the bounded reader stopped comes first: it is a sentence this host wrote about a
+    /// condition this host measured, and the closure's own text says nothing about it.
+    ///
+    /// What is left is the SDK's account, and there is one failure it cannot give a true one for.
+    /// The engine's death ends the transport, which wakes two of the SDK's own actors at once: the
+    /// read half reaches EOF and fails every outstanding reply with the reason
+    /// [`super::super::events::classify`] recognises, while the write half's send to a process that
+    /// is gone fails, which ends the connection *without* failing them. A reply dropped that way
+    /// arrives here as the SDK's own internal error — `response to \`initialize\` never received:
+    /// oneshot canceled` — and it is not the engine's answer: it is the host's bookkeeping
+    /// noticing that no answer will come. [`super::super::process::EngineExit`] carries the race and the
+    /// measurement. No answer *plus* an engine that is gone is a
+    /// [`TransportError::Disconnected`], which is the arm, and the only arm,
+    /// [`super::EngineConnection::with_engine_stderr`] attaches the engine's last words to — so
+    /// reading it correctly is the whole of what makes them reach a reader.
+    ///
+    /// Only a failure the SDK raised on its own behalf is re-read. An answer from the engine is the
+    /// engine's own code in its own words, and an engine that answered was there to answer; gating
+    /// on that shape is also what keeps a healthy engine's error answer from paying for the wait.
+    async fn failure_of_call(
+        &self,
+        method: &str,
+        error: agent_client_protocol::Error,
+    ) -> TransportError {
+        if let Some(reason) = self.trip_reason() {
+            return reason;
+        }
+        if sdk_reports_its_own_failure(&error) && self.engine_exit.exited().await {
+            return TransportError::Disconnected {
+                // The SDK's sentence is about a oneshot channel with no sender left, which is a
+                // fact about this process rather than about the engine. The host knows the
+                // condition, so it says it.
+                detail: format!("the engine exited before it answered `{method}`"),
+            };
+        }
+        classify(error)
     }
 
     /// The bound's own account of why the connection stopped, if it was.
@@ -251,5 +293,72 @@ impl EngineConnection {
             .unwrap()
             .clone()
             .map(|message| TransportError::Engine { message })
+    }
+}
+
+/// Whether the error is the SDK's own report of a failure rather than an answer from the engine.
+///
+/// Every failure `agent-client-protocol` 2.1.0 raises on its own behalf is built by its
+/// `util::internal_error` (`src/util.rs:61-63`): JSON-RPC's internal-error code, that crate's own
+/// literal message, and the reason carried as a **string** in `data` — which is why an undelivered
+/// reply reads as `Internal error: "response to \`initialize\` never received: oneshot canceled"`
+/// (`src/jsonrpc.rs:5997-6000`, the arm `block_task` takes when its response channel was dropped
+/// rather than answered). An answer from the engine carries the engine's own code, message and
+/// data — the certificate failure P0 §2.4 measured arrives as `-32603` with its own message in
+/// place of this crate's — and the SDK's one *other* local report,
+/// `incoming_transport_closed_error` (`src/jsonrpc.rs:3533-3540`), is told apart before this by its
+/// `data.reason`, which is an object rather than a string. So the shape says *the SDK could not
+/// deliver an answer*, and that is the only case in which the engine's own end decides what the
+/// failure was.
+fn sdk_reports_its_own_failure(error: &agent_client_protocol::Error) -> bool {
+    let sdk_internal = agent_client_protocol::Error::internal_error();
+    error.code == sdk_internal.code
+        && error.message == sdk_internal.message
+        && error
+            .data
+            .as_ref()
+            .is_some_and(serde_json::Value::is_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The shape that decides whether the engine's own end has anything to say about a failure.
+    /// Pinned because it is the whole of the gate: the SDK's dropped reply — the one the flake was
+    /// measured on — must be a candidate, and an answer from the engine must never be, or a live
+    /// engine's own words would be re-read as its death.
+    #[test]
+    fn only_the_sdks_own_failure_is_read_against_the_engines_end() {
+        // The measured sentence, verbatim, in the shape `block_task` builds it.
+        let dropped = agent_client_protocol::Error::internal_error()
+            .data("response to `initialize` never received: oneshot canceled");
+        assert!(
+            sdk_reports_its_own_failure(&dropped),
+            "a reply the SDK dropped is what the engine's end is consulted for: {dropped}"
+        );
+
+        // An answer from the engine: JSON-RPC's internal-error code is not enough on its own,
+        // because P0 §2.4's measured certificate failure carries exactly that code and an
+        // untouched message beside it.
+        let answer = agent_client_protocol::Error::new(
+            -32603,
+            "Internal error: unknown certificate verification error",
+        );
+        assert!(
+            !sdk_reports_its_own_failure(&answer),
+            "the engine's own answer is never re-read as a disconnection: {answer}"
+        );
+
+        // The SDK's other local report, which `classify` already reads as a disconnection by its
+        // own reason: a shape this gate must leave alone rather than claim.
+        let closed = agent_client_protocol::Error::internal_error().data(serde_json::json!({
+            "reason": "incoming_transport_closed",
+            "method": "initialize",
+        }));
+        assert!(
+            !sdk_reports_its_own_failure(&closed),
+            "the marked disconnection is classified by its reason, not by this: {closed}"
+        );
     }
 }

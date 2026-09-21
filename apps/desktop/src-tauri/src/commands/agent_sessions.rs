@@ -182,12 +182,33 @@ pub async fn agent_load_session(
     // (see `SessionSnapshots::adopting`; without it a restored conversation reaches a mounting
     // window as a turn that is still running). Cleared by the `opened` call below, on the same
     // answer the window's handle is minted from.
-    session.snapshots.adopting(&session_id);
-    let info = session
-        .runtime
-        .load_session(&session_id, &root)
-        .await
-        .map_err(|error| AgentFailure::of_session(&error))?;
+    let announced = session.snapshots.adopting(&session_id);
+    let info = match session.runtime.load_session(&session_id, &root).await {
+        Ok(info) => info,
+        Err(error) => {
+            // **The adoption this call announced is over — but only if it announced it.**
+            // `adopting` answers that, and the answer matters here: two windows may ask for the same
+            // session, the second is refused by the runtime (`LoadInFlight`) while the first is still
+            // in flight, and clearing the flag on the way out of *that* refusal would end an adoption
+            // another caller is relying on — its replayed frames would be read as a turn mid-replay,
+            // which is the failure the flag exists to prevent.
+            //
+            // The flag is cleared by `opened` below, which this path never reaches: a load the engine
+            // refuses (`AlreadyOpen` — the session is already this host's) or one that dies in
+            // transport returns here. Left set, it is not a stale flag but a *reader*: `record`
+            // withholds every ending from a log that is adopting, `started` binds the next run to
+            // that same log, and the session then answers `Running` for a conversation that is over
+            // (`snapshot.rs`'s `adopting` states the two readers this flag chooses between).
+            //
+            // `abandoned` and not `opened`: `opened` states that the engine admitted the session,
+            // which is exactly what a refusal denies. Both clear the flag, and only one of them is
+            // true here.
+            if announced {
+                session.snapshots.abandoned(&session_id);
+            }
+            return Err(AgentFailure::of_session(&error));
+        }
+    };
     // §6.2's log, opened for the loaded session before this returns: a replayed frame that arrived
     // while the load was in flight has already been recorded by the driver, and this is what makes
     // the entry exist for a window that takes its snapshot the instant this answers.

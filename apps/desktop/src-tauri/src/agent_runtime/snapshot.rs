@@ -20,7 +20,7 @@
 //!   by [`super::registry`]'s claim, and a second counter here would be a second answer to a
 //!   question that must have exactly one.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use serde::Serialize;
@@ -36,88 +36,15 @@ use super::events::{AgentEventEnvelope, AgentEventKind, AgentIdentity};
 /// recovery §6.2 names — so the cost of being wrong here is a re-read, never a hole.
 pub const REPLAY_WINDOW: usize = 512;
 
-/// One session's window, and where its turn stands.
-struct SessionLog {
-    events: VecDeque<AgentEventEnvelope>,
-    /// The run in progress or the last one to end — the answer to "which turn am I looking at".
-    run_id: Option<String>,
-    /// How the last run ended, or `None` while one is open (or none has run).
-    ended: Option<Ending>,
-    /// The highest sequence this session's stream reached.
-    sequence: u64,
-    /// The host is reopening this session, and the frames it is publishing are that session's
-    /// **history** rather than a turn of it.
-    ///
-    /// See [`SessionSnapshots::adopting`]. It is a flag on the log rather than a fact read off the
-    /// frames because the frames cannot say it: `session/load`'s replay arrives as ordinary
-    /// `session/update` notifications, stamped with the load's own run so that a window has
-    /// something to attribute them to, and a frame that names a run is indistinguishable from a
-    /// turn's frame by its own shape.
-    adopting: bool,
-}
-
-impl Default for SessionLog {
-    fn default() -> Self {
-        Self {
-            events: VecDeque::new(),
-            run_id: None,
-            ended: None,
-            sequence: 0,
-            adopting: false,
-        }
-    }
-}
-
-/// Why the last run ended, as far as this host can say — and deliberately not *whether* it did.
+/// One session's window, where its turn stands, and what the view draws.
 ///
-/// The two are different axes and the contract keeps them apart. "The turn ended" is settled by
-/// the frame's own kind, and it is what [`SessionState::Completed`] reports; "how it ended" is
-/// what this type holds, and it is the only place an ending the engine named and an ending nobody
-/// named can be told apart. A reader that folds them makes the second axis carry the first
-/// axis's confidence — which is what `_ => Completed` did, and what `run-finished` did not say.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Ending {
-    /// An ending the engine named among the reasons this build knows, `cancelled` excepted
-    /// below. A ceiling (`max-tokens`, `max-turn-requests`) and a refusal are here, not in arms
-    /// of their own: the contract decided they "ended the way the turn was always going to end"
-    /// (`agent-event-apply.ts`'s `endStateFor`, and the reducer's cases pin it), and this type has
-    /// no consumer that could act on the difference — the reason itself travels in the frame.
-    Completed,
-    Cancelled,
-    Failed,
-    /// An ending whose reason this build cannot state: the engine's own word for something this
-    /// version has no arm for, or a frame that states no usable reason at all.
-    ///
-    /// Its own arm rather than the `Completed` above, because "the turn ended" is all that was
-    /// said: `runs.rs` publishes an unfamiliar reason as the engine's own word (the pinned
-    /// schema's `StopReason` is `#[non_exhaustive]`, so this is a normal frame), the pet
-    /// projection reads the same frame as `Unknown` rather than `turn-finished`
-    /// (`task_projection::outcomes`), and the window's own reader reports `unrecognised`. All
-    /// three agree that the ending is *known to have happened* and *not known to be* anything
-    /// more; this arm saying `Completed` would be the one reader inventing an ending out of three.
-    Unrecognised,
-}
+/// The state machine is its own file — see [`session_log`] for why and for the two axes it keeps
+/// apart. [`SessionState`] and [`SessionLog`] are reached from there, and the parent's `record`,
+/// `opened`, `adopting`, `abandoned`, `started` and `snapshot` are the only readers.
+mod session_log;
 
-/// What the view draws, as §6.2's state machine.
-///
-/// `idle` and `starting`, which the contract's union also carries, name the states *before* a
-/// session exists. A snapshot is always about a session that does, so this host never answers
-/// them — and a state it cannot reach is not one it should be able to invent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum SessionState {
-    /// The engine admitted the session; nothing has been asked of it yet.
-    Ready,
-    /// A generation is in flight.
-    Running,
-    /// A generation is in flight *and* the engine is waiting on the user to allow something.
-    /// Derived from the permission table, not from the frames, so it cannot disagree with the
-    /// prompt list the same snapshot carries.
-    WaitingPermission,
-    Completed,
-    Cancelled,
-    Failed,
-}
+pub use session_log::SessionState;
+use session_log::{ending_of, Ending, SessionLog};
 
 /// The identity a snapshot answers under: the runtime's four fields plus the session's.
 ///
@@ -226,20 +153,57 @@ impl SessionSnapshots {
     /// A turn cannot begin in this window: a prompt needs a session handle, the handle is minted
     /// from the load's own answer, and this is cleared by the [`Self::opened`] call beside that
     /// answer. The flag is not a lock; it is the load saying which of its two readers a frame has.
-    pub fn adopting(&self, session_id: &str) {
+    ///
+    /// **It answers whether *this* call is the one that announced the adoption**, and the caller is
+    /// expected to use it: a second `agent_load_session` for the same session is refused by the
+    /// runtime (`SessionError::LoadInFlight`) while the first is still in flight, and a refusal that
+    /// cleared the flag on its way out would end an adoption another window still depends on — the
+    /// replayed frames of the *live* load would become turn bookkeeping mid-replay, which is the
+    /// failure this flag exists to prevent. [`Self::abandoned`] is therefore only called by the
+    /// caller that was told `true` here.
+    pub fn adopting(&self, session_id: &str) -> bool {
         let mut sessions = self.sessions.lock().unwrap();
-        sessions.entry(session_id.to_string()).or_default().adopting = true;
+        let log = sessions.entry(session_id.to_string()).or_default();
+        let announced = !log.adopting;
+        log.adopting = true;
+        announced
+    }
+
+    /// The load [`Self::adopting`] announced did not answer, so nothing is being adopted.
+    ///
+    /// **Why this is a method and not an `opened` on the failure path.** `opened` states that the
+    /// engine admitted the session, which is exactly what a refusal denies; calling it here would
+    /// make the log claim something that did not happen, in the one module whose whole subject is
+    /// which of two readers a frame has. What both calls have in common is only the flag.
+    ///
+    /// The entry is kept rather than removed, and that is deliberate: `AlreadyOpen` means the session
+    /// is genuinely open and this is *its* log, with its frames and its turn in it. A second,
+    /// identical-looking log is what a failed transport leaves behind — a session this build cannot
+    /// make rows for — and removing that one would need a way to tell the two apart here, which is
+    /// exactly the distinction the caller has and this module does not. A stale entry costs a
+    /// `Ready` answer for a session id no window holds a handle for; a removed one would cost the
+    /// open session its transcript.
+    pub fn abandoned(&self, session_id: &str) {
+        let mut sessions = self.sessions.lock().unwrap();
+        sessions.entry(session_id.to_string()).or_default().adopting = false;
     }
 
     /// A generation was started on `session_id`.
     ///
     /// Called by the command that issued the prompt, because that is the moment the host knows —
     /// the runtime's own answer is the run id, and no frame carries "a run began".
+    ///
+    /// **It also ends any adoption.** A turn cannot begin inside one — the handle a prompt needs is
+    /// minted from the load's own answer — so a flag still set when a run starts is a load that never
+    /// answered, and leaving it set would withhold every ending of this run from the reader that
+    /// decides what a window draws. `snapshot.rs`'s own note on `adopting` says the flag is not a
+    /// lock; this is where that is enforced rather than assumed.
     pub fn started(&self, session_id: &str, run_id: &str) {
         let mut sessions = self.sessions.lock().unwrap();
         let log = sessions.entry(session_id.to_string()).or_default();
         log.run_id = Some(run_id.to_string());
         log.ended = None;
+        log.adopting = false;
     }
 
     /// Keeps one published envelope, in the order the runtime published it.
@@ -320,55 +284,6 @@ impl SessionSnapshots {
             events,
             permissions,
         })
-    }
-}
-
-/// How one `run-finished` frame's stop reason reads to this module.
-///
-/// One spelling, and it is the contract's: `runs.rs` renders every reason — the schema's and an
-/// unfamiliar one — through the same `_` → `-` replacement before publishing, so a reason under
-/// some other spelling is a reason this host does not know rather than a second way of writing one
-/// it does. The pet projection reads the same value the same way and with the same total match
-/// (`task_projection::outcomes::state_from_stop_reason`), which is what keeps the two readers of
-/// one frame from answering differently about it.
-///
-/// The four known reasons an ordinary turn can end with are named one by one rather than caught by
-/// a fallback: a reason the protocol adds later is then `Unrecognised` — the honest reading — by
-/// construction, instead of being read as a completion by a `_` arm that was written when the
-/// vocabulary was the five it could see. What catches the rest is a single arm that says "this
-/// build cannot name it", so the fallback is the honest reading rather than the confident one.
-/// `None` — a frame that states no usable reason at all — is the same fact as a word this build
-/// does not know: no ending can be named. `runs.rs` always renders a string, so that input is not
-/// one the runtime's own frames produce; it is here so the match is total over what the reader can
-/// be handed.
-fn ending_of(stop_reason: Option<&str>) -> Ending {
-    match stop_reason {
-        Some("cancelled") => Ending::Cancelled,
-        Some("end-turn" | "max-tokens" | "max-turn-requests" | "refusal") => Ending::Completed,
-        Some(_) | None => Ending::Unrecognised,
-    }
-}
-
-impl SessionLog {
-    fn state(&self) -> SessionState {
-        match (self.run_id.is_some(), self.ended) {
-            (_, Some(Ending::Cancelled)) => SessionState::Cancelled,
-            (_, Some(Ending::Failed)) => SessionState::Failed,
-            // Two endings, one state, and only on *this* axis: a frame with `run-finished` as its
-            // kind has said the turn is over, and how it ended is not what this state reports —
-            // `outcome_of_snapshot` reads it that way ("a snapshot says a turn ended and cannot
-            // say how"), and the window's own reader maps its `unrecognised` arm here as well
-            // (`agent-event-apply.ts`'s `endStateFor`, with the reason kept in `lastResult`).
-            //
-            // A state of this host's own naming is the one answer that is not available: the
-            // window's `readHostState` refuses a state outside the contract's eight, and the
-            // refusal costs the whole snapshot rather than one field. So the uncertainty is
-            // carried where it can be — `Ending` — and the word the engine sent is left in the
-            // `run-finished` frame this log keeps, which is what a window replays and shows.
-            (_, Some(Ending::Completed | Ending::Unrecognised)) => SessionState::Completed,
-            (true, None) => SessionState::Running,
-            (false, None) => SessionState::Ready,
-        }
     }
 }
 
@@ -512,31 +427,6 @@ mod tests {
     }
 
     #[test]
-    fn an_ending_this_build_cannot_name_is_an_arm_of_its_own() {
-        // The word a live engine sent (P0 §6.3's `budget_exceeded`, respelled at the boundary by
-        // `runs.rs`), which the pinned schema's `#[non_exhaustive]` `StopReason` does not
-        // enumerate: a normal frame, not a corrupt one. It is *not* `Completed` — that arm means
-        // the engine named one of the reasons this build knows, and this frame named none of them.
-        // The pet projection reads the same value as `Unknown` and the window's reader as
-        // `unrecognised`; an arm here that said `Completed` would be the one reader out of three
-        // inventing an ending.
-        assert_eq!(ending_of(Some("budget-exceeded")), Ending::Unrecognised);
-        // A frame that states no usable reason at all says the same thing about *why*: nothing.
-        assert_eq!(ending_of(None), Ending::Unrecognised);
-        // And the other spelling of a reason this build knows is a reason it does not know: one
-        // spelling crosses this boundary (`runs.rs::wire_stop_reason`), so an engine's
-        // `snake_case` here is not a second way of writing `end-turn`.
-        assert_eq!(ending_of(Some("end_turn")), Ending::Unrecognised);
-
-        // Every reason the contract names keeps the arm it had, named one by one so that a sixth
-        // reason the protocol adds lands in `Unrecognised` rather than being read as a completion.
-        for reason in ["end-turn", "max-tokens", "max-turn-requests", "refusal"] {
-            assert_eq!(ending_of(Some(reason)), Ending::Completed, "{reason}");
-        }
-        assert_eq!(ending_of(Some("cancelled")), Ending::Cancelled);
-    }
-
-    #[test]
     fn an_unknown_ending_says_the_turn_ended_and_keeps_the_engines_own_word() {
         let snapshots = SessionSnapshots::new(identity(), 8);
         snapshots.opened("ses-1");
@@ -590,5 +480,99 @@ mod tests {
         let answered = snapshots.snapshot("ses-1", &[]).unwrap();
         assert!(answered.permissions.is_empty());
         assert_eq!(answered.state, SessionState::Running);
+    }
+
+    /// A turn that begins while an adoption is still open is a turn like any other.
+    ///
+    /// The flag is announced by `agent_load_session` before it asks the engine, and cleared by
+    /// [`SessionSnapshots::opened`] only when the load *answers*. A load the engine refuses
+    /// (`AlreadyOpen`) or one that dies in transport is therefore a flag left set — and the run that
+    /// follows it is the failure this module was written against: `started` binds the run while
+    /// `record` withholds every ending, so `state` answers `Running` for a conversation that is over,
+    /// and a window remounting on it draws a spinner and refuses to send.
+    ///
+    /// A turn cannot legitimately begin inside an adoption — the handle a prompt needs is minted from
+    /// the load's own answer — so clearing the flag here costs the honest case nothing and is what
+    /// makes the two states unrepresentable rather than merely unreachable.
+    #[test]
+    fn a_turn_that_begins_inside_an_adoption_is_not_stuck_running() {
+        let snapshots = SessionSnapshots::new(identity(), 8);
+        // The announcement, and then no answer: `opened` is never reached, which is the whole point.
+        snapshots.adopting("ses-1");
+        snapshots.started("ses-1", "run-0");
+        snapshots.record(&ended(0, "end-turn"));
+
+        assert_eq!(
+            recorded_ending(&snapshots),
+            Some(Ending::Completed),
+            "the ending was withheld from a turn that had already begun"
+        );
+        assert_eq!(
+            snapshots.snapshot("ses-1", &[]).expect("opened").state,
+            SessionState::Completed,
+            "a finished conversation still reads as a run in flight"
+        );
+    }
+
+    /// And an adoption that never answered is over, so the frames that follow are the session's own.
+    ///
+    /// The refusal path's own half: `agent_load_session` announces the adoption and then may return
+    /// before `opened`, so it has to say so itself. The flag is the only thing that clears it — there
+    /// is no timeout and no second reader — and a log left adopting is a session whose endings this
+    /// host will not read for the rest of the process's life.
+    ///
+    /// What is asserted is therefore the *reader* and not the flag: after a refusal, a frame that
+    /// states an ending states one. A no-op `abandoned` leaves the ending withheld, which is the
+    /// difference between a conversation a window can draw and one it spins on for ever.
+    #[test]
+    fn an_adoption_that_never_answered_is_over() {
+        let snapshots = SessionSnapshots::new(identity(), 8);
+        snapshots.adopting("ses-1");
+        snapshots.abandoned("ses-1");
+        snapshots.record(&ended(0, "end-turn"));
+
+        assert_eq!(
+            recorded_ending(&snapshots),
+            Some(Ending::Completed),
+            "an ending was withheld from a session nothing is adopting"
+        );
+        assert_eq!(
+            snapshots.snapshot("ses-1", &[]).expect("opened").state,
+            SessionState::Completed
+        );
+    }
+
+    /// A second load that is refused does not end the first one's adoption.
+    ///
+    /// Two windows may ask for the same session, and the runtime refuses the second with
+    /// `LoadInFlight` while the first is still in flight. `adopting` answers whether the call is the
+    /// one that announced the adoption, and the command clears the flag only then: without that, the
+    /// second window's refusal would hand the *first* load's replayed frames to the turn bookkeeping
+    /// mid-replay — the failure this flag was written against, reached from the other side.
+    #[test]
+    fn a_second_load_that_fails_does_not_end_the_first_ones_adoption() {
+        let snapshots = SessionSnapshots::new(identity(), 8);
+        assert!(
+            snapshots.adopting("ses-1"),
+            "the first load is the one that announces the adoption"
+        );
+        assert!(
+            !snapshots.adopting("ses-1"),
+            "a second load does not own the announcement, so it must not clear it on its way out"
+        );
+
+        snapshots.record(&ended(0, "end-turn"));
+        assert_eq!(
+            recorded_ending(&snapshots),
+            None,
+            "an adoption another caller still depends on was ended by a refusal that was not its own"
+        );
+
+        // And the load that *did* announce it still ends the adoption, in both directions: a success
+        // through `opened`, a failure through `abandoned`. This is the pair `agent_load_session`
+        // chooses between.
+        snapshots.abandoned("ses-1");
+        snapshots.record(&ended(1, "end-turn"));
+        assert_eq!(recorded_ending(&snapshots), Some(Ending::Completed));
     }
 }

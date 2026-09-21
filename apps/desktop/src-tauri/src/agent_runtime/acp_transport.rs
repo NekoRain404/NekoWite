@@ -16,7 +16,12 @@
 //!   generation not to share one timer.
 //! - **Classification.** An engine failure arrives as an opaque error, and P0
 //!   §2.4 requires the certificate condition to be recognised and reworded
-//!   rather than passed through.
+//!   rather than passed through. It is also where a failure the SDK reports
+//!   *without* the engine's end is corrected against the host's own reading of
+//!   that end ([`super::process::EngineExit`], consulted by
+//!   `calls::EngineConnection::failure_of_call`): a reply the SDK drops rather
+//!   than fails carries no reason, and a reader given it would learn nothing
+//!   about why the engine is gone.
 //! The connection's lifetime is here; the calls made over it are not. `acp_transport/calls.rs`
 //! holds `initialize`, `session/new`, `session/set_config_option`, `session/prompt`,
 //! `session/cancel` and the bounded `request` they all go through, because a call's rule is
@@ -40,8 +45,8 @@ use tokio::sync::{mpsc, oneshot};
 use super::events::{classify, TransportError};
 use super::fs_capability::FsRequest;
 use super::process::{
-    secrets_of, signal_group, BoundedFrameReader, EngineLaunch, EngineProcess, EngineStderr,
-    MAX_FRAME_BYTES, SHUTDOWN_GRACE,
+    secrets_of, signal_group, BoundedFrameReader, EngineExit, EngineLaunch, EngineProcess,
+    EngineStderr, MAX_FRAME_BYTES, SHUTDOWN_GRACE,
 };
 
 // Declared by path rather than by name, for the reason `agent_runtime/skills.rs` gives about its
@@ -91,6 +96,13 @@ pub struct EngineConnection {
     /// [`EngineConnection::with_engine_stderr`], which is the one place it becomes
     /// text.
     stderr: EngineStderr,
+    /// The engine's own end, as the supervisor saw it.
+    ///
+    /// Held for the failures the SDK reports *without* it: a reply dropped rather than failed
+    /// arrives as the SDK's own internal error, and only this reading can say what it means. See
+    /// [`EngineExit`], which carries the race and the measurement, and
+    /// `calls::EngineConnection::failure_of_call`, which is where it is consulted.
+    engine_exit: EngineExit,
 }
 
 /// What the engine says, as opposed to what it is asked.
@@ -166,6 +178,10 @@ impl EngineConnection {
         // carries ([`EngineConnection::engine_is_running`]).
         let pgid = child.id() as i32;
         let engine = EngineProcess::of(pgid);
+        // The host's own reading of the engine's end, told by the one task that observes it. It is
+        // created before the spawn because the reading half has to outlive this function — see
+        // [`EngineExit`] for the failure the SDK reports without it.
+        let (exit_tx, exit) = EngineExit::watch();
         tokio::spawn(async move {
             tokio::select! {
                 // A dropped sender means "shut down" either way: the runtime asks,
@@ -175,7 +191,12 @@ impl EngineConnection {
                 // collects it — this arm is the reap — and there is nothing to
                 // signal: the sequence below is for an engine that is still
                 // running, and it is deliberately not reached here.
-                _ = child.status() => return,
+                _ = child.status() => {
+                    // Said before this task ends, because it is what a failure the SDK reported
+                    // without it is judged by.
+                    let _ = exit_tx.send(true);
+                    return;
+                }
             }
             // Bounded wait for a normal exit first — the engine has just seen
             // stdin EOF and may be finishing a write it started.
@@ -196,6 +217,9 @@ impl EngineConnection {
                     let _ = child.status().await;
                 }
             }
+            // However it ended above, the child is collected by now: this is the end of the
+            // sequence, and the reading is told once rather than from each arm.
+            let _ = exit_tx.send(true);
         });
 
         let trip = std::sync::Arc::new(Mutex::new(None));
@@ -296,6 +320,7 @@ impl EngineConnection {
                 engine,
                 trip,
                 stderr,
+                engine_exit: exit,
             },
             EngineEvents {
                 updates,
