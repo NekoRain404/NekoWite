@@ -1401,10 +1401,16 @@ COVERED/PARTIAL/GAP, a lint figure invalidated by the `--max-warnings` ceiling, 
 「docs/debug.md §4」 in a document with no sections, and no mention of the four vitest projects, the
 Playwright suite, the 76 Rust targets, the three instruments or the three non-vitest suites. Rewritten
 around what runs, with every row naming files that exist — all 64 paths checked before writing — and no
-blank status cell. Three rows are PARTIAL and §3 says what is missing rather than implying it is fine:
-nothing asserts a typing burst is a single undo step, PDF export is covered only as the print iframe's
-lifecycle (`use-note-export.ts` has no test file at all), and window geometry round-trips only in the
-frontend. The two per-suite check counts, the 297-in-46 Playwright collection and the 76 targets were
+blank status cell. Two rows are PARTIAL and its §3 says what is missing rather than implying it is
+fine: PDF export is covered only as the print iframe's lifecycle (`use-note-export.ts` has no test file
+at all), and window geometry round-trips only in the frontend. The third gap it named — that nothing
+asserted a typing burst is a single undo step — was closed in this same round, by
+`packages/editor-core/src/history-typing.test.ts` (three cases; 3 passed). It is a characterisation
+test, not a bug fix, and the distinction is the point: the behaviour was already right, and what was
+missing was the evidence. The file carries its own control — the same insertion, the same code path,
+separated by more than the history plugin's grouping delay, reads `undoDepth` 2 where the burst reads
+1 — so a depth assertion that could not tell grouped from ungrouped typing would fail rather than pass.
+The two per-suite check counts, the 297-in-46 Playwright collection and the 76 targets were
 measured while writing it, not copied from a summary.
 
 **§1.6 and §1.1 are closed, with one correction to the audit itself.** The guide rows were re-verified

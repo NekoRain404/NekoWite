@@ -63,7 +63,8 @@ NEKOWITE_REQUIRE_PROCESS_TESTS=1 cargo test --locked --no-fail-fast \
 | 域 | 真实测试 | 状态 |
 |---|---|---|
 | Vault 打开/切换/恢复 | `stores/vault-session.test.ts`、`app/app-bootstrap.test.ts`、`app/vault-switch-refused-save.test.ts`、`src-tauri/tests/vault_auth_test.rs`、`e2e/app.spec.ts` | COVERED |
-| 编辑器 三视图/保存/关闭保存 | `e2e/app.spec.ts`、`e2e/editor-input.spec.ts`、`e2e/save-roundtrip.spec.ts`、`e2e/lifecycle.spec.ts`、`features/editor/controller/editor-persistence.test.ts`、`app/close-requested-unsaved-keystroke.test.ts` | PARTIAL：单次撤销只按手势断言（表格操作、图片属性、任务列表），没有「一次键入 burst 或多行粘贴 = 一步撤销」的用例 |
+| 编辑器 三视图/保存/关闭保存 | `e2e/app.spec.ts`、`e2e/editor-input.spec.ts`、`e2e/save-roundtrip.spec.ts`、`e2e/lifecycle.spec.ts`、`features/editor/controller/editor-persistence.test.ts`、`app/close-requested-unsaved-keystroke.test.ts` | COVERED（撤销粒度见下） |
+| 撤销粒度 | `packages/editor-core/src/history-typing.test.ts`、`history-switch.test.ts`、`table/ops.test.ts`、`image/attrs.test.ts` | COVERED：一次键入 burst（十个字符）`undoDepth` 为 1、一次撤销回到打开时的文本；相隔超过分组间隔的两段输入是两步；一次多行插入是一步。第二个用例同时是第一个的对照——同一段代码、同样的插入，只有时间不同就读到 2 而不是 1 |
 | MDX 往返/未知 JSX/边界 | `packages/editor-core/src/mdx/roundtrip.test.ts`、`mdx/byte-fidelity.test.ts`、`mdx/parse-resilience.test.ts`、`mdx/mdx-document.test.ts`、`docs/mdx-demo/__validation/validate.test.ts` | COVERED（含 fuzz：`editor-roundtrip-fuzz.test.ts`、`serialize-fuzz.test.ts`） |
 | 图片 粘贴/拖入/落盘/失败恢复 | `features/editor/composables/use-image-intake.test.ts`、`ui/EditorPane.imageIntake.test.ts`、`features/attachments/services/attachment-import.test.ts`、`attachment-paths.test.ts`、`e2e/image-insert.spec.ts`、`e2e/image-render.spec.ts`、`ui/ImagePanel.test.ts` | COVERED |
 | 表格 行列/剪贴板/列宽/往返 | `packages/editor-core/src/table/ops.test.ts`、`table/clipboard.test.ts`、`table/resize.test.ts`、`table/stringify.test.ts`、`table-clipboard-guard.test.ts`、`ui/TableMenu.test.ts`、`e2e/table-resize-handle.spec.ts` | COVERED |
@@ -77,12 +78,11 @@ NEKOWITE_REQUIRE_PROCESS_TESTS=1 cargo test --locked --no-fail-fast \
 
 ## 3. 明确没人守的地方
 
-- **单次撤销的粒度**（编辑器）：见上表 PARTIAL。
 - **导出的一条完整路径**：`features/notes/composables/use-note-export.ts` 没有测试文件——从「导出」按钮到 `exportToPdf` 之间没有用例，而 PDF 本身也没有产出断言。
 - **窗口几何的 Rust 侧往返**：几何的 clamp 与持久化只在前端测过。
 - **`pnpm test:e2e` 是个陷阱**：它直接调 playwright（§1.3）。CI 用它没问题，本地在有 `pnpm tauri dev` 时用它会抢端口。
 
-以上都不是「大概没问题」，而是「没有证据」：写在这里是为了让下一个改动它的人知道自己在无人区。
+以上都不是「大概没问题」，而是「没有证据」：写在这里是为了让下一个改动它的人知道自己在无人区。（曾经还有第三条——撤销粒度——已在同一轮由 `history-typing.test.ts` 补上，见 §2 的对应行。）
 
 ## 4. 需要人工复查的风险点
 
