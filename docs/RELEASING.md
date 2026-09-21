@@ -11,8 +11,11 @@
 | `apps/desktop/src-tauri/tauri.conf.json` | `version`（**打包脚本用它决定产物文件名**） |
 | `apps/desktop/src-tauri/Cargo.toml` | `[package] version`（改完构建一次，让 `Cargo.lock` 同步） |
 
-- `CHANGELOG.md`：把 `## [Unreleased]` 的内容整理成 `## [1.0.0] - YYYY-MM-DD`。
-- 已知不一致（发布前要处理）：`apps/desktop/src/ui/StatusBar.vue` 里界面显示的版本号是硬编码的 `v0.1.0`，与 `tauri.conf.json` 的 1.0.0 不符。
+- `CHANGELOG.md`：把 `## [Unreleased]` 的内容整理成新版本条目。
+- 界面版本号不再是硬编码：`apps/desktop/src/ui/StatusBar.vue` 通过
+  `apps/desktop/src/platform/app-version.ts` 读构建版本（打包版问 Tauri 的 `getVersion()`，
+  浏览器与单测回落到 vite 注入的 `__APP_VERSION__`）。该组件自己的注释记录了它曾写死 `v0.1.0`
+  的那段历史。
 
 ## 2. 门禁（全绿才打包）
 
@@ -78,4 +81,8 @@ PORTABLE=0 bash scripts/package-win.sh
 - **代码签名证书**：见第 4 节；没有它，每次发布都要在说明里解释 SmartScreen 提示。
 - **许可证**：工作区里已有一份 MIT 的 `LICENSE`（尚未提交），`package.json` 与 `apps/desktop/package.json` 也加了 `"license": "MIT"`；发布前需要最终确认这一选择并提交。
 - **自动更新端点**：当前没有更新检查（没有 updater 插件、没有端点）。若要发布后可自动升级，需要先决定托管位置与更新签名密钥。
-- **macOS / Linux 构建**：图标资源已包含 `.icns`，但仓库没有对应的 CI 与打包脚本；跨平台发布需要单独的构建流水线。
+- **macOS 构建**：图标资源已包含 `.icns`，但仓库没有对应的打包脚本；需要单独的构建流水线。
+- **Linux 打包已经有了**：`pnpm package:linux`（即 `scripts/package-linux.sh`）一次构建出
+  `release/` 下的 `nekowite_<version>_x64`、`opencode`、deb、rpm 与 AppImage，并对每个包做引擎与
+  第三方声明的校验。**它是唯一受支持的发布路径**；本文件其余部分的 `package-win.sh` 流程不是。
+  Linux 侧真正的待决项是这三个包**没有 GPG 签名**，本文件没有覆盖。

@@ -633,7 +633,7 @@ pnpm lint
 pnpm test
 pnpm build
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
-pnpm --filter desktop test:e2e
+pnpm --filter @nekowite/desktop e2e
 ```
 
 性能变更额外运行：
@@ -641,6 +641,10 @@ pnpm --filter desktop test:e2e
 ```bash
 pnpm perf
 ```
+
+（`pnpm perf` 是独立的 vitest 工程，`pnpm test` 到不了它，而 CI 每次都会跑它 —— 见
+`.github/workflows/ci.yml`。Rust 侧的 `cargo fmt --all --check` / `cargo clippy` 同样在 CI 里，
+需要在 `apps/desktop/src-tauri` 目录下执行。）
 
 ### 7.2 测试矩阵
 

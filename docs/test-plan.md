@@ -1,7 +1,8 @@
 # NekoWite Test Plan (execution, separate from docs/debug.md)
 
 > 执行用测试矩阵（与 `docs/debug.md` 的方法论互补：这里按功能域列出**要验证的用例** + 现有测试 + 缺口 + 修复）。AI 相关（AI/Chat/GhostWriter/模型请求）暂不执行。
-> 质量门禁：`pnpm -r typecheck` / `pnpm -r lint`(0/0) / `pnpm -r test` / `cargo test` / `pnpm build` / `cd apps/desktop && pnpm exec playwright test` / `pnpm perf`。
+> 质量门禁：`pnpm -r typecheck` / `pnpm -r lint`（0 errors，warnings 不为 0，且不会让命令失败）/ `pnpm -r test` / `cargo test`（在 `apps/desktop/src-tauri` 下，或加 `--manifest-path`）/ `pnpm build` / `pnpm --filter @nekowite/desktop e2e`（不要直接调 playwright，它会和 app 抢 1420 端口）/ `pnpm perf`。
+> 权威清单是 `.github/workflows/ci.yml`：它还包含 `check:export-css`、`cargo clippy` 与 `cargo fmt --all --check`。
 > 修复后 ≥10 次循环验证。
 
 ## 覆盖清单（用例 → 现有测试 → 状态）
