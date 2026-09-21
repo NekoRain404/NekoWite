@@ -83,6 +83,15 @@ const GATEWAY: &str = "https://ai.iapp.dpdns.org/v1";
 /// asserts it is really offered before the turn that costs money asks for it.
 const TEST_MODEL: &str = "deepseek-v4.1-flash";
 
+/// The gateway's reasoning model: the dialect the paid turn above cannot reach.
+///
+/// It streams its thinking first, as `delta.reasoning_content`, and the answer after it as
+/// `delta.content` — a shape the app has its own reader for (`extract_openai_reasoning`, and
+/// `StreamEvent::Reasoning` is what that reader feeds). The case below is the only place that reader
+/// meets a real gateway: the model above reports `reasoning seen: false` on every run, so its
+/// counter for reasoning events could only ever print zero.
+const REASONING_MODEL: &str = "deepseek-v4-flash";
+
 /// P0 §2.3's prompt, the one the agent live run also uses. Anything longer buys nothing: what is
 /// being measured is that the path works end to end, not what the model says.
 const TEST_PROMPT: &str = "Reply with exactly: PONG";
@@ -122,9 +131,15 @@ fn live_run_key() -> Option<String> {
 /// ([`with_completion_auth`]). `max_tokens` is left unset so the body carries the app's own default
 /// rather than a number this test invented.
 fn live_config(key: String) -> AIConfig {
+    live_config_for(key, TEST_MODEL)
+}
+
+/// The same configuration for a named model, so the reasoning case can pay for a turn against the
+/// model that speaks that dialect without a second copy of this constructor.
+fn live_config_for(key: String, model: &str) -> AIConfig {
     AIConfig {
         provider: "custom".into(),
-        model: TEST_MODEL.into(),
+        model: model.into(),
         base_url: Some(GATEWAY.into()),
         api_key: Some(key),
         ..Default::default()
@@ -451,4 +466,136 @@ async fn one_paid_turn_streams_through_the_apps_own_path() {
         );
     }
     eprintln!("--- every count the app reports is one the provider sent, unchanged");
+}
+
+/// The reasoning dialect, live: the branch the paid turn above can never reach.
+///
+/// [`REASONING_MODEL`] explains why this case exists. What it asserts is the dialect's own two
+/// facts, and the second is the one a half-working reader would fail: reasoning arrived at all, and
+/// **the answer still arrived after it**. A reader that consumed the `reasoning_content` frames and
+/// then dropped the `content` ones satisfies the first alone — and that is exactly the failure this
+/// gateway's shape can produce, because the answer's frames come after a long run of thinking ones
+/// and are a different field.
+///
+/// This case is deliberately shorter than the one above: the transport, the address policy, the
+/// ending and the accounting are that case's subjects, and repeating them here would make two
+/// places to keep them right. What is new here is one model and one dialect.
+#[tokio::test]
+async fn a_paid_turn_against_a_reasoning_model_reaches_the_reasoning_dialect() {
+    let Some(key) = live_run_key() else {
+        return;
+    };
+    let config = live_config_for(key, REASONING_MODEL);
+
+    let pin = validate_base_url(&config).expect("a public HTTPS Base URL is accepted");
+    let (url, body) = resolve_endpoint(&config, TEST_PROMPT, &[]).expect("the config names a host");
+    assert_eq!(
+        body["model"], REASONING_MODEL,
+        "the model this run pays for"
+    );
+    let payload = encode_request_body(&body).expect("a one-line prompt is far under the ceiling");
+
+    let client = app_transport(pin.as_ref()).expect("the AI client builds");
+    let request = with_completion_auth(
+        client
+            .post(&url)
+            .header("content-type", "application/json")
+            .body(payload),
+        &config,
+    );
+    let response = request
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("the request to the gateway did not complete: {error}"));
+    let status = response.status();
+    if !status.is_success() {
+        let text = response.text().await.unwrap_or_default();
+        let detail = error_detail_from_body(&text);
+        panic!(
+            "the gateway answered {}: {}",
+            status.as_u16(),
+            http_error_message_with_detail(status.as_u16(), detail.as_deref())
+        );
+    }
+
+    let mut socket = response.bytes_stream();
+    let mut completion = CompletionStream::new(&config.provider);
+    // The same evidence reader as the case above: the app's own reassembly, so the printed frames
+    // are read by shipped code rather than by a splitter written here.
+    let mut frames = SseBuffer::new();
+    let mut usage_frames: Vec<Value> = Vec::new();
+    let mut reasoning = String::new();
+    let mut chunks = 0usize;
+    let mut terminal = false;
+    let deadline = tokio::time::Instant::now() + RUN_PATIENCE;
+
+    loop {
+        let next = tokio::time::timeout_at(deadline, socket.next())
+            .await
+            .unwrap_or_else(|_| panic!("the gateway sent nothing for {RUN_PATIENCE:?}"));
+        let Some(chunk) = next else {
+            break; // EOF: the response ended without `data: [DONE]`
+        };
+        let chunk = chunk.expect("the response body stays readable");
+        chunks += 1;
+        for line in frames.feed(&chunk).expect("no frame is near the ceiling") {
+            if let Some(usage) = usage_of(&line) {
+                usage_frames.push(usage);
+            }
+        }
+        for event in completion
+            .feed(&chunk)
+            .expect("a reasoning turn is far under the answer ceiling")
+        {
+            match event {
+                StreamEvent::Reasoning(text) => reasoning.push_str(&text),
+                StreamEvent::ProviderError(message) => {
+                    panic!("the provider reported an error inside an HTTP {status}: {message}")
+                }
+                StreamEvent::Done => terminal = true,
+                StreamEvent::Text(_) => {}
+            }
+        }
+        if terminal {
+            break;
+        }
+    }
+
+    let answer = completion.answer();
+    eprintln!(
+        "--- reasoning dialect: {} byte(s) of thinking in {} chunk(s), then {} byte(s) of answer",
+        reasoning.len(),
+        chunks,
+        answer.len()
+    );
+    eprintln!(
+        "--- reasoning seen: {}, usage frame(s): {}",
+        completion.saw_reasoning(),
+        usage_frames.len()
+    );
+    // What this turn cost, as the provider counted it: the file's header says two small turns, and a
+    // reader deciding whether to run it should not have to guess the second one's size.
+    if let Some(frame) = usage_frames.last() {
+        eprintln!("--- reasoning turn usage: {frame}");
+    }
+    assert!(
+        completion.saw_reasoning(),
+        "the app's reader saw no reasoning at all from {REASONING_MODEL}, which streams its thinking \
+         in `delta.reasoning_content`; {chunks} chunk(s) arrived and the terminal event was \
+         {terminal}"
+    );
+    assert!(
+        !reasoning.trim().is_empty(),
+        "reasoning was seen but carried no text: the field is present and empty"
+    );
+    assert!(
+        !answer.trim().is_empty(),
+        "the answer's own frames did not arrive after the reasoning: {} reasoning byte(s) were read \
+         and the answer is empty, which is the half-working reader this case exists to catch",
+        reasoning.len()
+    );
+    if let Some(refusal) = completion_refusal(&completion) {
+        panic!("the app would report this completion as a failure: {refusal}");
+    }
+    eprintln!("--- the reasoning dialect works end to end through the app's own reader");
 }

@@ -24,6 +24,18 @@
 # checked against: a turn against a model the gateway does not offer is paid for and answered with
 # an error. Measured 2026-09-17: the turn billed 17 prompt + 2 completion tokens.
 #
+# **TWO paid turns, and the second one is the reasoning dialect.** `deepseek-v4.1-flash` answers
+# without ever streaming `delta.reasoning_content`, so before this second case existed the app's
+# reasoning reader (`extract_openai_reasoning`) had no live witness at all — the first case's counter
+# for reasoning events could only ever print zero. `deepseek-v4-flash` streams its thinking first and
+# the answer after it, which is the shape that reader exists for, and the second case asserts both
+# halves: thinking arrived, and the answer still arrived behind it. Measured 2026-09-22 on this
+# gateway: the first turn bills 17 prompt + 2 completion tokens, and it is stable. The reasoning
+# turn's prompt side is stable at 89, but its completion side moves with how long the model thinks
+# before answering — two runs of this script read 20 and 31 completion tokens, with the provider
+# reporting 17 and 28 of them as `completion_tokens_details.reasoning_tokens`. So the second turn is
+# the more expensive of the two, and that is why this line says two rather than one.
+#
 # Usage:
 #   bash scripts/verify-ai-live.sh
 #
@@ -90,6 +102,11 @@ required=(
   '--- provider usage frames ('
   '--- app-side TokenUsage: Some('
   '--- every count the app reports is one the provider sent, unchanged'
+  # The reasoning case's two facts, required separately on purpose: `reasoning seen: true` with no
+  # answer is the half-working reader the case exists to catch, and a single marker for the pair
+  # would let exactly that run read as a pass.
+  '--- reasoning dialect: '
+  '--- reasoning seen: true'
 )
 missing=0
 for marker in "${required[@]}"; do
@@ -104,5 +121,6 @@ for marker in "${required[@]}"; do
 done
 [ "$missing" -eq 0 ] || exit 1
 
-say "PASS: $TARGET — a real gateway listed its models, and one paid turn streamed through the app's
-  own transport, its own SSE parser and its own usage accounting."
+say "PASS: $TARGET — a real gateway listed its models, one paid turn streamed through the app's
+  own transport, its own SSE parser and its own usage accounting, and one more reached the reasoning
+  dialect that reader exists for."
