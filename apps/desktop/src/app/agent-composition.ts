@@ -21,10 +21,13 @@
  *    `commitContext` immediately before the prompt. **Not implemented here**: two of the four
  *    are calls into the editor, and the editor's side of that boundary does not exist yet (the
  *    snapshot layer is delivered and green; what it needs is a caller inside the editor).
- *  - **T10** (change review) and **T11** (SVG insertion): the same shape — a service that has
- *    been written and tested, and a composition step that gives it the editor or the vault it
- *    needs. Add them as further `connect*` functions on this object, not as imports into each
- *    other's modules.
+ *  - **T10 (change review), now, and not through this object.** The surface is hosted where its
+ *    answers are: `ui/EditorPane.vue` mounts `AgentChangedFiles`, and
+ *    `ui/EditorPane.agentSurfaces.test.ts` is what holds it there. The editor and the vault reach it
+ *    through the note's own save transaction (`features/agent/services/agent-note-write.ts`), which
+ *    is what the reject path needs — the precondition, the vault and the content watcher all apply
+ *    because a tab holds the note — and which a `connect*` here would have had to hand it anyway.
+ *    So this bullet no longer asks for a function on this object; it records where the wiring went.
  *  - **T11, now**: `connectSvgInsertion` below binds §7.3's insertion to the two things the
  *    service cannot have of its own — the session identity a plan is made under, and the editor's
  *    account of a note *by path* — so that no call site can consult "the active note" or invent an
