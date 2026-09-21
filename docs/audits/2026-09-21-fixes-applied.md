@@ -30,6 +30,25 @@ exactly that reason, the behaviour is restored, and the test passes again. Those
 | **S1** | A caller-supplied `base_url` decided where the user's stored API key was sent | `credential_scope`: a stored key is attached only to the endpoint it was **saved for**; `store_ai_key` records it; the frontend sends it | GREEN 14 passed · mutation kills exactly the three new tests · `s1-rust.log`, `mutation-s1-scope.log` |
 | **B** | `cargo test` was red about one run in eight on a pre-existing flake | The host now keeps its own reading of the engine's end (`process/engine_exit.rs`), and a call that got no answer from a gone engine is read as `Disconnected` — the one arm that carries the engine's last words | RED 1 failure in 52 runs · GREEN 60/60, then 100/100 with the lost-race shape observed 3 times and correct · independently re-measured 20/20 |
 
+### Fixes that came after the freeze — the review's own leftovers
+
+The gate above was taken on the tree this work produced. The maintainer then asked for the
+optimisation to continue and for every change to be committed, so the review's remaining verified
+findings were worked through one at a time, each with its own commit and its own evidence. Four are
+fixed; the rest are accounted for in §3.
+
+| # | Finding | Change | Evidence |
+|---|---|---|---|
+| **F7** | `AgentIpcState::install`/`clear` swallowed a poisoned lock while five readers refused loudly | Both writers go through one `locked()` accessor and answer the same sentence; `agent_start` takes the engine down again rather than leaving one nothing can address; `stop_running_engine` runs *every* step on a poisoned slot and answers the refusal at the end | `ipc_state/tests.rs` poisons the mutex the only way one can be poisoned (a caught panic with the guard held) and pins three properties · **mutation check**: the old soft `clear` kills exactly the writer case (1 failed / 2 passed) · 16 lib tests (13 before), IPC targets 13 / 12 / 99 |
+| **F6** | `set_visible` returned at the first refusal, leaving the rest of the pet unasked and the flag unchanged | Ask every window, keep the first refusal, ask the ball, answer afterwards — the shape `set_always_on_top`/`set_character_size` already use; the flag moves only when all agreed, so the retry stays available | A case plants the refusal on the **first** window and asserts all three calls happened in order, the refusal names the hide, `is_visible()` stays `true`, and the same call succeeds once the compositor stops refusing · **mutation check**: the old early return records `[("pet-1", false)]` against the expected three · target 70 passed |
+| **F8** | The palette's file-watch subscription had no rejection path (its sibling guarded the same call) | `Promise.resolve(...)` with both arms, the unlisten stored as a function, and a `disposed` guard so a late subscription is released rather than stored | `use-palette-entries.test.ts` mounts the composable through a real component · **mutation check**: the old unguarded body makes vitest report an `Unhandled Rejection` and go red · palette 20 passed, typecheck 0, lint 0 errors |
+| **F5** | A comment in `lib.rs` claimed the pet is not on screen until a settings page asks, and the defaults do the opposite | The comment now states what happens, names the two defaults that decide it (`ball`, `characterWindow`), and leaves the product question to §9.6 | Verified against the code: the two `Kind::Bool(true)` defaults, `restore`'s `apply` call, and `apply`'s `open_selected`/`ensure_ball` |
+
+One correction is recorded rather than hidden: making `install` return a `Result` left three test
+fixtures ignoring it — the same habit the finding was about — and the commit that fixed them says so
+and corrects the earlier commit's "warning-neutral" claim. `cargo clippy --all-targets --locked` is
+back to the same **100 unique warning lines** as the frozen-tree gate.
+
 ### The flake, because it was the Rust gate's own version of T1
 
 `an_engine_that_dies_the_moment_it_starts_still_gets_to_say_why` failed roughly one run in eight on
@@ -173,27 +192,47 @@ plus the two arity assertions F1's change required (`app-lifecycle.test.ts`, `ap
   product decision, not a defect fix. The store `U1b` added is the file an import would merge into.
 - **Only `cancelled` is driven end-to-end as a non-paying ending.** All six are covered by the
   unit test that pins the vocabulary, and `CareOutcome::pays` is the ledger's own tested rule.
-- **F9, F10, F11, S3, S5, S6, S7, U2, U3 from the review are untouched** by the spec's non-goals —
-  they were reported rather than verified, and `U3`/`S6` in particular need decisions about tests and
-  key rotation that this round did not take.
+- **Every finding now has a status, and the ones still open are open on purpose.** The review found
+  twenty-six defects; this is the whole accounting, so a reader can tell a decision from an omission:
+
+  | Finding | Status |
+  |---|---|
+  | F1, F2, F3, F5, F6, F7, F8 | **fixed** — F1–F3 and the table above, F5–F8 in the section above it |
+  | S1, S2 | **fixed** — the credential binding and the single guarded URL path |
+  | U1 (U1a, U1b, U1b′) | **fixed** — the care ledger's producer, its file and its read-only arm |
+  | T1, B | **fixed** — a skipped process case is not a pass; the engine's own end is read |
+  | F4 (a pet window destroyed from outside wedges the host) | **open** — the code path is certain and the trigger needs a runtime check; the fix belongs with the instance list `window_host.rs` owns, and it should come with a case that destroys a window out of band |
+  | F9 (a delegated write drops the no-history warning) | **open** — the warning is carried by the port and dropped by one destructuring; needs a decision about what a window does with it |
+  | F10 (`hasActiveTab` means "has text") | **open** — documented/implemented mismatch, low impact |
+  | F11 (a plugin toggle can report a state the app does not hold) | **open** — a policy question about what a toggle does when the write fails |
+  | S3 (proxy credentials copied into a window payload) | **open** — reported, not re-run |
+  | S4 (`import_attachment` reads any image-named path) | **open** — needs the threat-model decision the review's §8 names |
+  | S5 (`agent_credentials_write` accepts any environment-variable name) | **open** — needs a name policy and a test at the IPC boundary |
+  | S6 (a crash mid password change is unrecoverable) | **open** — needs the recovery decision, and the ignored tests that state their cost are the place it lands |
+  | S7 (the credentials file's mode is reported, not enforced) | **open** — enforcement is a small change, but it makes a stored profile unreadable to a build that expected 0600-by-report |
+  | U2 (two more production-dead exports) | **open** — `check-dead-exports.py` lists them |
+  | U3 (`main_window::raise`'s rebuild path has no test) | **open** — needs a window-level case, not a unit one |
+  | T2 (§9.1a's unrun targets) | **closed by the programme** — every wave ran the whole suite with `NEKOWITE_REQUIRE_PROCESS_TESTS=1`, so no target is unread |
+  | T3 (`pnpm test` does not run `pnpm perf`; lint cannot fail on a warning) | **open** — a gate change, and it changes what "green" means for everyone after it |
+  | T4 (~50 `never used` warnings that are artefacts of `#[path]`-included targets) | **open** — separating them from real ones is a real improvement and a separate piece of work |
+
+  The nine open ones are open because each needs a decision this work is not entitled to take alone
+  (a policy, a product answer, or a change to what the gate means), not because they were missed.
 - **`docs/HANDOVER.md` is not edited.** Its §9.1 is now stale in a second way — `cargo test` skips
   those two cases on a tree whose packaged binary is older than its sources — and correcting the
   handover is the maintainer's call, recorded in the review's §9 instead.
-- **The eighteen files that were already over the 600-line budget are still over it.** This round
-  brought the three it had made worse back under (`task_feed.rs`, `snapshot.rs`) or into a
-  per-behaviour file (`wiring.rs`), and every file it *created* is between 141 and 363 lines. What
-  remains over budget is the maintainer's existing backlog — `character_view.rs` 1558,
-  `catalogue.rs` 1174, `session.rs` 1145, `profile.rs` 1027, `window_host.rs` 1024,
-  `capabilities.rs` 1023, and so on down to `commands/agent.rs` 634. **Two of them took lines from
-  this work and were already over before it**: `commands/desktop_pet.rs` (796 → 814, the `read-only`
-  arm) and `agent_runtime/process.rs` (906 → 914, the module declaration for `EngineExit`). Splitting
-  either is a real piece of work with its own review, and doing it here would have meant refactoring
-  the pet command surface — the thing `T1`'s gate had just measured — for a line count rather than a
-  defect. Recorded so the next reader sees it as a decision rather than an oversight.
+- **The line-budget backlog this round left behind is gone.** It was eighteen business files over 600
+  and ten test targets over 800; the programme in §6 split all of them, and the census at the end of
+  that section is zero and zero. `commands/desktop_pet.rs` and `agent_runtime/process.rs` — the two
+  that took lines from the review's own fixes — were split in the first wave.
 
 ---
 
 ## 4. The final gate
+
+> This is the gate the review's own work ended on. The tree did not stop there: §6 records the
+> line-budget programme's gates and the gate taken after the post-freeze fixes, whose readings are
+> the current ones (77 targets, 1370 passed, 0 skipped).
 
 Taken on the frozen tree, after `tauri build --no-bundle` rebuilt the packaged binary from it and the
 verified engine was staged beside it (`binaries/opencode-x86_64-unknown-linux-gnu` copied to
@@ -564,3 +603,35 @@ Raw output for every run named in this document — the review's gate, each wave
 gate scripts — is under `apps/desktop/src-tauri/target/review-2026-09-21/`. The staged engine was
 removed after the last run, so a future `cargo test` on this tree skips the process cases for the
 reason the handover documents rather than passing because something was left behind.
+
+### The gate after the post-freeze fixes, and what the first attempt taught
+
+The four fixes in §1's second table changed the tree, so the gate was taken again. It is recorded
+here because the **first attempt failed**, and the failure is the most useful thing in this section:
+
+| Command | Result |
+|---|---|
+| `pnpm typecheck` · `pnpm lint` | exit 0 · exit 0 — 0 errors, 462 warnings |
+| `pnpm test` | exit 0 — **439 files, 4797 tests** (`editor-core` 959/73, `plugin-host` 132/10, `perf` 10/2) |
+| `cargo fmt --all --check` · `cargo clippy --all-targets --locked` | exit 0 · exit 0 — 159 warning lines |
+| `tauri build --no-bundle` | exit 0 — the packaged binary rebuilt from this tree |
+| `NEKOWITE_REQUIRE_PROCESS_TESTS=1 cargo test --locked --no-fail-fast` | exit 0 — **77 targets, 1370 passed, 0 failed, 5 ignored, 0 skipped** |
+
+1370 is 1366 plus the four cases the F6/F7 fixes added. The first attempt at this gate **failed on
+`a_graceful_quit_takes_the_engine_with_it`**, with the case's own diagnostic:
+
+```text
+t+2.1s: the main window is up (1280x820 at 160,90); 2 window(s) in all
+t+4.7s: the vault is open and registered; the pet is off, so the main window is the last one
+timed out waiting for the engine to start
+no engine appeared after the rail was opened, so this case has nothing to watch. …
+```
+
+The cause was this document's own instruction: the engine had been **removed** after the previous
+gate, so `target/release/opencode` was absent, the app refused the start, and the case — told by the
+variable that this run means to exercise it — failed rather than passing. Everything about that is
+the harness working: `T1`'s variable made an unrunnable case loud, and the deadline reported which
+half of the start was missing instead of timing out anonymously. What was wrong was the *script*,
+which assumed the staging step had been done by hand. It now stages the verified engine from
+`binaries/` before the suite and removes it on the way out, including after a failure — so the gate
+is reproducible by one command, which is the property the earlier gates only appeared to have.
