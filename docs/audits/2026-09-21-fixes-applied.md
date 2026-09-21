@@ -1948,3 +1948,57 @@ has.
 Two runs: the first failed its `e2e` step on the flake recorded above (296 of 297), the second — the
 reading in this table — is all nine steps and exit 0. No bundles were rebuilt: this round adds one
 probe, three documents and an e2e case's timing.
+
+## 20. The round after that: the ratchet turned, and a count that was wrong about its own method
+
+**The dead-export instrument's `spec=0` column is now empty.** That column is the number of spec files
+that mention a name, so `spec=0` means *nothing anywhere references this export* — neither production nor
+a test — as opposed to the legitimate "exported so a spec can reach it" idiom that fills the rest of the
+list. Measured this round it held exactly four functions: `replaceImageSrc`
+(`packages/editor-core/src/image/attrs.ts`), `textAt` and `pasteText`
+(`packages/editor-core/src/testkit.ts`), and `createTauriPetGateway`
+(`apps/desktop/src/platform/gateways/tauri-pet.ts` — a one-line alias of `createTauriPetConnection`, and
+already listed in `docs/HANDOVER.md` §9.2 among the confirmed-superseded names). Each was checked before
+deletion: `replaceImageSrc` is superseded by `updateImageAttrs`, which is what the image panel's Replace
+actually calls; `pasteText`'s sibling `pasteIntoView` is the helper the paste specs reach for; and the pet
+alias's narrow view is still available by structural typing, since `PetHostConnection extends PetGateway`.
+
+With them gone the count is **85 of 1368**, and the script's own output asks for the ratchet in the commit
+that lowers it — "4 below CEILING = 89: lower it here, in this commit, to keep the ratchet where the tree
+is" — so `CEILING` is 85 with its reason recorded beside it. The total is the less interesting number; the
+column is the reading, and it now says there is no export in this tree that nothing references.
+
+**That also closes the code review's U2**, which had listed `imageMime`, `featureFor`, `buildLinkGraph`,
+`findBrokenLinks` and `createTauriPetGateway` as production-dead. Checked one by one: `imageMime` no longer
+exists anywhere; `featureFor` is called by `use-agent-composer-attachments.ts` and by its own spec;
+`buildLinkGraph` and `findBrokenLinks` are named by `link-graph.test.ts`; and the last of them was deleted
+this round. The finding is closed by measurement rather than by a note saying it was addressed.
+
+**§1.3's list was wrong about its own method, and the correction is in the file.** The eleven names added
+in §18 came from a scan that followed `export *` **one level deep**; the resource-quota family reaches the
+barrel through `runtime.ts`'s own `export * from './activation-registry'`, so six documented exports were
+invisible to it and the conclusion "every value the document's table names is on the list" was a statement
+about the scan rather than about the barrel. A recursive walk gives the real figures — **90** values
+re-exported, **63** now required — and the six (`getInFlightActivationCount`, `getMaxInFlightActivations`,
+`setMaxInFlightActivations`, `getPluginSessionQuota`, `setPluginSessionQuota`, `getPluginSessionUsage`) are
+required with the same teeth as the rest: making `getPluginSessionUsage` or `setMaxInFlightActivations`
+non-exported fails that test by name. Both places that carried the wrong count say how it was wrong twice,
+because the next reader's first instinct is to trust a scan they did not write — which is exactly what
+happened here.
+
+### The gate
+
+| Step | Result |
+|---|---|
+| `verify` | PASS — **5954 tests across 3 package runs** |
+| `fmt` | PASS |
+| `clippy` | PASS — 97 warning lines, under the 110 ceiling |
+| `instruments` | PASS — and the dead-export step now reads 85 of 1368 against a ceiling of 85 |
+| `scripts` | PASS — 89 checks, 0 failed |
+| `harness` | PASS — 5 passed, 0 failed |
+| `build` | PASS |
+| `rust` | PASS — 79 targets, 1409 passed, 0 failed |
+| `e2e` (`--with-e2e`) | PASS — 297 passed |
+
+One run, all nine steps, exit 0. No bundles were rebuilt: the round deletes four functions nothing called,
+adds six names to a test's list, and edits three documents.
