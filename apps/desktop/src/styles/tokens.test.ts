@@ -310,7 +310,7 @@ describe('tokens.css and palettes.css', () => {
     // split that is one assertion stronger than it was: palettes.css, the file
     // every theme block lives in, may not name a motion token at all (asserted
     // with the other job rules above). The scale itself is pinned in
-    // motion.test.ts; this only guards where it is allowed to be declared.
+    // motion.scale.test.ts; this only guards where it is allowed to be declared.
     const ladder = [
       '--app-motion-micro',
       '--app-motion-fast',

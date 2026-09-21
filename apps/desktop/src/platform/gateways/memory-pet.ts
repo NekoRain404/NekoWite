@@ -10,7 +10,7 @@
  * states a double can actually produce.
  *
  * This path is what a test imports; the pieces behind it are divided by what they are
- * about, the way `memory-agent.ts` divides its own:
+ * about, the way `memory-agent/` divides its own:
  *
  *  - `memory-pet/scenario.ts`   what a test asks for and gets back, and §7.2's fallbacks
  *  - `memory-pet/host.ts`       the tasks it tracks and the frames it receives

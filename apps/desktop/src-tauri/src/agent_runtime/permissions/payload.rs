@@ -1,8 +1,8 @@
 //! The permission payloads, and the three projections that build them out of the engine's frame.
 //!
-//! These are the contract's own shapes (`agent-contracts/payloads.ts`), whose validator drops a
-//! prompt whose fields this host renamed — so every name below is the contract's, and the wire's
-//! is only ever the *input* to a projection.
+//! These are the contract's own shapes (`agent-contracts/payloads/permissions.ts`), whose validator
+//! drops a prompt whose fields this host renamed — so every name below is the contract's, and the
+//! wire's is only ever the *input* to a projection.
 //!
 //! Split out of `permissions.rs` when carrying the request's own content blocks took that file past
 //! the budget (AGENTS.md: business files stay under 600 lines), which is the same reason

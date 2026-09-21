@@ -7,18 +7,19 @@ import { MOTION_SHEETS } from './motion-sheets'
 /**
  * The exit half of the motion vocabulary.
  *
- * `motion.test.ts` owns the ladder, the curves and the arrival, and its own
- * header says what it is for. What it could not hold is this: **every surface
- * that arrives has to leave.** The arrival is one rule that everything wearing
- * `.dialog` gets for free, so the arrival cannot regress silently; the exit is
- * per-host, because a `<Transition>` has to sit where the `v-if` is, and a host
- * that forgets it produces a dialog that fades in over 460ms and is gone in the
- * frame the user answers it. That is the failure these guards exist for, and it
- * is invisible in any single file — it is a *pair* of facts about two files.
+ * The motion guards are divided by subject — `motion.scale.test.ts` owns the
+ * ladder, `motion.easing.test.ts` the curves, and `motion.choreography.test.ts`
+ * the arrival and its wearers — and each of them says what it is for. What none
+ * of them holds is this: **every surface that arrives has to leave.** The arrival
+ * is one rule that everything wearing `.dialog` gets for free, so the arrival
+ * cannot regress silently; the exit is per-host, because a `<Transition>` has to
+ * sit where the `v-if` is, and a host that forgets it produces a dialog that
+ * fades in over 460ms and is gone in the frame the user answers it. That is the
+ * failure these guards exist for, and it is invisible in any single file — it is
+ * a *pair* of facts about two files.
  *
- * It lives in its own file rather than in `motion.test.ts` because that one is
- * at 765 lines against §13.1's 800-line test budget, and these are a different
- * behaviour domain: a surface's lifetime, not a curve's shape.
+ * It lives in its own file rather than in one of those because a surface's
+ * lifetime is a different behaviour domain from a curve's shape.
  */
 
 const read = (p: string) => readFileSync(resolve(__dirname, p), 'utf8')

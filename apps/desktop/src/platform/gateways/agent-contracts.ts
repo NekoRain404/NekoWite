@@ -6,9 +6,9 @@
  * because a reader arriving at "how do I send a prompt" and a reader arriving at
  * "what does the engine's frame have to look like" are asking different questions:
  *
- *  - `agent-contracts/payloads.ts`       the payload vocabulary, one type per kind
+ *  - `agent-contracts/payloads/`        the payload vocabulary, one type per kind
  *  - `agent-contracts/envelope.ts`       the identity, the sequence, the kind/payload correlation
- *  - `agent-contracts/gateway.ts`        the calls the app makes, and the state it reads back
+ *  - `agent-contracts/gateway/`          the calls the app makes, and the state it reads back
  *  - `agent-contracts/failure.ts`        the failure codes and the error they are carried in
  *  - `agent-contracts/validation.ts`     the one place a frame becomes a typed event
  *  - `agent-contracts/readers/*.ts`      the per-kind readers, by subject

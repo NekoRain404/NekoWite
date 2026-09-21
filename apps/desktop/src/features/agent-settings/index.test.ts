@@ -7,7 +7,7 @@
  * can do anything at all when the runtime is not running") whose answer is written in the opposite
  * direction by the pages themselves. The permission page, which the flag marked `true`, draws the
  * backend's own "no engine is running" sentence rather than a gap
- * (`AgentPermissionGrants.vue`: `notRunning`, asserted at `SettingsPanel.agents.test.ts:442`), and
+ * (`AgentPermissionGrants.vue`: `notRunning`, asserted in `SettingsPanel.agents.pages.test.ts`), and
  * `skills` is `false` for the same reason in the opposite direction — the section's own note says
  * a navigation that hid it while the rail was off "would be hiding the page in the state it is
  * built for". The navigation both fields were furniture for does not exist and, by that note,

@@ -224,7 +224,7 @@ export function verify(results) {
         applied.animations.some((a) => a.moves !== null && a.moves.includes('opacity')),
     )
     // FAILS IF: anything whose curve is the spring moves an opacity. This is the
-    // rule `motion.test.ts` states and could not see, read here off the live
+    // rule `motion.choreography.test.ts` states and could not see, read here off the live
     // element with the keyframe bodies the engine itself holds. A keyframe whose
     // name resolved to nothing counts as a failure rather than as clean.
     c.run(

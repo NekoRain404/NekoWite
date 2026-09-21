@@ -14,7 +14,7 @@
    assertions are *negative* — "no bare hex", "no per-theme `.dialog` override"
    — which pass while checking nothing when run against the half that no longer
    holds the selector. So both sheets are named in that file's `SHEETS`,
-   `motion.test.ts`'s `MOTION_SURFACE` lists both, and the file order is checked
+   `motion-surfaces.ts`'s `MOTION_SURFACE` lists both, and the file order is checked
    against main.ts's imports. */
 /* ============ Panel ============ */
 .panel {

@@ -13,7 +13,7 @@
    Everything is still keyed on `.editor-container .ProseMirror` and still goes
    through the --app-* tokens. The two files are one layer to every guard that
    reads them: `editorTypography.test.ts` reads them joined and asserts the order
-   against main.ts's imports, and `motion.test.ts` lists both as motion surfaces.
+   against main.ts's imports, and `motion-surfaces.ts` lists both as motion surfaces.
    The split is line-only — no selector, value or curve changed, only where the
    rules live. */
 

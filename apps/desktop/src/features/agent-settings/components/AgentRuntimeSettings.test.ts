@@ -2,8 +2,9 @@
  * The runtime page, rendered: the arms where it must draw *less*, held at the level a user meets
  * them.
  *
- * `agent-runtime-ipc.test.ts` holds the wire as values, and `SettingsPanel.agents.test.ts` holds the
- * page where a reader actually reaches it. This file exists for the arms those two do not take:
+ * `agent-runtime-ipc.test.ts` holds the wire as values, and `SettingsPanel.agents.pages.test.ts`
+ * holds the page where a reader actually reaches it. This file exists for the arms those two do
+ * not take:
  * every one of them is a case where the honest page is the *smaller* one, and each is a rule the
  * first version of this page broke.
  *

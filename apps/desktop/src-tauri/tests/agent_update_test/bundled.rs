@@ -103,27 +103,48 @@ fn the_bundled_engine_is_the_one_beside_the_app_and_never_one_from_the_path() {
 /// modules looks a program up on `PATH`, and nothing runs a system package manager or `sudo`.
 ///
 /// The scan is over the module sources, so it fails if a later change reintroduces one of these in
-/// a shape no other test could reach.
+/// a shape no other test could reach. It reads each module's own file **and every file of the
+/// directory a split puts beside it**: a list of names here would let the next split move a `sudo`
+/// out from under this scan, which is the one direction the property cannot afford. The floor
+/// asserted at the end is the shape at the time of writing — the two roots, `update/`'s five
+/// children and `binary_registry/`'s four — and it is a floor rather than an equality so that a
+/// further split widens the scan without being blocked by a count.
 #[test]
 fn neither_module_reaches_for_the_path_or_a_system_tool() {
     let mut checked = 0;
-    for name in ["binary_registry.rs", "update.rs"] {
-        let path = Path::new(MANIFEST_DIR).join("src/agent_runtime").join(name);
-        let source = fs::read_to_string(&path).expect("the module source");
-        for (number, line) in source.lines().enumerate() {
-            let code = line.split("//").next().unwrap_or("").trim();
-            for forbidden in ["sudo", "upgrade", "\"PATH\"", "'PATH'"] {
-                assert!(
-                    !code.contains(forbidden),
-                    "{}:{} names {forbidden} outside a comment: {line}",
-                    path.display(),
-                    number + 1
-                );
+    for module in ["binary_registry", "update"] {
+        let modules = Path::new(MANIFEST_DIR).join("src/agent_runtime");
+        let mut sources = vec![modules.join(format!("{module}.rs"))];
+        let children = modules.join(module);
+        if children.is_dir() {
+            for entry in fs::read_dir(&children).expect("the split module's directory") {
+                let path = entry.expect("a module file").path();
+                if path.extension().is_some_and(|extension| extension == "rs") {
+                    sources.push(path);
+                }
             }
         }
-        checked += 1;
+        sources.sort();
+        for path in sources {
+            let source = fs::read_to_string(&path).expect("the module source");
+            for (number, line) in source.lines().enumerate() {
+                let code = line.split("//").next().unwrap_or("").trim();
+                for forbidden in ["sudo", "upgrade", "\"PATH\"", "'PATH'"] {
+                    assert!(
+                        !code.contains(forbidden),
+                        "{}:{} names {forbidden} outside a comment: {line}",
+                        path.display(),
+                        number + 1
+                    );
+                }
+            }
+            checked += 1;
+        }
     }
-    assert_eq!(checked, 2, "both modules must be scanned");
+    assert!(
+        checked >= 11,
+        "both modules must be scanned whole, root and split alike; found {checked}"
+    );
 }
 
 /// §3.3: 不执行 sudo，不写 AppImage 挂载目录或系统包目录. A managed root that is one of those is

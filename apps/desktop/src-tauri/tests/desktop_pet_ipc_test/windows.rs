@@ -334,7 +334,7 @@ fn the_bubble_fits_the_window_it_is_drawn_in() {
 
     let bubble = number_after(&text, "export const PET_BUBBLE_MAX_WIDTH =");
     // The widest window the rule can ask for is the one a bubble has to fit in, and the narrowest is
-    // the floor the rule itself keeps (`window_host.rs`'s CHARACTER_WINDOW_MIN_WIDTH); what this
+    // the floor the rule itself keeps (`window_host/geometry.rs`'s CHARACTER_WINDOW_MIN_WIDTH); what this
     // asserts is the relationship at the default size, where the cap and the window are both 260.
     let (window_width, _) = character_window_size(CHARACTER_DEFAULT_SIZE);
     assert!(

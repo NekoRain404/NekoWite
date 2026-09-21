@@ -210,8 +210,8 @@ fn a_usage_update_with_no_cost_says_so_rather_than_leaving_the_member_out() {
 fn every_kind_is_spelled_the_way_the_contract_spells_it() {
     // The envelope's `kind` is a *string* on the wire: serde renders it from the variant name
     // (`#[serde(rename_all = "kebab-case")]`) while the contract's union is written out by hand
-    // in `agent-contracts/payloads.ts`, so the two can drift apart with both suites green — which
-    // is the failure this task's own predecessor found for `stopReason` (`runs.rs`,
+    // in `agent-contracts/payloads/index.ts`, so the two can drift apart with both suites green —
+    // which is the failure this task's own predecessor found for `stopReason` (`runs.rs`,
     // `wire_stop_reason`), one field over. This is the whole enum in one place, against the
     // contract's own spellings; a kind added without its string fails here.
     for (kind, spelling) in [

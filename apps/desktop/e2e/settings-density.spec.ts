@@ -40,7 +40,7 @@ const RAIL = ['runtime', 'provider', 'configuration', 'skills', 'permission', 'r
 
 /**
  * The registry's answer, as `agent_registry_read` serializes it — the same shape
- * `SettingsPanel.agents.test.ts` uses, and the minimum that makes `defaultEngineIdentity` resolve a
+ * `SettingsPanel.agents.mount.ts` uses, and the minimum that makes `defaultEngineIdentity` resolve a
  * pair, which is the gate the five profile pages sit behind.
  */
 const REGISTRY = {

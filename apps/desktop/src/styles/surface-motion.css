@@ -5,7 +5,7 @@
    so its `!important` sweep still governs.
 
    The two sheets are one layer and every guard reads them as one — see
-   `motion.test.ts`'s `MOTION_SHEETS`. That is deliberate: several guards here
+   `motion-sheets.ts`'s `MOTION_SHEETS`. That is deliberate: several guards here
    are *negative* (`.dialog` must not use `:nth-child`), and a negative guard
    run against the half of a sheet that no longer contains the selector passes
    without checking anything. Splitting a sheet is not allowed to make a guard
@@ -108,9 +108,9 @@
    while the movement is still going. The three rules that named it — the two
    passthroughs and the shell's settings dialog — now wear the two-animation
    split `.dialog` wears, and each one's own comment names the budget its half
-   takes. Nothing names it now, and the guard in `motion.test.ts` resolves
-   keyframes across the whole layer, so an arrival that cannot be read fails
-   instead of passing quietly. */
+   takes. Nothing names it now, and the guard in `motion.choreography.test.ts`
+   resolves keyframes across the whole layer, so an arrival that cannot be read
+   fails instead of passing quietly. */
 @keyframes dialog-row-in {
   from { opacity: 0; }
   to   { opacity: 1; }
@@ -240,7 +240,7 @@
 
    Worn rather than chased: the same mechanism as `.dialog`. The layer names the
    class and the region wears it (it is in the `SHARED_ARRIVAL` list of
-   motion.test.ts, which is what ties a wearer to this rule), so a component is
+   motion-surfaces.ts, which is what ties a wearer to this rule), so a component is
    free to rename its internals without silently dropping out of the vocabulary,
    and this file does not have to hold a list of five components' private class
    names to keep them animated. */

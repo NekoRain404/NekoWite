@@ -17,8 +17,8 @@
 //!
 //! Each request is also bound to a composite identity — runtime, vault, session, run — because the
 //! renderer is not a trusted source of it (§6.1), and every payload below is the contract's own
-//! shape (`agent-contracts/payloads.ts`, and the shapes themselves in [`payload`]), whose validator
-//! drops a prompt whose fields this host renamed.
+//! shape (`agent-contracts/payloads/permissions.ts`, and the shapes themselves in [`payload`]),
+//! whose validator drops a prompt whose fields this host renamed.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};

@@ -562,7 +562,7 @@ fn every_feature_has_a_name_the_two_sides_share() {
     // the reason this list grew from seven to eleven. Each is now a fact read off the handshake
     // (`capabilities::SessionManagement`), reported in its own row, and the spelling below is what
     // the TypeScript contract mirrors: `AGENT_CAPABILITY_FEATURES` in
-    // `platform/gateways/agent-contracts/gateway.ts`, held to this list by
+    // `platform/gateways/agent-contracts/gateway/capabilities.ts`, held to this list by
     // `platform/gateways/tauri-agent.test.ts`, which reads this source.
     assert_eq!(
         names,

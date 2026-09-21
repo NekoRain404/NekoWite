@@ -174,12 +174,12 @@ impl AgentRuntime {
 /// The engine's stop reason, in the one spelling that crosses the wire.
 ///
 /// The SDK's `StopReason` is `snake_case` (`end_turn`, `max_turn_requests`) and D1's frozen
-/// contract spells the same five reasons `kebab-case` (`agent-contracts/payloads.ts`, which is what
-/// its validator accepts and what the window's reducer reads). Both spellings would then be live on
-/// this side of the boundary, so every Rust reader of a `run-finished` frame would have to know
-/// both — which is how `task_projection::outcomes` came to accept either, a tolerance that was a
-/// second way to say one fact and therefore a second place to get it wrong. Publishing the
-/// contract's spelling here is what leaves one spelling to know.
+/// contract spells the same five reasons `kebab-case` (`agent-contracts/payloads/run-outcome.ts`,
+/// which is what its validator accepts and what the window's reducer reads). Both spellings would
+/// then be live on this side of the boundary, so every Rust reader of a `run-finished` frame would
+/// have to know both — which is how `task_projection::outcomes` came to accept either, a tolerance
+/// that was a second way to say one fact and therefore a second place to get it wrong. Publishing
+/// the contract's spelling here is what leaves one spelling to know.
 ///
 /// Mechanical rather than a `match`, for the reason `frames.ts` gives about the same value: a table
 /// here would be a second copy of the protocol's enum, and a sixth reason would silently fall out

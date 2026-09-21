@@ -1,7 +1,7 @@
 //! Which incarnation may write to a task — §6.1's `runtimeEpoch`, and the trailing-edge frames
 //! that outlive the instance they came from.
 //!
-//! This is `state::WatcherState::generation`'s problem (`app_state.rs:30-35`) in another place: a
+//! This is `state::app_state::watcher`'s `WatcherState::generation` in another place: a
 //! frame minted under an installation that is over must be recognizable as such rather than
 //! applicable. The two differ in what the mark is — a counter for the folder watcher, the
 //! registry's own epoch here — and they agree in the rule. **The mark is compared, never

@@ -196,10 +196,10 @@ fn a_registration_that_keeps_the_users_environment_names_no_root_at_all() {
 /// is the day this question has to be answered instead of assumed.
 #[test]
 fn the_only_engine_this_app_starts_is_the_one_whose_roots_it_injects() {
-    let state = source("src/state/app_state.rs");
+    let state = source("src/state/app_state/agent.rs");
     let caller = state
         .split_once("pub async fn start_session(")
-        .expect("start_session is in state/app_state.rs")
+        .expect("start_session is in state/app_state/agent.rs")
         .1;
     // Up to the `.start(` it makes: everything before that call is what decides the id it passes,
     // and everything after it is the call's own arguments.

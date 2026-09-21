@@ -9,7 +9,7 @@
    styles rather than being one more opinion in the pile.
    The values themselves live in tokens.css — nothing here invents a duration,
    a distance or a curve.
-   The two sheets are one layer to every guard that checks them: `motion.test.ts`
+   The two sheets are one layer to every guard that checks them: `motion-source.ts`
    reads them joined, because a *negative* guard — "`.dialog` must not use
    `:nth-child`" — passes vacuously against a half that no longer contains the
    selector, and a sheet split must not be able to make a check go quiet. */
@@ -67,7 +67,7 @@
    element's whole life.
 
    The rule that keeps this honest: a `will-change` outside a transitioning
-   state is a leak. motion.test.ts enforces it. */
+   state is a leak. motion.compositing.test.ts enforces it. */
 
 /* ---- Reduced motion -----------------------------------------------------
    Motion is a preference, not a decoration. A user who asks for less gets the

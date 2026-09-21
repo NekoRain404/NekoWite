@@ -192,10 +192,36 @@ fn the_module_has_no_path_to_an_agent_a_note_or_the_vault() {
         "fs::",
     ];
 
-    for file in ["mod.rs", "window_host.rs", "linux_capabilities.rs"] {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src/desktop_pet")
-            .join(file);
+    // `window_host.rs`'s rules now live in its children, and the children are read from the
+    // directory rather than listed here. A list would be a coverage claim that the next split can
+    // narrow without touching this test — which is exactly what happened once already: the list
+    // above carried every child except `selection.rs`, so one file of the module was outside the
+    // claim while the assertion stayed green. The two front doors and this module's own root stay
+    // named; the assertion below is what keeps the enumeration honest.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/desktop_pet");
+    let mut files = vec![
+        "mod.rs".to_string(),
+        "window_host.rs".to_string(),
+        "linux_capabilities.rs".to_string(),
+    ];
+    for entry in fs::read_dir(root.join("window_host")).expect("the window host's directory") {
+        let path = entry.expect("a module file").path();
+        if path.extension().is_some_and(|extension| extension == "rs") {
+            let name = path
+                .file_name()
+                .expect("a file name")
+                .to_string_lossy()
+                .into_owned();
+            files.push(format!("window_host/{name}"));
+        }
+    }
+    files.sort();
+    assert!(
+        files.iter().any(|file| file == "window_host/selection.rs"),
+        "the module's own files were not enumerated: {files:?}"
+    );
+    for file in &files {
+        let path = root.join(file.as_str());
         let text = fs::read_to_string(&path).unwrap_or_else(|error| panic!("{path:?}: {error}"));
         for token in FORBIDDEN {
             assert!(

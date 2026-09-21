@@ -94,7 +94,7 @@ export type SettingOrigin =
  * The second was worse than unused, because it was a *claim*, and the pages it claimed about are
  * the ones that refuse it. `permission`, marked `true`, draws the backend's own 「no engine is
  * running」 as a state of its own rather than being hidden (`AgentPermissionGrants.vue`'s
- * `notRunning`, asserted at `SettingsPanel.agents.test.ts:442`); `skills`, marked `false` and so
+ * `notRunning`, asserted in `SettingsPanel.agents.pages.test.ts`); `skills`, marked `false` and so
  * agreeing with the note the entry carried, is the arm that shows why agreement is not enough —
  * the note already says a navigation that hid it while the rail is off "would be hiding the page
  * in the state it is built for", which is the argument against that navigation existing at all.

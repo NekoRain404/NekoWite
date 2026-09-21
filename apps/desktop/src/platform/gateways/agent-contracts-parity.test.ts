@@ -81,10 +81,14 @@ function kebab(variant: string): string {
 }
 
 describe('the agent contract’s hand-kept halves', () => {
-  const events = rust('agent_runtime/events.rs')
+  // The two enums passed their parent's line budget: they now live in `agent_runtime/events/kinds.rs`,
+  // and the parent re-exports them at the same Rust path. This reads the *definition*, for the reason
+  // the session-state check below gives — reading the parent would find the `pub use` and pass while
+  // the list it is supposed to be checking had drifted.
+  const events = rust('agent_runtime/events/kinds.rs')
 
   it('spells every failure code the way `AgentFailureCode` declares it', () => {
-    expect(enumVariants(events, 'AgentFailureCode', 'events.rs').map(kebab)).toEqual([
+    expect(enumVariants(events, 'AgentFailureCode', 'kinds.rs').map(kebab)).toEqual([
       ...AGENT_FAILURE_CODES,
     ])
   })
@@ -100,7 +104,7 @@ describe('the agent contract’s hand-kept halves', () => {
     )
     expect(readable.size, 'payloadReaders correlates no kinds').toBeGreaterThan(0)
 
-    const unreadable = enumVariants(events, 'AgentEventKind', 'events.rs')
+    const unreadable = enumVariants(events, 'AgentEventKind', 'kinds.rs')
       .map(kebab)
       .filter((kind) => !readable.has(kind))
     expect(unreadable, 'every frame of these kinds would be refused').toEqual([])
@@ -122,7 +126,16 @@ describe('the agent contract’s hand-kept halves', () => {
     // Held to the contract's own test of its own list (`isAgentSessionState`, the one
     // `readHostState` branches on) rather than to a membership check written here: the claim is
     // that the boundary would accept this word, and this is the boundary's own question.
-    const unnameable = enumVariants(rust('agent_runtime/snapshot.rs'), 'SessionState', 'snapshot.rs')
+    // The state enum moved out of `snapshot.rs` when that file passed its line budget: it now lives
+    // beside the table that answers it (`agent_runtime/snapshot/session_log.rs`), and the parent
+    // re-exports it at the same Rust path. This test follows the *definition*, because that is where
+    // a state is added — reading the parent would find the `pub use` and pass while the list it is
+    // supposed to be checking had drifted.
+    const unnameable = enumVariants(
+      rust('agent_runtime/snapshot/session_log.rs'),
+      'SessionState',
+      'session_log.rs',
+    )
       .map(kebab)
       .filter((state) => !isAgentSessionState(state))
     expect(unnameable, 'a snapshot in these states would be refused whole').toEqual([])
@@ -215,9 +228,13 @@ describe('the agent contract’s hand-kept halves', () => {
 
     // Scoped to the union's own declaration: `kind` is a field name several payloads share, and a
     // scan of the whole file would compare this enum against somebody else's literals.
-    const union = typescript('agent-contracts/payloads.ts')
+    // The union moved out of `payloads.ts` when that file passed its line budget: prompt attachments
+    // now live in `agent-contracts/payloads/attachments.ts`, which `payloads/index.ts` re-exports at
+    // the same module path. This reads the *definition*, because that is where a kind is added, and
+    // reading the parent would find the `export from` and pass while the list it checks had drifted.
+    const union = typescript('agent-contracts/payloads/attachments.ts')
     const from = union.indexOf('export type AgentPromptAttachment =')
-    expect(from, 'AgentPromptAttachment is not declared in payloads.ts').toBeGreaterThan(-1)
+    expect(from, 'AgentPromptAttachment is not declared in attachments.ts').toBeGreaterThan(-1)
     const declared = [
       ...union.slice(from, union.indexOf('\n\n', from)).matchAll(/readonly kind: '([a-z-]+)'/g),
     ].map(([, kind]) => kind)

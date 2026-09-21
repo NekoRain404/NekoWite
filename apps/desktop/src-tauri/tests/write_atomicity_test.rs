@@ -359,18 +359,74 @@ fn relative_to_manifest(file: &Path) -> String {
         .to_string()
 }
 
-/// Every Rust file of the vault write surface: the whole storage layer, and the
-/// command that fronts it.
+/// The regression a *split* of the write surface causes, refused.
+///
+/// `no_note_path_module_writes_in_place` scans [`vault_write_surface`], and the
+/// command that functions as the save used to be one file. When the commands
+/// move into `src/commands/fs/` — which is what the 600-line budget in
+/// `docs/dev.md:286` asks for — a scan that kept reading only the root file
+/// would keep passing while the file that now defines the save went unread.
+/// This test is what makes that silent narrowing fail instead.
+///
+/// The comparison is against what is ON DISK rather than a list of names, for
+/// the reason `module_tree_test.rs` gives about hand lists: the directory and
+/// the scan are compared against each other, so neither can drift alone. It is
+/// also vacuous while the commands are still one file — deliberately, because
+/// that is the state the scan is correct in.
+#[test]
+fn the_vault_write_surface_includes_every_command_file() {
+    let commands = manifest_path().join("src/commands");
+    let split = commands.join("fs");
+    let mut on_disk = Vec::new();
+    if split.is_dir() {
+        collect_rust(&split, &mut on_disk);
+    }
+    let scanned = vault_write_surface();
+    let missing: Vec<String> = on_disk
+        .iter()
+        .filter(|file| !scanned.contains(file))
+        .map(|file| relative_to_manifest(file))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "src/commands/fs/ holds {} command file(s) the write-surface scan never \
+         reads: {missing:?}. The command that fronts the storage layer is on the \
+         user's writing path wherever it lives, so widening the surface must \
+         widen this scan.",
+        on_disk.len(),
+    );
+    // The other direction, so the scan cannot pass by having stopped covering a
+    // file that is still there.
+    assert!(
+        scanned.contains(&commands.join("fs.rs")),
+        "the write surface no longer covers src/commands/fs.rs"
+    );
+}
+
+/// Every Rust file of the vault write surface: the whole storage layer, and every
+/// file of the command module that fronts it.
 ///
 /// Deliberately not all of `src/`. The property this guards is about the files
 /// the user's WRITING lives in, and widening the scan past that would produce
 /// findings that are true and irrelevant until someone stops reading them:
 /// `state.rs` writes the remembered-vault file in the config directory (one
 /// line, tolerated on read), and the AI provider layer owns its own files.
+///
+/// The command half is `src/commands/fs.rs` **and** `src/commands/fs/` when that
+/// directory exists: the split that the line budget asks for moves commands out
+/// of the root file, and a scan that followed only the root would stop reading
+/// the file that defines `write_file` — passing by not looking, which is the one
+/// way a source-text guard fails silently. The root is kept on the list
+/// unconditionally because it exists unconditionally: it is where the commands
+/// are re-exported and where `write_file` is defined until a split happens.
 fn vault_write_surface() -> Vec<PathBuf> {
     let mut out = Vec::new();
     collect_rust(&manifest_path().join("src/storage"), &mut out);
     out.push(manifest_path().join("src/commands/fs.rs"));
+    let commands = manifest_path().join("src/commands/fs");
+    if commands.is_dir() {
+        collect_rust(&commands, &mut out);
+    }
     assert!(
         out.iter().all(|p| p.exists()),
         "the write surface moved: {out:?}"
