@@ -272,4 +272,46 @@ describe('export applies settings-store params', () => {
     // loses the cascade to it.
     expect(iframe.srcdoc.indexOf('data-neko-export-page')).toBeGreaterThan(iframe.srcdoc.indexOf('max-width: 50rem'))
   })
+
+  it('prints the rendered note, not only the page CSS around it', async () => {
+    // The cases above read the CSS and the lifecycle; none of them read the
+    // document the CSS is wrapped around. `docs/test-plan.md` §3 called PDF
+    // export "only the mocked iframe/print lifecycle", and this is the half of
+    // that gap a test can close: what reaches the print dialog is the rendered
+    // note, and the dialog itself is what no test can drive.
+    const iframe = makeIframe(() => undefined)
+    stubDom(iframe)
+    await exportToPdf('# T\n\nbody text\n', {})
+    expect(iframe.srcdoc).toContain('<h1 id="t">T</h1>')
+    expect(iframe.srcdoc).toContain('body text')
+  })
+
+  it('drops the yaml frontmatter from paper when the setting says so', async () => {
+    // The HTML path's frontmatter rule is tested above; the print path builds
+    // its own document and could have missed it.
+    setActivePinia(createPinia())
+    const settings = useSettingsStore()
+    settings.exportIncludeFrontmatter = false
+    await nextTick()
+    const iframe = makeIframe(() => undefined)
+    stubDom(iframe)
+    await exportToPdf('---\ntitle: Secret\n---\n# H\n', {})
+    expect(iframe.srcdoc).toContain('<h1 id="h">H</h1>')
+    expect(iframe.srcdoc).not.toContain('title: Secret')
+  })
+
+  it('resolves attachments against the exported note’s path on paper too', async () => {
+    // The wrong-note protection lives in the render options both exporters
+    // share, and `renderForPrint` is the caller that has no vault parameter —
+    // so it is the one worth pinning rather than assuming.
+    setActivePinia(createPinia())
+    resolveMediaMock.mockReset()
+    resolveMediaMock.mockImplementation(async (_vault: string, rel: string) => `data:image/png;base64,${rel}`)
+    useTabsStore().setVault('/vault')
+    const iframe = makeIframe(() => undefined)
+    stubDom(iframe)
+    await exportToPdf('![pic](x.png)\n', { title: 'Delta', notePath: '/vault/deep/delta.md' })
+    expect(resolveMediaMock).toHaveBeenCalledWith('/vault', 'deep/x.png')
+    expect(iframe.srcdoc).toContain('data:image/png;base64,deep/x.png')
+  })
 })
