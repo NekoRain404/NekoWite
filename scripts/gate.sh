@@ -254,14 +254,38 @@ count_matches() {
   count="$(grep -c "$1" "$2" 2>/dev/null || true)"
   printf '%s' "${count:-0}"
 }
+
+# The Rust suite's passed/failed totals, plus the number of targets whose own summary says FAILED.
+#
+# The previous version split the line on `[ ;]` and added `$4` and `$6`. That is wrong twice over: a
+# `; ` separator run makes an empty field, so the failure count landed in `$7` and every run reported
+# "0 failed" — including a run with a failing target, which is the one reading this line exists for.
+# (Observed: a real failing run printed "79 targets, 1408 passed, 0 failed" while cargo exited 101 and
+# the log said `test result: FAILED. 0 passed; 1 failed`.) Matching the two phrases instead of
+# counting fields cannot drift with the punctuation.
+rust_counts() {
+  local log="$1" totals failed_targets
+  totals="$(grep -E '^test result:' "$log" 2>/dev/null | awk '
+    {
+      if (match($0, /[0-9]+ passed/)) { n = substr($0, RSTART, RLENGTH); gsub(/[^0-9]/, "", n); p += n }
+      if (match($0, /[0-9]+ failed/)) { n = substr($0, RSTART, RLENGTH); gsub(/[^0-9]/, "", n); f += n }
+    }
+    END { printf "%d passed, %d failed", p, f }')"
+  failed_targets="$(count_matches '^test result: FAILED' "$log")"
+  if [ "$failed_targets" -gt 0 ]; then
+    printf '%s, %s target(s) reported FAILED' "$totals" "$failed_targets"
+  else
+    printf '%s' "$totals"
+  fi
+}
 for row in "${SUMMARY[@]}"; do
   IFS='|' read -r name status log <<< "$row"
   target_count=""
   case "$name" in
     rust)
       # The counts a green suite is judged by: a run that collected no targets is not a pass.
-      target_count=" — $(count_matches '^test result:' "$log") targets, \
-$(grep -E '^test result:' "$log" 2>/dev/null | awk -F'[ ;]' '{p+=$4; f+=$6} END {printf "%d passed, %d failed", p, f}')"
+      # `rust_counts` reads them; see why the obvious `-F'[ ;]'` split is wrong there.
+      target_count=" — $(count_matches '^test result:' "$log") targets, $(rust_counts "$log")"
       ;;
     verify)
       # The WORKSPACE suite's totals, summed over the package runs — not the last `Tests N passed`
