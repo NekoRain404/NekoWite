@@ -74,10 +74,11 @@ const statusKey = computed(() => STATUS_KEYS[status.value] ?? null)
 /**
  * What the ledger settled, as this page read it.
  *
- * `null` while nothing has been read yet, and the two ways of having nothing to draw are kept
- * apart rather than folded into one: `empty` is a fact — nothing has settled — while a refusal
- * means this page cannot tell, which is a different sentence to the user and a different thing to
- * do about it. Neither is turned into a summary of zeroes.
+ * `null` while nothing has been read yet, and the ways of having nothing to draw are kept apart
+ * rather than folded into one: `empty` is a fact — nothing has settled — a refusal means this page
+ * cannot tell, and `read-only` means the record is on disk under a schema this build cannot read
+ * (§10.2). All three are different sentences to the user and different things to do about them.
+ * None is turned into a summary of zeroes.
  */
 /** The chrome the panel draws with, read once per locale change rather than per render. */
 const labels = computed(() => carePanelLabels())
@@ -85,16 +86,26 @@ const labels = computed(() => carePanelLabels())
 const settled = ref<PetCareSummary | null>(null)
 /** The host's own words when the read was refused, or `null` when it answered. */
 const readProblem = ref<string | null>(null)
+/**
+ * Whether the record on disk belongs to a newer build.
+ *
+ * Its own flag rather than a third value in `settled`, because the panel already draws this state
+ * (`readOnly`) and the flag is what the panel's own `absent` arm is keyed against: a page that
+ * passed a summary of zeroes here would be inventing the numbers the flag exists to refuse.
+ */
+const readOnly = ref(false)
 /** The clock the read was taken at, handed to the panel so "today" is the day the caller is in. */
 const readAt = ref(0)
 
 onMounted(() => {
   props.context.gateway.care().then(
     (read) => {
-      // Both arms are the host's to choose and neither is defaulted here: a page that turned
+      // All three arms are the host's to choose and none is defaulted here: a page that turned
       // `empty` into a zeroed summary would be inventing the numbers this whole design keeps off
-      // the screen.
+      // the screen, and one that turned `read-only` into `empty` would state that nothing has ever
+      // been recorded about a user whose progress is sitting on disk.
       settled.value = read.status === 'current' ? read.summary : null
+      readOnly.value = read.status === 'read-only'
       readAt.value = Date.now()
     },
     (error: unknown) => {
@@ -179,8 +190,9 @@ function retry(): void {
          owns that name for the level bar, and two elements answering to one selector is how a
          later assertion ends up about the wrong one. -->
     <PetCarePanel
-      v-if="settled"
+      v-if="settled || readOnly"
       :progress="settled"
+      :read-only="readOnly"
       :now="readAt"
       :labels="labels"
     />

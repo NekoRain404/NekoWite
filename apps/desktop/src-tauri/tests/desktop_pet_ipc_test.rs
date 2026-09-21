@@ -43,6 +43,12 @@ mod access;
 mod capabilities;
 #[path = "desktop_pet_ipc_test/commands.rs"]
 mod commands;
+// §8's care ledger over the same IPC entry: the read a page draws, and the facts that move it. Its
+// own file for the reason `commands.rs` is one — this target's cases are divided by behaviour domain,
+// and a reward is not a task row even though one frame produces both. It imports the app harness from
+// `wiring` rather than keeping a third copy of it.
+#[path = "desktop_pet_ipc_test/care.rs"]
+mod care;
 #[path = "desktop_pet_ipc_test/support.rs"]
 mod support;
 #[path = "desktop_pet_ipc_test/teardown.rs"]

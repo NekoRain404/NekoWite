@@ -245,6 +245,24 @@ describe('the care page', () => {
     expect(document.querySelector('[data-test="pet-care-panel"]')).toBeNull()
   })
 
+  it('says the record belongs to a newer build rather than drawing an empty page', async () => {
+    const context = await makeContext()
+    await context.sessions.care.load()
+    vi.spyOn(context.gateway, 'care').mockResolvedValue({ status: 'read-only' })
+    await mount(context)
+
+    // §10.2's newer-record rule, seen from the page. The third answer is neither of the two the page
+    // already drew: the record is on disk and this build may not read or replace it, so `empty`'s
+    // sentence ("nothing has been recorded yet") would be a statement about the user's own progress
+    // that is simply false — and the level-0 page it draws is the invented figure §8 rules out.
+    expect(document.querySelector('[data-test="pet-care-read-only"]')?.textContent?.trim()).toBe(
+      carePanelLabels().readOnly,
+    )
+    expect(document.querySelector('[data-test="pet-care-progress-note"]')).toBeNull()
+    expect(document.querySelector('[role="progressbar"]')).toBeNull()
+    expect(document.querySelector('[data-test="pet-care-level"]')).toBeNull()
+  })
+
   it('shows a failed write as failed, and retries it with the values it failed on', async () => {
     const context = await makeContext({ writeFailures: 1 })
     await context.sessions.care.load()

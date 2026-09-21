@@ -1,0 +1,96 @@
+/** The care page and the panel wording it draws. */
+export const care = {
+  en: {
+    care: {
+      enabled: 'Growth',
+      enabledNote: 'Whether the pet keeps progress at all.',
+      restReminders: 'Break reminders',
+      restRemindersNote: 'Whether the pet may remind you to take a break.',
+      scopeNote: 'Kept with the app\'s own settings, not inside a library - switching libraries does not carry it away.',
+      progressEmpty: 'No progress has been recorded yet. The ledger that settles rewards is part of this build and this page reads it - and it holds no settled completion, so no level, no streak and no usage are drawn. A zero here would be a figure nobody was given.',
+      progressUnreadable: 'The recorded progress could not be read, so nothing is shown here: {msg}',
+      onlineNote: 'Signing in, restoring, syncing and the leaderboard are on the Advanced page - and none of them is offered in this build.',
+      /* The care surface's own wording (`PetCarePanel.vue`, drawn on this page). Its
+         placeholders are filled by the panel, not by the translator, so the pet's labels
+         module reads them raw - see `pet-care-labels.ts`. */
+      panel: {
+        label: 'Growth',
+        level: 'Level {level}',
+        progress: 'Level {level}, {percent} percent of the way to the next',
+        hunger: 'Feeling {hunger}',
+        streak: '{days} days running',
+        meals: '{count} completed',
+        achievements: '{earned} of {total} earned',
+        earned: 'Earned',
+        locked: 'Not yet',
+        usage: '{tokens} reported',
+        usageUnknown: 'Usage unknown: nothing has reported any yet, and an unknown count is not zero.',
+        usagePartial: '{count} finished runs reported no usage.',
+        day: '{day}: {count} done, {tokens}',
+        dayToday: '{day} (today): {count} done, {tokens}',
+        dayUnknown: 'usage unknown',
+        readOnly: 'This progress was recorded by a newer version of the app. It is on disk, and nothing here reads it or writes to it - update the app to see it.',
+        stages: {
+          hatchling: 'Hatchling',
+          companion: 'Companion',
+          scout: 'Scout',
+          hero: 'Hero',
+          legend: 'Legend',
+        },
+        hungerSteps: {
+          full: 'full',
+          satisfied: 'satisfied',
+          peckish: 'peckish',
+          hungry: 'hungry',
+          starving: 'starving',
+        },
+      },
+    },
+  },
+  zh: {
+    care: {
+      enabled: '成长',
+      enabledNote: '是否让桌宠保留成长进度。',
+      restReminders: '休息提醒',
+      restRemindersNote: '是否允许桌宠提醒你休息。',
+      scopeNote: '随应用自己的设置保存，不写进某个知识库——换库不会把它带走。',
+      progressEmpty: '还没有记下任何进度。负责结算奖励的账本就在本版本里，这一页也读得到它；账本里还没有任何一次完成结算进来，所以这里不画等级、连续天数与用量。写个「零」出来，等于编了一个没人给过的数字。',
+      progressUnreadable: '读不到已记录的进度，所以这里什么都不显示：{msg}',
+      onlineNote: '登录、恢复、同步与排行榜在「高级」页，而它们在本版本一律不提供。',
+      /* 养成面板本身（`PetCarePanel.vue`，在这一页里绘制）的文案。占位符由面板填写，不经过
+         翻译器，所以桌宠的文案模块按原文读取——见 `pet-care-labels.ts`。 */
+      panel: {
+        label: '养成与统计',
+        level: '等级 {level}',
+        progress: '等级 {level}，距离下一级还有 {percent}%',
+        hunger: '状态：{hunger}',
+        streak: '连续 {days} 天',
+        meals: '已完成 {count} 次',
+        achievements: '已获得 {earned} / {total}',
+        earned: '已获得',
+        locked: '未获得',
+        usage: '已上报用量 {tokens}',
+        usageUnknown: '用量未知：还没有任何引擎上报过，而未知的用量不是 0。',
+        usagePartial: '另有 {count} 次完成没有上报用量。',
+        day: '{day}：完成 {count} 次，用量 {tokens}',
+        dayToday: '{day}（今天）：完成 {count} 次，用量 {tokens}',
+        dayUnknown: '用量未知',
+        readOnly: '这份进度由更新版本的应用记录。文件还在磁盘上，这里既不读取也不写入——升级应用后即可看到。',
+        stages: {
+          hatchling: '幼体',
+          companion: '伙伴',
+          scout: '侦察者',
+          hero: '英雄',
+          legend: '传说',
+        },
+        hungerSteps: {
+          full: '刚吃饱',
+          satisfied: '满足',
+          peckish: '有点饿',
+          hungry: '饿了',
+          starving: '饿坏了',
+        },
+      },
+    },
+  },
+} as const

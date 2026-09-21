@@ -69,9 +69,15 @@ export interface PetCareSummary {
  * settled, and the caller is told which of the two it is holding — the arms are things the caller
  * *does*, not a record with a flag, the way `PetSettingsLoad`'s are.
  *
- * The arm this build cannot produce is deliberately not declared: `read-only` (§10.2's
- * newer-record rule) has no producer while the ledger is the process's own — `care_ledger` may not
- * name a file at all (its `local.rs` test asserts that), so no record from another build can be
- * loaded for one. It arrives with whatever store gives the ledger a disk.
+ * The arm this build could not produce is now the third one, and it arrived with the store exactly as
+ * the previous revision of this comment said it would. The ledger is written to a file, so a record a
+ * newer build left there can be met — and this build cannot make rows out of fields it does not know,
+ * so it loads an *empty* ledger and must not replace the file (§10.2). Answering `empty` for that
+ * would draw level 0 for a user whose progress is sitting on disk, which is the same invented figure
+ * the second arm exists to refuse. The spelling is kebab-case, which is the one `PetSettingsLoad`
+ * already uses for the same three facts.
  */
-export type PetCareRead = { status: 'current'; summary: PetCareSummary } | { status: 'empty' }
+export type PetCareRead =
+  | { status: 'current'; summary: PetCareSummary }
+  | { status: 'empty' }
+  | { status: 'read-only' }

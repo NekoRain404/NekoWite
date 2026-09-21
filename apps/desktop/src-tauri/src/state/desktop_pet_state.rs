@@ -15,7 +15,7 @@
 //! it (`desktop_pet::feature_switch`), and a declared default that no write had ever carried opened
 //! nothing: a fresh install showed 「显示桌宠」 checked and drew no pet.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tauri::Manager;
 
@@ -65,7 +65,12 @@ pub struct DesktopPetState {
     pub observations: Mutex<Observations>,
     /// §8's local progress. One for the process (§6.3's 「一份后端提醒账本」, read at this layer
     /// as: not one per window), and empty at every start until something settles into it.
-    pub ledger: Mutex<CareLedger>,
+    ///
+    /// The handle is the feed's own, taken at construction: the ledger a settlement writes and the
+    /// ledger this read answers from have to be one value, and two `CareLedger`s would be two
+    /// streaks. `PetTaskFeed::care` is where it comes from — see `task_feed.rs`'s field for why the
+    /// reward is settled there rather than here.
+    pub ledger: Arc<Mutex<CareLedger>>,
     /// §6's tasks, as the runtime's own frames left them. One for the process, and the only
     /// place a frame is applied (`desktop_pet/task_feed.rs`), so a window that reads it and a
     /// command that answers from it cannot disagree.
@@ -152,10 +157,15 @@ impl DesktopPetState {
     /// the feed is a value the caller can assemble — `PetTaskFeed::with_notifications` takes the
     /// channel, the switches and the history (§10.2's injection, at the one seam a state has).
     pub fn with_tasks(surfaces: Box<dyn PetSurfaces>, tasks: PetTaskFeed) -> Self {
+        // Read before the feed is moved into the state, and it is the only way to hold one ledger:
+        // the feed settles into the value this handle points at, and the page's read answers from
+        // it. A second `CareLedger::new()` here would be a ledger that is never paid and never
+        // changes — which is exactly the state this call used to be in.
+        let ledger = tasks.care();
         Self {
             host: Mutex::new(PetWindowHost::new(surfaces)),
             observations: Mutex::new(Observations::new()),
-            ledger: Mutex::new(CareLedger::new()),
+            ledger,
             // Nothing has published yet: the relay answers the app's own defaults until the main
             // window publishes what it is drawing (`host_appearance.rs`).
             appearance: Mutex::new(HostAppearanceRelay::new()),

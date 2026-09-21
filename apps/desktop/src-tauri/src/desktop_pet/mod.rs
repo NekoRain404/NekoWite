@@ -35,7 +35,7 @@
 //!
 //! Wiring is deliberately not here, and it is no longer missing either: `lib.rs` declares this
 //! module and registers its commands, `commands/desktop_pet.rs` is the only place a caller's
-//! identity is read, and `state/app_state.rs` holds [`PetWindowHost`], [`Observations`] and the
+//! identity is read, and `state/desktop_pet_state.rs` holds [`PetWindowHost`], [`Observations`] and
 //! care ledger as managed state — with [`PetTaskFeed`] beside them, which is what gives
 //! `desktop_pet_tasks` a state to answer from. This file stays a list of modules and a re-export, so the
 //! isolation the header above describes is a property of the tree rather than of a paragraph.
@@ -48,7 +48,10 @@
 
 pub mod ball;
 pub mod bundled;
+pub mod care_feed;
 pub mod care_ledger;
+pub mod care_settlement;
+pub mod care_store;
 pub mod character_view;
 pub mod feature_switch;
 pub mod history;
@@ -60,6 +63,7 @@ pub mod resources;
 pub mod settings;
 pub mod task_feed;
 pub mod task_projection;
+pub mod task_reminders;
 pub mod window_host;
 
 pub use ball::{
@@ -67,6 +71,12 @@ pub use ball::{
 };
 pub use bundled::{seed, Seeded, BUNDLED_CHARACTER_ID, BUNDLED_CHARACTER_NAME};
 pub use care_ledger::{CareLedger, CareOutcome, CareSummary, DAY_WINDOW, MEAL_XP};
+pub use care_settlement::{care_outcome, local_time_of};
+// The care ledger's file, re-exported beside the reminder ledger's `HistoryStore`. Its `Loaded` is
+// deliberately *not* re-exported under that bare name: `history::Loaded` already holds it in this
+// list, and two records read back with one name in one namespace is how a caller reaching for the
+// wrong one compiles. Reach it as `care_store::Loaded`.
+pub use care_store::CareStore;
 pub use character_view::{
     appearance, entries, free_character_id, refusal_sentence, BubbleMessage, BubbleOpacity, Motion,
     PetAppearance, PetCharacterEntry, PetCharacterFiles,

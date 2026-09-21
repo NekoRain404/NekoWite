@@ -1,0 +1,31 @@
+/** The font-family names the appearance picker offers. */
+export const fontNames = {
+  en: {
+    system: 'System',
+    inter: 'Inter',
+    plex: 'IBM Plex Sans',
+    serif: 'Serif',
+    rounded: 'Rounded',
+    sans: 'Sans',
+    reading: 'Reading',
+    mono: 'Mono (default)',
+    cascadia: 'Cascadia Code',
+    jetbrains: 'JetBrains Mono',
+    lilex: 'Lilex',
+    code: 'Code',
+  },
+  zh: {
+    system: '系统默认',
+    inter: 'Inter',
+    plex: 'IBM Plex Sans',
+    serif: '衬线',
+    rounded: '圆角',
+    sans: '无衬线',
+    reading: '阅读',
+    mono: '等宽默认',
+    cascadia: 'Cascadia Code',
+    jetbrains: 'JetBrains Mono',
+    lilex: 'Lilex',
+    code: '代码',
+  },
+} as const

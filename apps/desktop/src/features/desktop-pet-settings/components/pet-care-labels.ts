@@ -16,13 +16,14 @@
  * message as the catalogue writes it (`tm`, the raw entry) and handed back as their own literal
  * text. That is the same helper, for the same reason, as the skills section's.
  *
- * **Only the fields this page can draw are here, and the type says so.** `absent`, `readOnly`,
- * `preview` and the four import lines are deliberately absent: no control on the care page produces
- * an import, a sample or a record from a newer build, so a translated sentence for one would be a
- * string nobody renders — and the day a surface can, that surface adds its own table here. The
- * panel keeps its English defaults for those fields, which is what a default is for; {@link
- * CarePanelWording} is a `Pick` rather than `Partial` so a field this page *does* draw cannot go
- * missing quietly.
+ * **Only the fields this page can draw are here, and the type says so.** `absent`, `preview` and the
+ * four import lines are deliberately absent: no control on the care page produces an import or a
+ * sample, so a translated sentence for one would be a string nobody renders — and the day a surface
+ * can, that surface adds its own table here. `readOnly` was in that list and has left it: the ledger
+ * has a store, so a record a newer build left on disk is a state this page can now meet and must say
+ * (§10.2). The panel keeps its English defaults for the rest, which is what a default is for;
+ * {@link CarePanelWording} is a `Pick` rather than `Partial` so a field this page *does* draw cannot
+ * go missing quietly.
  */
 import { i18n, t } from '../../../i18n'
 import type { PetCarePanelLabels } from '../../desktop-pet'
@@ -45,6 +46,7 @@ export type CarePanelWording = Pick<
   | 'day'
   | 'dayToday'
   | 'dayUnknown'
+  | 'readOnly'
   | 'stages'
   | 'hungerSteps'
 >
@@ -81,6 +83,9 @@ export function carePanelLabels(): CarePanelWording {
     day: pattern('settings.pet.care.panel.day'),
     dayToday: pattern('settings.pet.care.panel.dayToday'),
     dayUnknown: t('settings.pet.care.panel.dayUnknown'),
+    // The third answer a read can give (§10.2). It is a sentence and not a number, which is the
+    // whole point: the record is on disk and this build may not read or replace it.
+    readOnly: t('settings.pet.care.panel.readOnly'),
     // The two vocabularies: one word per `PetCareStage` and one per hunger step. A step added to
     // either list is a missing key here rather than a surface that quietly shows an English word —
     // and `Record` is what makes that true, rather than a sparse object a lookup could miss.

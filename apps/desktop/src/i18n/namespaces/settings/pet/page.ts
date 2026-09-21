@@ -1,0 +1,43 @@
+/** The page list and the shell-level status words. */
+export const page = {
+  en: {
+    pages: 'Desktop pet pages',
+    page: {
+      general: 'General',
+      character: 'Character',
+      bubble: 'Bubble',
+      notification: 'Notifications',
+      care: 'Care',
+      project: 'Projects',
+      advanced: 'Advanced',
+    },
+    notLanded: 'No component is wired to these pages yet: {pages}.',
+    noGateway: 'This build has no connection to the host, so the desktop pet settings cannot be read or written here.',
+    loadFailed: 'The desktop pet settings could not be read: {msg}',
+    readOnly: 'A newer version of the app wrote these settings. This build cannot read or change them, so no controls are shown.',
+    reset: 'Restore this page’s defaults',
+    resetNote: 'Only this page returns to its defaults. Characters, care progress and history are kept.',
+    unavailable: 'Not usable on this machine: {detail}',
+    capabilityUnknown: 'This machine has not been checked for this yet.',
+  },
+  zh: {
+    pages: '桌宠设置子页',
+    page: {
+      general: '常规与交互',
+      character: '角色与动画',
+      bubble: '气泡与消息',
+      notification: '通知与声音',
+      care: '养成与统计',
+      project: '项目与多角色',
+      advanced: '高级与集成',
+    },
+    notLanded: '这些子页尚未接入组件：{pages}。',
+    noGateway: '本构建没有连接宿主，桌宠设置在这里既读不到也写不了。',
+    loadFailed: '读取桌宠设置失败：{msg}',
+    readOnly: '这些设置由更新版本的应用写入。本构建既无法读取也无法修改，因此不显示任何控件。',
+    reset: '恢复本页默认值',
+    resetNote: '只把本页恢复为默认值。角色库、养成进度和历史都会保留。',
+    unavailable: '本机不可用：{detail}',
+    capabilityUnknown: '本机尚未验证这项能力。',
+  },
+} as const

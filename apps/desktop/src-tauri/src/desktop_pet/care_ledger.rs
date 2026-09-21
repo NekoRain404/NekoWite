@@ -56,6 +56,14 @@ pub use import::{
     CareImport, CareImportOutcome, CareImportPayload, CareImportRefusal, CareImportReport,
 };
 
+/// The record as bytes. A child of this module and not of the store, because `local.rs` scans every
+/// file this module is built from for a path, a socket or a process: the codec is pure conversion and
+/// belongs on this side of that line, and the file it is written to (`desktop_pet::care_store`) is on
+/// the other.
+mod codec;
+
+pub use codec::Decoded;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};

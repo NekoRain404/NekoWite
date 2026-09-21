@@ -1,0 +1,33 @@
+/** The plugins page: hint, empty and unreadable states. */
+export const pluginsPage = {
+  en: {
+    plugins: {
+      hint: 'Plugins are loaded from this library\'s plugins/ folder. Switching one off unloads it now and keeps it off: its code is not read or run again until you switch it back on, and no permission prompt appears while it is off.',
+      empty: 'No plugins in this library.',
+      unreadable: 'The plugins folder could not be read, so this list is not the library\'s contents. It may still have plugins installed.',
+      readFailed: 'Could not read the plugins folder: {msg}',
+      loading: 'Reading the plugins folder...',
+      vaultMissing: 'Open a library first - plugins live inside it.',
+      blocked: 'This build does not load plugins: plugin code would run with the same privileges as the app, so the released build skips loading. The list below only shows what is in the folder. The isolation plan is in docs/PLUGIN_ISOLATION.md.',
+      disabledNote: 'switched off',
+      activeNote: 'running',
+      inactiveNote: 'not running',
+      unstableNote: 'was quarantined after a crash; opening this library re-approves it',
+    },
+  },
+  zh: {
+    plugins: {
+      hint: '插件从当前知识库的 plugins/ 目录加载。关掉一个插件会立即卸载它并保持关闭：在你重新打开之前，它的代码不会被读取或执行，也不会弹出权限询问。',
+      empty: '当前知识库里没有插件。',
+      unreadable: '无法读取插件目录，下面的列表并不代表知识库中的内容——其中可能仍有插件。',
+      readFailed: '无法读取插件目录：{msg}',
+      loading: '正在读取插件目录…',
+      vaultMissing: '请先打开一个知识库——插件就在其中。',
+      blocked: '当前版本不加载插件：插件代码会以与主程序相同的权限运行，因此发布版的安全策略会跳过加载（下方列表只是目录内容）。隔离方案见 docs/PLUGIN_ISOLATION.md。',
+      disabledNote: '已关闭',
+      activeNote: '运行中',
+      inactiveNote: '未运行',
+      unstableNote: '因崩溃被隔离；重新打开该知识库即可重新授权',
+    },
+  },
+} as const

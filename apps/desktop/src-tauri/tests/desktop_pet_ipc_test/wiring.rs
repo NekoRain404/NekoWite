@@ -52,8 +52,19 @@ fn desktop_pet_open_task<R: tauri::Runtime>(
     pet_commands::desktop_pet_open_task(app, task)
 }
 
-struct Pet {
-    app: tauri::App<tauri::test::MockRuntime>,
+/// §8's read, registered here for the same reason the two above are: the care ledger is fed by the
+/// frames this file drives, so the page that draws it has to be reachable from the same app.
+#[tauri::command]
+fn desktop_pet_care_read(
+    state: tauri::State<'_, DesktopPetState>,
+) -> Result<pet_commands::PetCareRead, String> {
+    pet_commands::desktop_pet_care_read(state)
+}
+
+pub(crate) struct Pet {
+    /// The app a case drives. `pub(crate)` with the struct, because the two modules this target keeps
+    /// cases in — `wiring` and `care` — both build one and both read managed state out of it.
+    pub(crate) app: tauri::App<tauri::test::MockRuntime>,
 }
 
 /// A session bus of this test's own, with no notification daemon on it and no way to start one.
@@ -145,20 +156,44 @@ fn app_on(bus: &PrivateBus) -> Pet {
         .manage(DesktopPetState::with_tasks(Box::new(surfaces), tasks))
         .invoke_handler(tauri::generate_handler![
             desktop_pet_tasks,
-            desktop_pet_open_task
+            desktop_pet_open_task,
+            desktop_pet_care_read
         ])
         .build(mock_context(noop_assets()))
         .expect("the pet's task surface builds");
     Pet { app }
 }
 
-fn app() -> Pet {
+pub(crate) fn app() -> Pet {
     let surfaces = FakeSurfaces::new();
     let app = mock_builder()
         .manage(DesktopPetState::with_surfaces(Box::new(surfaces)))
         .invoke_handler(tauri::generate_handler![
             desktop_pet_tasks,
-            desktop_pet_open_task
+            desktop_pet_open_task,
+            desktop_pet_care_read
+        ])
+        .build(mock_context(noop_assets()))
+        .expect("the pet's task surface builds");
+    Pet { app }
+}
+
+/// An app whose pet state came off a real data directory — the shape a launch builds.
+///
+/// The care ledger's *file* is what makes this necessary: the read command has an arm for a record a
+/// newer build wrote, and that arm is only reachable through a store. A state built by
+/// `with_surfaces` has none, which is the right answer for every other case in this file.
+pub(crate) fn app_on_data(data: &std::path::Path) -> Pet {
+    let tasks = PetTaskFeed::for_app(data, 0);
+    let app = mock_builder()
+        .manage(DesktopPetState::with_tasks(
+            Box::new(FakeSurfaces::new()),
+            tasks,
+        ))
+        .invoke_handler(tauri::generate_handler![
+            desktop_pet_tasks,
+            desktop_pet_open_task,
+            desktop_pet_care_read
         ])
         .build(mock_context(noop_assets()))
         .expect("the pet's task surface builds");
@@ -166,7 +201,7 @@ fn app() -> Pet {
 }
 
 /// The identity a real start installs, and the frames the runtime publishes for one run.
-fn identity() -> AgentIdentity {
+pub(crate) fn identity() -> AgentIdentity {
     AgentIdentity {
         agent_id: "opencode".to_string(),
         profile_id: "default".to_string(),
@@ -175,7 +210,7 @@ fn identity() -> AgentIdentity {
     }
 }
 
-fn envelope(kind: AgentEventKind, payload: Value) -> AgentEventEnvelope {
+pub(crate) fn envelope(kind: AgentEventKind, payload: Value) -> AgentEventEnvelope {
     AgentEventEnvelope {
         agent_id: "opencode".to_string(),
         profile_id: "default".to_string(),
@@ -189,13 +224,13 @@ fn envelope(kind: AgentEventKind, payload: Value) -> AgentEventEnvelope {
     }
 }
 
-fn window(pet: &Pet, label: &str) -> tauri::WebviewWindow<tauri::test::MockRuntime> {
+pub(crate) fn window(pet: &Pet, label: &str) -> tauri::WebviewWindow<tauri::test::MockRuntime> {
     tauri::WebviewWindowBuilder::new(&pet.app, label, tauri::WebviewUrl::default())
         .build()
         .expect("a window")
 }
 
-fn call(
+pub(crate) fn call(
     window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
     cmd: &str,
     body: Value,
