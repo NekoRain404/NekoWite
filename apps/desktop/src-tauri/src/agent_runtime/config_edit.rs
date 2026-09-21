@@ -55,6 +55,10 @@ pub use error::ConfigError;
 pub use write::{Revision, WriteOutcome, DOCUMENT_MODE};
 // `pub(crate)`, not `pub`: the write path was crate-visible before the move and stays that way.
 pub(crate) use write::write_replacing;
+// The same visibility, for the one document whose mode is a claim the settings page makes: the
+// credentials file is the host's own, so its writer sets the mode rather than preserving whatever a
+// backup or an older build left behind (finding S7).
+pub(crate) use write::write_replacing_private;
 
 // The create path's seed text, imported rather than spelled out at the call below, so the doc link
 // in `apply_claim` resolves: it lives with the splice that consumes it.

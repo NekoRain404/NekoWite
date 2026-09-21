@@ -184,7 +184,11 @@ impl Profile {
             .map(|(name, secret)| (name, Value::String(secret.expose().to_string())))
             .collect::<serde_json::Map<_, _>>()
             .into();
-        config_edit::write_replacing(&self.credential_file(), &object.to_string())?;
+        // `write_replacing_private` and not `write_replacing`: this file's permissions are part of
+        // what the settings page reports (`CredentialStorage`'s `mode` is `DOCUMENT_MODE`), so the
+        // writer sets them rather than preserving what a copy, a restore or an older build left
+        // behind — see the function's own comment and finding S7.
+        config_edit::write_replacing_private(&self.credential_file(), &object.to_string())?;
         self.credentials = credentials;
         Ok(())
     }

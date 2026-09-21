@@ -211,3 +211,50 @@ fn a_credential_name_that_would_decide_what_the_engine_runs_is_refused() {
         }])
         .expect("a provider key is what this surface is for");
 }
+
+/// **The credentials file's mode is set, not preserved: the page says 600 and the file is 600.**
+///
+/// Finding S7 in `docs/audits/2026-09-21-code-review.md`. `CredentialStorage`'s `mode` is
+/// `DOCUMENT_MODE` and the settings page renders it as `"600"`, while the writer preserved whatever
+/// mode the file already had. A `credentials.json` at `0644` — copied, restored from a backup, or
+/// written by a build that did not set it — therefore stayed readable by every account on the
+/// machine while the page said otherwise.
+///
+/// The sibling document keeps the opposite behaviour deliberately (the engine's own configuration
+/// belongs to the user, and tightening it behind their back is not a configuration edit), which is
+/// why this is asserted at the credentials write rather than at the writer: what makes this file
+/// different is that this app *claims* its mode.
+#[test]
+fn the_credentials_file_is_written_0600_even_when_it_was_wider() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let managed = scratch("credential-mode");
+    let store = ProfileStore::new(&managed);
+    let mut profile = store.open("engine-alpha", "alpha").expect("alpha");
+    let path = profile.credential_file();
+
+    // The state the claim has to survive: a file every account can read.
+    fs::write(&path, "{}").expect("a planted credentials file");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("wide permissions");
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o644,
+        "the planted file has to be wide, or this case proves nothing"
+    );
+
+    profile
+        .apply_credentials(&[CredentialChange::Set {
+            name: "ANTHROPIC_API_KEY".to_string(),
+            value: Secret::new("sk-alpha-0123456789abcdef"),
+        }])
+        .expect("the credentials are written");
+
+    let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600, "the page says 600 and the file is {mode:o}");
+    assert!(
+        fs::read_to_string(&path)
+            .unwrap()
+            .contains("ANTHROPIC_API_KEY"),
+        "the write has to have happened, or the mode proves nothing"
+    );
+}

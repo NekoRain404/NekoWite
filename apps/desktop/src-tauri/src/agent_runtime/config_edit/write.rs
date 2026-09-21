@@ -86,7 +86,39 @@ impl fmt::Debug for WriteOutcome {
 /// keeps the mode it has: this host sets the mode of what it creates, and tightening a user's file
 /// behind their back is not a configuration edit.
 pub(crate) fn write_replacing(path: &Path, text: &str) -> Result<(), ConfigError> {
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let mode = existing_mode(path).unwrap_or(DOCUMENT_MODE);
+    write_replacing_with_mode(path, text, mode)
+}
+
+/// Replaces a file the host owns **and sets its mode**, whether or not it was already there.
+///
+/// The sibling of [`write_replacing`] for the one document whose permissions are a *claim this app
+/// makes to the user*: the settings page renders `CredentialStorage`'s `mode` — `DOCUMENT_MODE`,
+/// spelled `"600"` — so a writer that preserved whatever mode the file happened to have made that
+/// sentence false. A `credentials.json` at `0644` — copied, restored from a backup, written by a
+/// build that did not set it — stayed readable by every account on the machine while the page said
+/// otherwise (finding S7 in `docs/audits/2026-09-21-code-review.md`).
+///
+/// The engine's own configuration document keeps the preserving behaviour, and that is the reason
+/// this is a second function rather than a changed default: the file belongs to the user, this host
+/// is a guest in it, and tightening it behind their back is not a configuration edit.
+pub(crate) fn write_replacing_private(path: &Path, text: &str) -> Result<(), ConfigError> {
+    write_replacing_with_mode(path, text, DOCUMENT_MODE)
+}
+
+/// The mode a file already has, if it is there and readable.
+fn existing_mode(path: &Path) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::metadata(path)
+        .ok()
+        .map(|meta| meta.permissions().mode() & 0o777)
+}
+
+/// The one write both entry points above go through: the mode is the temp file's, which is what the
+/// rename puts in place — a new file gets it, and a file that was there is *replaced by* it.
+fn write_replacing_with_mode(path: &Path, text: &str, mode: u32) -> Result<(), ConfigError> {
+    use std::os::unix::fs::OpenOptionsExt;
 
     let io = |message: String| ConfigError::Io {
         path: path.to_path_buf(),
@@ -96,9 +128,6 @@ pub(crate) fn write_replacing(path: &Path, text: &str) -> Result<(), ConfigError
         .parent()
         .ok_or_else(|| io("the path has no directory".into()))?;
     fs::create_dir_all(parent).map_err(|error| io(error.to_string()))?;
-    let mode = fs::metadata(path)
-        .ok()
-        .map_or(DOCUMENT_MODE, |meta| meta.permissions().mode() & 0o777);
     let temp = parent.join(format!(
         ".nekowite-config-{}-{}.tmp",
         std::process::id(),
