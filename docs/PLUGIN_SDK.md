@@ -22,16 +22,24 @@ The plugin SDK is the curated barrel `packages/plugin-host/src/index.ts`. It re-
 package root (`@nekowite/plugin-host`), **never** a deep path (`@nekowite/plugin-host/src/loader`).
 
 The surface is frozen by a list of required names (`packages/plugin-host/src/api-surface.test.ts`,
-57 names as of 2026-09-22) that fails if **a name on the list** stops being exported. Types-only
+63 names as of 2026-09-22) that fails if **a name on the list** stops being exported. Types-only
 exports are part of the contract too (they are erased at runtime, but still carry the API).
 
 > **What that test does and does not prove (2026-09-22).** It is a list, not a snapshot: adding
 > an export does not fail it, and an export that is *not* on the list can be deleted with the
-> test still green. That gap was real — the barrel re-exports 74 runtime values, the list
-> required 46, and **11 names the table below calls public were on neither**, including the
-> whole signature family and the governance serialize/load pair. They are on the list now, so the sentence
-> above is true of every name this document promises; keeping it true means adding a name here
-> when this document adds one there.
+> test still green. That gap was real — the barrel re-exports **90** runtime values, the list
+> required 46, and **17 names the table below calls public were on neither**: the signature
+> family, the hook-timeout pair, the audit-log file sink, the governance serialize/load pair, and
+> the whole resource-quota family. They are on the list now (63 names), so the sentence above is
+> true of every name this document promises; keeping it true means adding a name here when this
+> document adds one there.
+>
+> **How that count was wrong twice, in case a reader repeats it.** The first pass reported 74
+> values and eleven missing names, and was believed for a round. It followed `export *` one level
+> deep, while the quota family reaches this barrel through `runtime.ts`'s own
+> `export * from './activation-registry'` — so the scan could not see those names, and "the table
+> is covered" was a statement about the scan rather than about the barrel. A recursive walk found
+> the six. A list checked by a method nobody checks is the shape this whole section is about.
 
 ### Runtime exports
 

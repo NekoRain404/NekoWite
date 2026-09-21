@@ -61,20 +61,30 @@ const REQUIRED_RUNTIME_EXPORTS = [
   'unrevokePlugin',
   'isPluginRevoked',
   'getRevokedPlugins',
-  // The eleven below were missing from this list until 2026-09-22, and the gap was
+  // The names below were missing from this list until 2026-09-22, and the gap was
   // invisible because both sides agreed with the document rather than with the
   // barrel: `docs/PLUGIN_SDK.md` §1 names them as part of the surface, the barrel
   // exports them, and nothing required them — so any of them could have been
   // deleted with this snapshot still green, which is the one thing it exists to
   // prevent. (`docs/DOC-AUDIT.md` §1.3 counted 17 of 62; those counts are wrong,
-  // the finding is not. Measured: the barrel re-exports 74 runtime values, 46 were
-  // required here, and 11 names the document calls public were in neither — the
-  // other 17 values it re-exports are undocumented and stay unrequired.)
+  // the finding is not.)
+  //
+  // **Counts, measured twice.** The first pass said the barrel re-exports 74 runtime
+  // values and that the eleven it found were the whole gap. Both were wrong: the
+  // scan followed one level of `export *`, and the quota family reaches the barrel
+  // through `runtime.ts`'s own `export * from './activation-registry'` two levels
+  // down. A recursive walk gives the real figures — **90** values re-exported,
+  // **63** now required here, and the six quota names below were still unenforced
+  // after the first pass claimed the table was covered. The lesson is on the record
+  // because it is the one this file is about: a reading that was not checked against
+  // its own method.
   //
   // They stay because the document says they are public: the signature family a
-  // publisher needs, the hook-timeout budget, the audit-log file sink, and the
+  // publisher needs, the hook-timeout budget, the audit-log file sink, the
   // governance serialize/load pair — the embedder's only supported way into the
-  // singletons. Removing one is now a deliberate change to this list.
+  // singletons — and the quota/in-flight readings a caller needs to reason about a
+  // plugin that was quarantined. Removing one is now a deliberate change to this
+  // list.
   //
   // signatures / trust
   'createPluginSignature',
@@ -91,6 +101,13 @@ const REQUIRED_RUNTIME_EXPORTS = [
   // governance state
   'serializeGovernance',
   'loadGovernance',
+  // resource quota (through runtime.ts → activation-registry.ts)
+  'getInFlightActivationCount',
+  'getMaxInFlightActivations',
+  'setMaxInFlightActivations',
+  'getPluginSessionQuota',
+  'setPluginSessionQuota',
+  'getPluginSessionUsage',
 ] as const
 
 describe('plugin-host public API surface', () => {
