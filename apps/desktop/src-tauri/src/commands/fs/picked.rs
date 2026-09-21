@@ -83,31 +83,40 @@ impl PickedImages {
         picked.retain(|_, minted| now.duration_since(*minted) < PICK_BOUND);
         picked.remove(&resolved).is_some()
     }
-
-    /// How many grants are live, for a test that has to see one spent.
-    #[cfg(test)]
-    pub(crate) fn live(&self) -> usize {
-        self.picked.lock().map(|picked| picked.len()).unwrap_or(0)
-    }
-
-    /// Record a grant as if it had been minted `age` ago, so the bound is testable without waiting
-    /// ten minutes.
-    #[cfg(test)]
-    pub(crate) fn mint_ago(&self, path: &Path, age: Duration) {
-        let Ok(mut picked) = self.picked.lock() else {
-            return;
-        };
-        picked.insert(
-            path.canonicalize().expect("the fixture file exists"),
-            Instant::now() - age,
-        );
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    /// The two reads only a test needs, and they live **here** rather than in the production
+    /// `impl` above.
+    ///
+    /// `tests/write_atomicity_test.rs` reads every write-surface file up to its FIRST
+    /// `#[cfg(test)]` and treats the rest as test code, so a gated item before the trailing test
+    /// module silently cuts that scan short — which is what happened when these two were `pub(crate)`
+    /// methods above it (the whole suite went red at `write_atomicity_test.rs:330`). An inherent
+    /// `impl` in a child module is the ordinary Rust way to keep a test-only read out of the
+    /// production section: field privacy is per-module and descendants can see it.
+    impl PickedImages {
+        /// How many grants are live, for a test that has to see one spent.
+        fn live(&self) -> usize {
+            self.picked.lock().map(|picked| picked.len()).unwrap_or(0)
+        }
+
+        /// Record a grant as if it had been minted `age` ago, so the bound is testable without
+        /// waiting ten minutes.
+        fn mint_ago(&self, path: &Path, age: Duration) {
+            let Ok(mut picked) = self.picked.lock() else {
+                return;
+            };
+            picked.insert(
+                path.canonicalize().expect("the fixture file exists"),
+                Instant::now() - age,
+            );
+        }
+    }
 
     /// A directory of this test's own, and the file inside it. Removed first, so a directory a
     /// killed run left behind cannot make the next one pass.

@@ -277,13 +277,16 @@ fn no_note_path_module_writes_in_place() {
         // response to a guard that fails for a refactor is to delete it. The
         // property is about the function, wherever it lives.
         if source.contains("pub fn write_file(") {
-            save_definition = Some((relative.clone(), production_source(&source).to_string()));
+            save_definition = Some((
+                relative.clone(),
+                production_source(&relative, &source).to_string(),
+            ));
         }
         if STAGING_IS_ALLOWED_HERE.contains(&relative.as_str()) {
             continue;
         }
         let line_of = |offset: usize| source[..offset].lines().count();
-        for (offset, line) in line_offsets(&production_source(&source)) {
+        for (offset, line) in line_offsets(&production_source(&relative, &source)) {
             for banned in BANNED {
                 if line.contains(banned) {
                     errors.push(format!(
@@ -322,7 +325,13 @@ fn no_note_path_module_writes_in_place() {
 /// weakened until it caught nothing. Each one is the last item in its file, and
 /// the shape is asserted rather than assumed: a `#[cfg(test)]` seen anywhere
 /// else would silently stop the scan at that point.
-fn production_source(source: &str) -> &str {
+///
+/// `relative` is only for the message, and it is there because the message was
+/// missing it: the first version reported a gated item that was not a trailing
+/// module without saying *where*, and reading it cost a scan of a dozen files by
+/// hand (the offender was a `#[cfg(test)]` accessor above `commands/fs/picked.rs`'s
+/// test module). An error a guard raises should name what it is looking at.
+fn production_source<'a>(relative: &str, source: &'a str) -> &'a str {
     let Some(at) = source.find("#[cfg(test)]") else {
         return source;
     };
@@ -331,7 +340,8 @@ fn production_source(source: &str) -> &str {
         rest.lines()
             .take(4)
             .any(|l| l.trim_start().starts_with("mod ")),
-        "a `#[cfg(test)]` that is not a trailing test module: the scan would stop early"
+        "{relative}: a `#[cfg(test)]` that is not a trailing test module — the scan would stop \
+         early and the rest of the file would go unchecked"
     );
     &source[..at]
 }
