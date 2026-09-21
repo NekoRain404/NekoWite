@@ -275,21 +275,43 @@ export async function refreshDisabledPlugins(vault: string): Promise<void> {
   }
 }
 
+/** The vault's answer for the on/off switch. Three outcomes, because the user's
+ *  next move differs for each: nothing to do, fix the file, or try again. */
+export type GovernanceSaveResult =
+  /** The file now holds the set we asked it to hold. */
+  | 'saved'
+  /** The file's MAC did not verify, so nothing was written on purpose:
+   *  overwriting an unverifiable governance file is how an attacker's version
+   *  becomes the trusted one on the next read. */
+  | 'tampered'
+  /** The write did not land (or could not be confirmed), so the decision lives
+   *  only in memory and is gone after a restart. */
+  | 'failed'
+
 /**
- * Persist the disabled set for `vault`, READ-MODIFY-WRITE.
+ * Persist the disabled set for `vault`, READ-MODIFY-WRITE, and report what the
+ * file did with it.
  *
  * Reading first is the point: this file also holds trust anchors, revocations
  * and digests, and the CSP-blocked build never loaded them into memory. Writing
  * a fresh payload built from empty in-memory records would silently erase a
  * user's revocations, so the file's own contents are the base whenever they are
- * readable and their MAC verifies. An unverifiable file is left untouched:
- * overwriting a tampered file is how the attacker's version becomes the trusted
- * one on the next read.
+ * readable and their MAC verifies.
+ *
+ * `pluginId` is the switch this write is about, and the file is asked about THAT
+ * id afterwards. `writeGovernanceFile` is deliberately best-effort — a failed
+ * write must never break the mutation that asked for it — so the file is read
+ * back to confirm it: the switch's whole promise is that a row cannot claim a
+ * state the file does not hold. Asking about one id (rather than comparing whole
+ * sets) keeps the answer true while another row's switch writes the same file.
  */
-export async function persistDisabledPlugins(vault: string): Promise<void> {
+export async function persistDisabledPlugins(
+  vault: string,
+  pluginId: string,
+): Promise<GovernanceSaveResult> {
   try {
     const read = await readGovernanceFile(vault)
-    if (read.kind === 'tampered') return
+    if (read.kind === 'tampered') return 'tampered'
     let payload: GovernanceFilePayload | null = null
     if (read.kind === 'ok') {
       try {
@@ -301,8 +323,27 @@ export async function persistDisabledPlugins(vault: string): Promise<void> {
     const base: GovernanceFilePayload = payload ?? buildGovernancePayload()
     const next: GovernanceFilePayload = { ...base, disabled: [...disabledPlugins] }
     await writeGovernanceFile(vault, next)
+    const wanted = disabledPlugins.has(pluginId)
+    return (await fileHoldsDisabled(vault, pluginId)) === wanted ? 'saved' : 'failed'
   } catch {
-    /* best-effort, exactly like the other governance writer */
+    // The read, the envelope or the key derivation failed: the file is not known
+    // to hold the decision, and saying otherwise is the bug this exists to stop.
+    return 'failed'
+  }
+}
+
+/** Whether the vault's file, read back, now says `pluginId` is disabled. A file
+ *  that is missing, unreadable or unverifiable is not agreement: the state it is
+ *  supposed to hold cannot be shown to be there. */
+async function fileHoldsDisabled(vault: string, pluginId: string): Promise<boolean> {
+  try {
+    const read = await readGovernanceFile(vault)
+    if (read.kind !== 'ok') return false
+    const payload = JSON.parse(read.payload) as GovernanceFilePayload
+    const ids = Array.isArray(payload.disabled) ? payload.disabled : []
+    return ids.includes(pluginId)
+  } catch {
+    return false
   }
 }
 

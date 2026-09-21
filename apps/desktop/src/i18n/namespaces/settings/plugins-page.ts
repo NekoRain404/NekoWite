@@ -13,6 +13,9 @@ export const pluginsPage = {
       activeNote: 'running',
       inactiveNote: 'not running',
       unstableNote: 'was quarantined after a crash; opening this library re-approves it',
+      toggleRefused: 'The plugin was not switched on: {msg}',
+      toggleTampered: 'This library\'s plugin state file was changed outside the app, so nothing was written. Fix or remove that file, then try again - until then no switch here is remembered.',
+      toggleNotSaved: 'This library\'s plugin state file could not be written, so the switch is not remembered and is gone after a restart.',
     },
   },
   zh: {
@@ -28,6 +31,9 @@ export const pluginsPage = {
       activeNote: '运行中',
       inactiveNote: '未运行',
       unstableNote: '因崩溃被隔离；重新打开该知识库即可重新授权',
+      toggleRefused: '该插件未被打开：{msg}',
+      toggleTampered: '本知识库的插件状态文件被应用之外改动过，因此没有写入任何内容。请先修复或删除该文件，然后重试——在此之前这里的开关不会被记住。',
+      toggleNotSaved: '无法写入本知识库的插件状态文件，因此这次开关不会被记住，重启后即失效。',
     },
   },
 } as const

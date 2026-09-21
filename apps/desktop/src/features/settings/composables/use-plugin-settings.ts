@@ -75,9 +75,28 @@ export function usePluginSettings(): PluginSettingsModel {
   }
 
   /** Flip one plugin and re-read, so the row describes the app's actual state
-   *  rather than what the click assumed it would be. */
+   *  rather than what the click assumed it would be.
+   *
+   *  The call answers with two separate facts, and each gets its own sentence: a
+   *  switch that snapped back (the gates refused the plugin, or the file would
+   *  not take the decision) and a decision that only lives in this session need
+   *  different things from the user. Neither is left to the row, which cannot
+   *  see either one. */
   async function togglePlugin(row: VaultPluginSummary, enabled: boolean): Promise<void> {
-    setVaultPluginDisabled(row.id, !enabled, { vault: vaultPath.value })
+    const outcome = await setVaultPluginDisabled(row.id, !enabled, { vault: vaultPath.value })
+    if (outcome.refused) {
+      notifyError(t('settings.plugins.toggleRefused', { msg: outcome.refused }))
+      // The record did not move, so the row is about to describe the same state
+      // as before the click — and a switch the user just moved is NOT rewritten
+      // by the renderer when its bound value never changed: it would keep the
+      // tick. Dropping the stale list makes the re-read build the row again.
+      rows.value = []
+    }
+    if (outcome.saved === 'tampered') {
+      notifyError(t('settings.plugins.toggleTampered'))
+    } else if (outcome.saved === 'failed') {
+      notifyError(t('settings.plugins.toggleNotSaved'))
+    }
     await refreshPluginRows()
   }
 

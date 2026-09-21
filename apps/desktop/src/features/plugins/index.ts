@@ -24,7 +24,12 @@
 export { loadVaultPlugins } from './services/vault-plugin-load'
 
 export { listVaultPlugins, setVaultPluginDisabled } from './services/vault-plugin-registry'
-export type { SetVaultPluginDisabledOptions, VaultPluginSummary } from './services/vault-plugin-registry'
+export type {
+  SetVaultPluginDisabledOptions,
+  VaultPluginSummary,
+  VaultPluginToggleOutcome,
+} from './services/vault-plugin-registry'
+export type { GovernanceSaveResult } from './services/governance-store'
 
 export { deactivateVaultPlugins, getActiveVaultPluginIds } from './services/vault-plugin-activate'
 

@@ -11,6 +11,7 @@ import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { usePluginSettings, type PluginSettingsModel } from './use-plugin-settings'
 import { useVaultSessionStore } from '../../../stores/vault-session'
 import { onNotify } from '../../../services/errors'
+import { t } from '../../../i18n'
 import type { VaultPluginSummary } from '../../../services/plugins'
 
 const mocks = vi.hoisted(() => ({
@@ -59,7 +60,11 @@ beforeEach(() => {
   pinia = createPinia()
   setActivePinia(pinia)
   mocks.listVaultPlugins.mockReset().mockResolvedValue([ALFA])
-  mocks.setVaultPluginDisabled.mockReset()
+  // The switch answers with what the app holds and what the file said; the
+  // ordinary case is "applied, and the file took it".
+  mocks.setVaultPluginDisabled
+    .mockReset()
+    .mockResolvedValue({ disabled: true, refused: null, saved: 'saved' })
   mounted = []
 })
 
@@ -127,5 +132,74 @@ describe('usePluginSettings', () => {
     expect(mocks.setVaultPluginDisabled).toHaveBeenCalledWith('alfa', true, { vault: '/vault' })
     expect(mocks.listVaultPlugins).toHaveBeenCalledTimes(2)
     expect(m.rows.value[0]!.disabled).toBe(true)
+  })
+
+  it('says why a switch that was put back did not take effect', async () => {
+    // A reload that refuses the plugin leaves the record disabled, so the row
+    // would only show that the switch did not move. The reason is the one thing
+    // the row cannot read for itself.
+    useVaultSessionStore().vault = '/vault'
+    const m = await mountModel()
+    const messages: string[] = []
+    const off = onNotify((msg) => messages.push(msg))
+    mocks.setVaultPluginDisabled.mockResolvedValue({
+      disabled: true,
+      refused: 'integrity check failed: the plugin changed since you approved it',
+      saved: 'saved',
+    })
+
+    await m.togglePlugin(ALFA, true)
+    off()
+
+    expect(messages).toEqual([
+      t('settings.plugins.toggleRefused', {
+        msg: 'integrity check failed: the plugin changed since you approved it',
+      }),
+    ])
+    // Still re-read: the record is the answer to "did it move", the sentence is not.
+    expect(mocks.listVaultPlugins).toHaveBeenCalledTimes(2)
+  })
+
+  it('says the decision is only for this session when the file did not take it', async () => {
+    useVaultSessionStore().vault = '/vault'
+    const m = await mountModel()
+    const messages: string[] = []
+    const off = onNotify((msg) => messages.push(msg))
+    mocks.setVaultPluginDisabled.mockResolvedValue({ disabled: true, refused: null, saved: 'failed' })
+
+    await m.togglePlugin(ALFA, false)
+    off()
+
+    expect(messages).toEqual([t('settings.plugins.toggleNotSaved')])
+  })
+
+  it('says nothing was written when the library’s file could not be verified', async () => {
+    useVaultSessionStore().vault = '/vault'
+    const m = await mountModel()
+    const messages: string[] = []
+    const off = onNotify((msg) => messages.push(msg))
+    mocks.setVaultPluginDisabled.mockResolvedValue({
+      disabled: true,
+      refused: null,
+      saved: 'tampered',
+    })
+
+    await m.togglePlugin(ALFA, false)
+    off()
+
+    expect(messages).toEqual([t('settings.plugins.toggleTampered')])
+  })
+
+  it('stays quiet when the switch was applied and the file took it', async () => {
+    useVaultSessionStore().vault = '/vault'
+    const m = await mountModel()
+    const messages: string[] = []
+    const off = onNotify((msg) => messages.push(msg))
+    mocks.setVaultPluginDisabled.mockResolvedValue({ disabled: true, refused: null, saved: 'saved' })
+
+    await m.togglePlugin(ALFA, false)
+    off()
+
+    expect(messages).toEqual([])
   })
 })
