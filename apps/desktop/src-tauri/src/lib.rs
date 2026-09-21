@@ -462,6 +462,34 @@ pub fn run() {
                             ),
                         }
                     }
+                } else if let Some(pet) = app.try_state::<state::DesktopPetState>() {
+                    // **A pet window destroyed from outside.** Nothing in this app closes one that
+                    // way — the frontend only ever calls `getCurrentWindow()`, and no capability
+                    // grants `core:window:allow-close`/`allow-destroy` to a pet window — but the
+                    // window system can: Alt+F4, a session manager, a compositor restart. The host's
+                    // record of that label then describes a window that does not exist, and every
+                    // operation that walks its instances fails at it: no window can be hidden or
+                    // shown again, `close_characters` re-pushes it for ever, a cap slot is held for
+                    // nothing, and `enabled` keeps answering `true` from a non-empty list
+                    // (finding F4 in `docs/audits/2026-09-21-code-review.md`).
+                    //
+                    // `forget` is what makes the record follow the window system, and it answers
+                    // whether the label was one this host had — so a `Destroyed` for a window that is
+                    // not the pet's is silent rather than logged as a fault.
+                    match pet.host.lock() {
+                        Ok(mut host) => {
+                            if host.forget(label.as_str()) {
+                                eprintln!(
+                                    "nekowite: the pet's window {label} was destroyed outside this \
+                                     app, so this host forgot it"
+                                );
+                            }
+                        }
+                        Err(_) => eprintln!(
+                            "nekowite: the pet's window host was poisoned, so a window destroyed \
+                             outside this app cannot be forgotten"
+                        ),
+                    }
                 }
             }
 

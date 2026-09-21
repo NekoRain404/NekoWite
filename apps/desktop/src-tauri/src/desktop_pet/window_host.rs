@@ -378,6 +378,38 @@ impl PetWindowHost {
             })
     }
 
+    /// Forget a window that went away without this host asking: the compositor, a session manager or
+    /// the user's own Alt+F4 destroyed it.
+    ///
+    /// **Why the host has to be told rather than noticing.** Everything here walks `instances` and
+    /// asks the surfaces for each label, so a label whose window is gone is not a stale entry but a
+    /// wedge: `set_visible` fails at it (so no window can be hidden or shown again),
+    /// `close_characters` re-pushes it on every teardown, a cap slot is held for a window that does
+    /// not exist, and `enabled` keeps answering `true` from a non-empty list
+    /// (`commands/desktop_pet.rs`). The window system is the only thing that knows, and
+    /// `WindowEvent::Destroyed` is where it says so (finding F4 in
+    /// `docs/audits/2026-09-21-code-review.md`).
+    ///
+    /// Answers whether there was anything to forget, because a `Destroyed` for a label this host
+    /// never minted is not a fault: a caller that could not tell the two apart would report one.
+    ///
+    /// **A `&str` and not a [`PetWindowLabel`].** The window system hands the event loop a label, and
+    /// the label type deliberately has no public constructor — a caller that could mint one could
+    /// aim an operation at a window it was never given (`CallerWindow`'s docblock is the same rule
+    /// about the same wire). Forgetting by name is the one operation where that costs nothing: the
+    /// worst a mistake can do is fail to find a window.
+    pub fn forget(&mut self, label: &str) -> bool {
+        let open = self.instances.len();
+        self.instances
+            .retain(|instance| instance.label.as_str() != label);
+        let forgot_character = self.instances.len() != open;
+        // The ball is one of this surface's windows and is not in `instances`: its own record is what
+        // a later `ensure_ball` reads, so a ball whose window is gone has to be marked closed or the
+        // next show would assume it is still there.
+        let forgot_ball = self.ball.forget(label);
+        forgot_character || forgot_ball
+    }
+
     /// The feature switch going off: every window closes, and the report says which.
     ///
     /// What it does not do is the point of {@link TeardownReport}. Animation timers and listeners

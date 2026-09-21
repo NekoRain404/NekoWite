@@ -344,6 +344,74 @@ fn the_bubble_fits_the_window_it_is_drawn_in() {
     );
 }
 
+/// **A window destroyed from outside must not wedge the pet** (finding F4).
+///
+/// Nothing in this app closes a pet window from outside: the frontend only ever calls
+/// `getCurrentWindow()`, and no capability grants `core:window:allow-close`/`allow-destroy` to one.
+/// The *window system* can, though — Alt+F4, a session manager, a compositor restart — and the host
+/// would keep a label whose window no longer exists. That is not a stale entry but a wedge, because
+/// everything here walks the instance list: `set_visible` fails at it (so nothing can be hidden or
+/// shown again), `close_characters` re-pushes it on every teardown, a cap slot is held for a window
+/// that does not exist, and `enabled` answers `true` from a non-empty list.
+///
+/// The case drives both halves: the wedge first (the operation failing at the stale label, which is
+/// what makes this a defect and not a tidy-up), then what `lib.rs`'s `Destroyed` arm does about it —
+/// `forget` — and then that every operation works again and the slot is free.
+#[test]
+fn a_window_destroyed_from_outside_is_forgotten_rather_than_wedging_every_operation() {
+    let (mut host, surfaces) = with_host();
+    let first = host.open("cat").expect("the first character fits");
+    let second = host.open("dog").expect("the second character fits");
+    assert_eq!(host.instances().len(), 2);
+
+    // The window system takes the second one, and this app is not asked.
+    surfaces
+        .state()
+        .gone
+        .push(second.label.as_str().to_string());
+
+    assert!(
+        host.set_visible(false).is_err(),
+        "the stale label has to be a wedge, or this case is not about the defect"
+    );
+    assert!(
+        host.instances()
+            .iter()
+            .any(|instance| instance.label == second.label),
+        "the host still holds the label whose window is gone"
+    );
+
+    // What the `Destroyed` arm does with it.
+    assert!(
+        host.forget(second.label.as_str()),
+        "the label was this host's, so there was something to forget"
+    );
+    assert_eq!(host.instances().len(), 1);
+    assert_eq!(host.instances()[0].label.as_str(), first.label.as_str());
+
+    // Every operation works again …
+    host.set_visible(false)
+        .expect("the pet can be hidden again");
+    host.set_visible(true).expect("and shown again");
+
+    // … and the slot it held is free: a host that dropped the label but kept the count would refuse
+    // the next character for the rest of the session.
+    surfaces.state().gone.clear();
+    fill(&mut host, DEFAULT_CHARACTER_CAP - 1);
+    assert_eq!(host.instances().len(), DEFAULT_CHARACTER_CAP);
+    assert_eq!(
+        host.open("one-too-many"),
+        Err(HostRefusal::CapReached {
+            cap: DEFAULT_CHARACTER_CAP,
+            open: DEFAULT_CHARACTER_CAP,
+        })
+    );
+
+    // A label this host never minted is not a fault: the caller logs on `true` and stays quiet on
+    // `false`, which is the difference between a report and noise on every unrelated destroy.
+    assert!(!host.forget("pet-999"));
+}
+
 /// **A hide that one window refuses must not claim the pet is hidden — and must not stop asking.**
 ///
 /// Finding F6 in `docs/audits/2026-09-21-code-review.md`. The old body used `?` inside the loop, so

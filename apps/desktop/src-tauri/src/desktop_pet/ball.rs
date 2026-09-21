@@ -124,6 +124,20 @@ impl Ball {
         self.open.then_some(&self.label)
     }
 
+    /// Mark the ball's window gone when the window system says it was destroyed from outside.
+    ///
+    /// Answers whether that was the ball's label, so the host reports only windows it knew about.
+    /// `enabled` is deliberately left alone: the user still wants the ball, and the next `ensure`
+    /// opens a new window for it — a record that said "open" while the window had been destroyed is
+    /// a ball that could never be shown again (finding F4).
+    pub(super) fn forget(&mut self, label: &str) -> bool {
+        if !self.open || self.label.as_str() != label {
+            return false;
+        }
+        self.open = false;
+        true
+    }
+
     pub(super) fn is_enabled(&self) -> bool {
         self.enabled
     }

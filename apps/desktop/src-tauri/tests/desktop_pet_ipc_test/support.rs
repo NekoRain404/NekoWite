@@ -62,6 +62,11 @@ pub struct SurfaceState {
     pub visible_calls: Vec<(String, bool)>,
     /// Labels this fake refuses to show or hide, the way `refuse_close` refuses a close.
     pub refuse_visible: Vec<String>,
+    /// Labels the window system no longer has a window for — the state a window destroyed from
+    /// outside leaves behind. Every call about one fails the way `TauriSurfaces` fails when its
+    /// window lookup misses, which is what makes the host's record of it a wedge rather than a
+    /// stale entry (finding F4).
+    pub gone: Vec<String>,
     pub work_area: Option<WorkArea>,
 }
 
@@ -174,6 +179,9 @@ impl PetSurfaces for FakeSurfaces {
 
     fn close(&mut self, label: &PetWindowLabel) -> Result<(), String> {
         let mut state = self.state();
+        if state.gone.contains(&label.as_str().to_string()) {
+            return Err("no window with that label".to_string());
+        }
         if state.refuse_close.contains(&label.as_str().to_string()) {
             return Err("the compositor declined".to_string());
         }
@@ -196,6 +204,9 @@ impl PetSurfaces for FakeSurfaces {
         state
             .visible_calls
             .push((label.as_str().to_string(), visible));
+        if state.gone.contains(&label.as_str().to_string()) {
+            return Err("no window with that label".to_string());
+        }
         if state.refuse_visible.contains(&label.as_str().to_string()) {
             return Err("the compositor declined".to_string());
         }
