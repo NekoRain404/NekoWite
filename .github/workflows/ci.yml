@@ -21,13 +21,12 @@ jobs:
       # review found three unreachable-code instances *with* them and later found the repository had
       # no reading of them at all. `scripts/gate.sh` runs the same three locally.
       #
-      # Two of them are gates and one is a reading, and the difference is stated here because a step
-      # that cannot fail is worth knowing about: `check-reachability` exits non-zero on a specifier
-      # that resolves to nothing, and `check-channels` on a channel with no counterpart — both lists
-      # are empty on a healthy tree. `check-dead-exports` reports ~ninety uncalled exports that are
-      # mostly the "exported so the spec can reach it" idiom, so it prints and exits 0; a crash still
-      # fails the step. Its own docstring says why, and the ratchet question is recorded in the audit
-      # ledger rather than decided here.
+      # All three can fail, each on a finding that has a clean state: `check-reachability` on a
+      # specifier that resolves to nothing, `check-channels` on a channel with no counterpart, and
+      # `check-dead-exports` on a control that makes the sweep blind or on the count rising above the
+      # ceiling recorded in that file (`CEILING`, 89 — a ratchet like the renderer's `--max-warnings`,
+      # not a demand for an empty list, since most of that list is the legitimate "exported so the
+      # spec can reach it" idiom).
       - run: |
           python3 scripts/check-reachability.py
           python3 scripts/check-dead-exports.py

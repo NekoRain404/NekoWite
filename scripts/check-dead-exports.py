@@ -22,13 +22,14 @@ Types and interfaces are excluded: an exported type is a contract, and TypeScrip
 leaves no runtime caller to look for. Only `function` and arrow-function `const` are checked, and
 only from files that are not specs themselves.
 
-**It reports and never fails, and that is a decision rather than an oversight.** `check-reachability`
-and `check-channels` exit non-zero on their findings because those findings have a clean state (no
-broken specifier, no channel without a counterpart). This one does not: "exported so the spec can
-reach it" is a legitimate idiom, and the list has held around ninety names for as long as it has
-existed, so failing on a non-empty list would make the gate red on a healthy tree. `ci.yml` therefore
-runs it for its output — a crash still fails the step — and the ratchet question (a ceiling like the
-renderer's `--max-warnings 462`) is recorded in the audit ledger as a decision nobody has taken.
+**It can fail, on two things, and neither is "the list is non-empty".** A control that fails makes the
+run *blind* — the list is empty because the sweep is broken, and an empty list is exactly what a clean
+tree looks like — so that exits 1 instead of printing a warning nobody acts on. And the count has a
+ceiling ([`CEILING`], 89 when the ratchet was added): a change that adds an exported function nothing
+calls fails here, while one that removes them passes and lowers the ceiling in the same commit. Same
+shape as the renderer's `--max-warnings 462`. A ceiling rather than "empty" because most of the list is
+the legitimate "exported so the spec can reach it" idiom — `spec=0` on a row is what a genuinely
+uncalled export looks like, and that column is why the report is readable at all.
 """
 import re
 import sys
@@ -46,6 +47,12 @@ DECL = re.compile(
     r'|^export\s+const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:async\s+)?function\b',
     re.M,
 )
+
+
+# The ceiling the list is held to. It is the count this tree had when the ratchet was added, and its
+# only job is to make the next addition a decision: see the note beside the comparison at the end.
+# 2026-09-22: 89 of 1372 exported functions, measured with this script.
+CEILING = 89
 
 
 def main() -> int:
@@ -120,6 +127,31 @@ def main() -> int:
         print(f'  spec={tests:<2} {name:36} {p.relative_to(ROOT)}')
     print(f'  ({len(truly)} of {checked} exported functions; '
           f'{len(dead) - len(truly)} more are called inside their own file)')
+
+    # **A blind run is a failure, not a warning.** The controls above are the only thing that says the
+    # sweep is looking at the tree at all; when one of them fails, the list below it is empty because
+    # the sweep is broken, and an empty list is exactly what a clean tree looks like. Printing a
+    # warning and returning 0 made the one case that must never read as green read as green.
+    if blind:
+        print()
+        print('FAIL: a control failed, so this report is blind — fix the sweep before reading the list')
+        return 1
+
+    # **The ratchet.** The list is not empty and will not be emptied by decree; what a ceiling buys is
+    # that the next addition is a decision rather than an accident. A change that adds an exported
+    # function nothing calls fails here; one that removes them passes and lowers what the next ceiling
+    # can be. Same shape as the renderer's `--max-warnings 462`, and the same rule applies: when a
+    # commit lowers this number, lower it here in the same commit.
+    # 2026-09-22: 89 of 1372.
+    if len(truly) > CEILING:
+        print()
+        print(f'FAIL: {len(truly)} exported functions nothing calls, above the ceiling of {CEILING}. '
+              f'Delete the export, give it a caller, or raise CEILING in this file with the reason in '
+              f'the commit that raises it.')
+        return 1
+    if len(truly) < CEILING:
+        print(f'  ({CEILING - len(truly)} below CEILING = {CEILING}: lower it here, in this commit, '
+              f'to keep the ratchet where the tree is)')
     return 0
 
 

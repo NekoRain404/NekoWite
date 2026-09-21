@@ -106,8 +106,9 @@ step clippy "cargo clippy --all-targets --locked" \
 step instruments "the three source instruments" \
   bash -c 'status=0
     # All three run even when one fails, for the reason the whole gate does: the log is worth more
-    # than the first failure. Two of them exit non-zero on their findings; `check-dead-exports`
-    # reports and always exits 0 (see its docstring and ci.yml).
+    # than the first failure. Each exits non-zero on a finding that has a clean state — a specifier
+    # that resolves to nothing, a channel with no counterpart, a blind sweep or a count above the
+    # ceiling recorded in `check-dead-exports.py`.
     for instrument in check-reachability check-dead-exports check-channels; do
       echo "--- $instrument"
       python3 "scripts/$instrument.py" || status=1
