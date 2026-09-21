@@ -1,35 +1,109 @@
-# NekoWite Test Plan (execution, separate from docs/debug.md)
+# NekoWite 测试计划（执行面清单）
 
-> 执行用测试矩阵（与 `docs/debug.md` 的方法论互补：这里按功能域列出**要验证的用例** + 现有测试 + 缺口 + 修复）。AI 相关（AI/Chat/GhostWriter/模型请求）暂不执行。
-> 质量门禁：`pnpm -r typecheck` / `pnpm -r lint`（0 errors，warnings 不为 0，且不会让命令失败）/ `pnpm -r test` / `cargo test`（在 `apps/desktop/src-tauri` 下，或加 `--manifest-path`）/ `pnpm build` / `pnpm --filter @nekowite/desktop e2e`（不要直接调 playwright，它会和 app 抢 1420 端口）/ `pnpm perf`。
-> 权威清单是 `.github/workflows/ci.yml`：它还包含 `check:export-css`、`cargo clippy` 与 `cargo fmt --all --check`。
-> 修复后 ≥10 次循环验证。
+> 这份文档回答两件事：**仓库实际跑哪些测试、怎么跑**（§1），以及**每个功能域由哪些文件守着、哪里还没人守**（§2、§3）。
+> 权威是代码本身：合并门禁是 `.github/workflows/ci.yml`，本地等价的一条命令是 `bash scripts/gate.sh`。
+> 下面每个「已覆盖」都指向一个真实存在的文件；GAP / PARTIAL 的行写清缺的是哪一件事——状态栏空着不等于没问题，所以这里没有空格子。
 
-## 覆盖清单（用例 → 现有测试 → 状态）
-| 域 | 用例 | 现有测试 | 状态 |
-|---|---|---|---|
-| Vault | A1 打开/恢复/无效切换/截断提示 | vaultSession/fileTree/coordinator tests | |
-| 编辑器 | B1 三视图/键入/保存/关闭保存/单撤销 | app.spec, lifecycle.spec, editorPersistence | |
-| MDX | C1-C4 round-trip/unknown-JSX/math/边界 | editor-core mdx + roundtrip.test | |
-| 图片 | D1-D5 paste/drop→落盘→显示/属性面板/守卫/失败恢复 | useImagePasteDrop, attachments | |
-| 表格 | E1-E3 行列/剪贴板/列宽/往返 | table ops/clipboard tests | |
-| 搜索索引 | F1-F4 全文/增量/持久化/取消 | searchIndex + vaultIndexCoordinator | |
-| 图谱 | G1-G4 全量/解析/自动重建/过滤器 | linkGraph + GraphPanel | |
-| 插件 | H1-H4 授权前不执行/超时/审计路径/CSP | plugin-host trust/governance + security-regression | |
-| 安全 | I1-I3 vault 绑定/key mask/KDF/路径 | src-tauri tests | |
-| 持久化/窗口 | J1-J2 PersistencePort 版本迁移/窗 | persistence + windowState | |
-| 导出 | K1-K2 HTML/PDF | exportRenderers | |
-| 恢复/无障碍 | L1-L2 .tmp/未命名dirty/live-region/焦点 | recoveryClosedLoop + announcer | |
+## 1. 验证面
 
-## 已知重点复查（docs/debug.md §4）
-- runtime.dispose 是否真被调用（App unmount = lifecycle.unmount → disposeRuntime）
-- 编辑器销毁是否单所有权（destroy 只一次）
-- Vault 注册失败是否阻止切换
-- 资源泄漏：ProseMirror/DOM/Worker/AbortController/timer/listener
-- 图片 asset:// scope（_assets/.tmp）是否可显示
-- 安全：插件真隔离（架构级 P0 残留）、key 不出 URL/日志、vault 绑定、路径返回拒绝
+### 1.1 入口与它的边界
 
-## 执行方式
-1. 子代理审计：对 `docs/debug.md`（方法） + `docs/test-plan.md`（用例）核对现有测试，标 COVERED/PARTIAL/GAP + 找失败（=bug）。
-2. 子代理补缺口 + 修 bug（Q 驱动，先失败测试再修）。
-3. 全量循环验证 ≥10 次。
+| 入口 | 跑什么 |
+|---|---|
+| `bash scripts/gate.sh`（加 `--with-e2e` 才跑 Playwright） | 本地全量：`verify`、`fmt`、`clippy`（带 110 行告警上限）、`instruments`、`scripts`、`harness`、`build`、`rust`。每步都跑完再汇总，任一步失败则退出码 1 |
+| `pnpm verify` | `typecheck → lint → test → perf → build → check:export-css`（`package.json:19`）。**不含** e2e、cargo 测试、三个 instrument、两个 shell 套件与 harness 测试 |
+| `pnpm test` | `pnpm -r test`：三个 workspace 包各跑一次 vitest |
+| `pnpm --filter @nekowite/desktop e2e` | Playwright，经 `scripts/run-e2e.mjs` 先要一个空闲端口 |
+
+CI 分两个 job：`check` 跑 typecheck、lint、三个 instrument、两个 shell 套件、harness、test、perf、build、check:export-css、e2e；`rust` 跑 cargo test、build、clippy、fmt。
+
+### 1.2 四个 vitest 项目（各自独立一次 `vitest run`，没有 workspace 文件）
+
+| 配置 | include | 环境 |
+|---|---|---|
+| `apps/desktop/vite.config.ts:177` | `src/**/*.test.ts`、`../../docs/mdx-demo/__validation/**/*.test.ts` | happy-dom |
+| `apps/desktop/vitest.perf.config.ts:15` | `perf/**/*.test.ts` | happy-dom，超时 120s |
+| `packages/editor-core/vitest.config.ts` | `src/**/*.test.ts` | happy-dom |
+| `packages/plugin-host/vitest.config.ts` | `src/**/*.test.ts` | node |
+
+`references/` 不在 `pnpm-workspace.yaml` 里且被 `.gitignore:77` 忽略，不属于本仓库的测试面。`*.test.mjs` 也不属于上表任何一项——WebKit 量测 harness 的两个 `node:test` 文件由 `pnpm --filter @nekowite/desktop test:webkit-harness` 跑。
+
+### 1.3 Playwright
+
+46 个 spec、297 个用例（`npx playwright test --list` 实测）。`apps/desktop/playwright.config.ts` 的 `testDir` 是 `./e2e`，配置里的端口默认 1420。
+
+**用 `pnpm e2e`，不要直接调 playwright**：`scripts/run-e2e.mjs` 先向系统要一个空闲端口并把它交给配置，直接调用则用 1420——那是 `pnpm tauri dev` 自己占的端口，谁先起谁赢，后起的会把前一个的服务踢掉。CI 跑的是直接调用（`ci.yml:62`），因为 CI 里没有第二个进程抢这个端口。
+
+### 1.4 Rust
+
+76 个集成目标（`apps/desktop/src-tauri/tests/*.rs`）加单元测试。从仓库根：
+
+```bash
+NEKOWITE_REQUIRE_PROCESS_TESTS=1 cargo test --locked --no-fail-fast \
+  --manifest-path apps/desktop/src-tauri/Cargo.toml
+```
+
+`NEKOWITE_REQUIRE_PROCESS_TESTS=1` 把「需要真实进程、这台机器上跑不了」从跳过变成失败；本地不加它时那几条会静默跳过。只跑一个目标加 `--test <名字>`。
+
+### 1.5 三个 instrument 与三个非 vitest 套件
+
+| 命令 | 失败条件 |
+|---|---|
+| `python3 scripts/check-reachability.py` | 有 import 指向不存在的文件（先跑对照：扫描被人为弄瞎时必须报错） |
+| `python3 scripts/check-dead-exports.py` | 对照失明，或「没有任何调用点」的导出数超过文件里的 `CEILING`（现为 89） |
+| `python3 scripts/check-channels.py` | Rust 发出的事件在前端没有名字，或前端 `listen` 的事件没有发出点 |
+| `bash scripts/boot-probe.test.sh` | 45 条断言：启动探针的崩溃 / 早退 / 存活三条路径、取消语义、HOME 与六个 XDG/TMPDIR 的隔离（`xvfb-run`、`dbus-run-session`、`pkill` 都是 mock） |
+| `bash scripts/package-linux.test.sh` | 44 条断言：打包脚本的 6 个场景（缺件 / 陈旧 / 缺 portable / 校验失败 / 发布失败 / 成功），含「只 `exit 0` 的假 rpm 必须被拒绝、真 rpm 必须被选中」 |
+| `pnpm --filter @nekowite/desktop test:webkit-harness` | harness 自己的 5 个 `node:test` 用例：HiDPI 裁剪换算、探针「什么都没量到」的判定规则 |
+
+`pnpm perf` 单列：`vitest run --config vitest.perf.config.ts`，断言 `docs/PERF.md` 的预算。`check:export-css` 单列：`node scripts/check-katex.ts`，读 `dist/assets/*.js`，因此必须在 `pnpm build` 之后跑。
+
+## 2. 覆盖清单（功能域 → 真实测试 → 状态）
+
+| 域 | 真实测试 | 状态 |
+|---|---|---|
+| Vault 打开/切换/恢复 | `stores/vault-session.test.ts`、`app/app-bootstrap.test.ts`、`app/vault-switch-refused-save.test.ts`、`src-tauri/tests/vault_auth_test.rs`、`e2e/app.spec.ts` | COVERED |
+| 编辑器 三视图/保存/关闭保存 | `e2e/app.spec.ts`、`e2e/editor-input.spec.ts`、`e2e/save-roundtrip.spec.ts`、`e2e/lifecycle.spec.ts`、`features/editor/controller/editor-persistence.test.ts`、`app/close-requested-unsaved-keystroke.test.ts` | PARTIAL：单次撤销只按手势断言（表格操作、图片属性、任务列表），没有「一次键入 burst 或多行粘贴 = 一步撤销」的用例 |
+| MDX 往返/未知 JSX/边界 | `packages/editor-core/src/mdx/roundtrip.test.ts`、`mdx/byte-fidelity.test.ts`、`mdx/parse-resilience.test.ts`、`mdx/mdx-document.test.ts`、`docs/mdx-demo/__validation/validate.test.ts` | COVERED（含 fuzz：`editor-roundtrip-fuzz.test.ts`、`serialize-fuzz.test.ts`） |
+| 图片 粘贴/拖入/落盘/失败恢复 | `features/editor/composables/use-image-intake.test.ts`、`ui/EditorPane.imageIntake.test.ts`、`features/attachments/services/attachment-import.test.ts`、`attachment-paths.test.ts`、`e2e/image-insert.spec.ts`、`e2e/image-render.spec.ts`、`ui/ImagePanel.test.ts` | COVERED |
+| 表格 行列/剪贴板/列宽/往返 | `packages/editor-core/src/table/ops.test.ts`、`table/clipboard.test.ts`、`table/resize.test.ts`、`table/stringify.test.ts`、`table-clipboard-guard.test.ts`、`ui/TableMenu.test.ts`、`e2e/table-resize-handle.spec.ts` | COVERED |
+| 搜索索引 全文/增量/持久化/取消 | `features/search/index.test.ts`、`features/search/services/index-storage.test.ts`、`index-shard-store-race.test.ts`、`features/vault/services/index-persistence.test.ts`、`features/vault/services/vault-index.test.ts`、`services/content-search.test.ts` | COVERED |
+| 图谱 解析/重建/过滤器 | `services/link-graph.test.ts`、`features/graph/components/GraphPanel.test.ts`、`services/graph-layout-client.test.ts`、`e2e/usage-search-graph.spec.ts` | COVERED |
+| 插件 授权前不执行/超时/审计/CSP | `packages/plugin-host/src/runtime.test.ts`、`lifecycle.test.ts`、`trust.test.ts`、`governance.test.ts`、`services/security-regression.test.ts`、`services/plugins.test.ts`、`e2e/security-csp.spec.ts` | COVERED |
+| 安全 vault 绑定/Key 掩码/KDF/路径 | `src-tauri/tests/vault_auth_test.rs`、`keys_test.rs`、`key_vault_status_test.rs`、`fs_test/path_policy.rs`、`asset_scope_test.rs`、`services/security-regression.test.ts`、`services/paths.test.ts` | COVERED |
+| 持久化/窗口 | `platform/persistence/persistence.test.ts`、`stores/window-state.test.ts`、`app/window-state.test.ts`、`src-tauri/tests/main_window_test.rs` | PARTIAL：版本迁移与几何校验有测试；Rust 侧只断言窗口身份与重建，没有「保存的几何往返」用例 |
+| 导出 HTML/PDF | `services/export.test.ts`、`export-renderers.test.ts`、`export-page.test.ts`、`packages/editor-core/src/export/golden.test.ts` | PARTIAL：HTML 与渲染器有断言（含 golden 逐字节）；PDF 只测到打印 iframe 的生命周期，没有任何用例断言真的产出了 PDF |
+| 恢复/无障碍 | `app/recovery-closed-loop.test.ts`、`stores/tab-recovery.test.ts`、`stores/untitled-rescue.test.ts`、`services/announcer.test.ts`、`composables/use-focus-trap.test.ts`、`features/settings/components/SettingsPanel.focus.test.ts` | COVERED |
+
+## 3. 明确没人守的地方
+
+- **单次撤销的粒度**（编辑器）：见上表 PARTIAL。
+- **导出的一条完整路径**：`features/notes/composables/use-note-export.ts` 没有测试文件——从「导出」按钮到 `exportToPdf` 之间没有用例，而 PDF 本身也没有产出断言。
+- **窗口几何的 Rust 侧往返**：几何的 clamp 与持久化只在前端测过。
+- **`pnpm test:e2e` 是个陷阱**：它直接调 playwright（§1.3）。CI 用它没问题，本地在有 `pnpm tauri dev` 时用它会抢端口。
+
+以上都不是「大概没问题」，而是「没有证据」：写在这里是为了让下一个改动它的人知道自己在无人区。
+
+## 4. 需要人工复查的风险点
+
+自动化覆盖不到、需要人对着程序看一遍的：
+
+- 编辑器实例的销毁是否单所有权（`destroy` 只发生一次），`runtime.dispose` 是否在 App 卸载时真的被调用。
+- Vault 注册失败时是否阻止切换（有测试，但仍值得在真机上看一次提示是否可读）。
+- 资源泄漏：ProseMirror、DOM、Worker、AbortController、timer、listener。
+- 图片 `asset://` scope（`_assets/`、`.tmp/`）在真机上是否都能显示。
+- 安全边界：插件是否真的隔离（架构级残留）、Key 不出现在 URL 或日志、路径逃逸被拒。
+
+## 5. 怎么重新跑一遍
+
+```bash
+bash scripts/gate.sh --with-e2e     # 全量，本地的权威命令
+bash scripts/gate.sh --only verify  # 只跑 typecheck/lint/test/perf/build/export-css
+
+# 单个域（示例）
+pnpm --filter @nekowite/desktop exec vitest run features/search
+cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --test vault_auth_test
+pnpm --filter @nekowite/desktop exec playwright test e2e/image-insert.spec.ts
+```
+
+修 bug 的顺序按 `AGENTS.md`：先写一条能复现症状的失败测试，再改实现，最后跑 gate。早先写的「修复后循环验证 ≥10 次」是当时没有单一入口时的替代品——现在一次 `scripts/gate.sh` 就覆盖全部步骤，改完跑它，并把它打印的计数（而非退出码）当作读数。
