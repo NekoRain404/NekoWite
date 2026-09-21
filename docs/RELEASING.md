@@ -42,10 +42,20 @@ bash scripts/gate.sh --with-e2e
 `pnpm test`、`pnpm perf`、`pnpm --filter @nekowite/desktop build`、`… check:export-css`、
 `… exec playwright install --with-deps chromium`、`pnpm test:e2e`；`rust` job 是 `cargo test --locked`、
 `cargo build --locked`、`cargo clippy --all-targets --locked`、`cargo fmt --all --check`。
-两者合起来和 `scripts/gate.sh --with-e2e` 覆盖的范围相同，只有 e2e 的入口不同：root 的 `pnpm test:e2e`
-直接调 playwright（端口固定 1420），gate 里的 e2e 走 `pnpm e2e`，由 `scripts/run-e2e.mjs` 先要一个空闲端口。
+两者合起来和 `scripts/gate.sh --with-e2e` 覆盖的范围基本相同，但有两处**已知不同**，都来自 e2e：
+root 的 `pnpm test:e2e` 直接调 playwright（端口固定 1420），而 gate 里的 e2e 走 `pnpm e2e`，由
+`scripts/run-e2e.mjs` 先要一个空闲端口；另外 CI 的 `cargo test --locked` **没有**设
+`NEKOWITE_REQUIRE_PROCESS_TESTS=1`，因为 CI 不构建也不暂存应用与引擎（`scripts/gate.sh` 里那两步），
+所以需要真实进程的用例在 CI 上是跳过而不是失败——发布前请以 gate 的结果为准。
 **打包脚本自己只跑 desktop 的 test / typecheck / lint**（`scripts/package-linux.sh:35-39`），Rust 侧、
 instrument 与 e2e 都不在其中，所以先跑 §2 的命令，再打包。
+
+**一个必须说清楚的边界**：`verify` 与 `e2e` 里的浏览器测试跑在 Playwright 的 Chromium 上，
+而应用实际用的是 WebKitGTK（Linux）/ WebView2（Windows）。仓库自己的
+`apps/desktop/e2e/webkit/webdriver.mjs` 写明了 Playwright 的 `webkit` 是它自己的构建、不是 GTK 移植版。
+所以门禁全绿**不等于**「发货的那个引擎没问题」：真正测那个引擎的办法是
+`apps/desktop/e2e/webkit/` 这套 harness（`node e2e/webkit/measure.mjs --only <探针>`），
+它需要 WebKitWebDriver 与 MiniBrowser，是**手动**工具，不在门禁里。
 
 ## 3. 打包（Linux）
 
