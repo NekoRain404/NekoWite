@@ -99,12 +99,22 @@ def main() -> int:
     tauri_listen = re.compile(r"""import\s*\{[^}]*\blisten\b[^}]*\}\s*from\s*['"]@tauri-apps/api/event['"]""")
 
     listened: dict[str, set[str]] = {}
+    # A `listen` whose first argument is neither a literal nor a known `const`: the shared adapter,
+    # whose channel is its own parameter (`tauri-event-adapter.ts`'s `listen<T>(event, cb)`). Its
+    # callers pass real names and are checked on their own; reporting the wrapper's parameter as a
+    # channel nothing emits made this section's heading untrue, which is worse than a shorter list.
+    unresolvable: dict[str, set[str]] = {}
     for p, t in zip(front, front_text):
         if not tauri_listen.search(t):
             continue
         for m in re.finditer(r"""listen(?:<[^>]*>)?\s*\(\s*([A-Za-z_][A-Za-z0-9_]*|['"][^'"]+['"])""", t):
-            arg = m.group(1).strip('\'"')
-            listened.setdefault(ts_const.get(arg, arg), set()).add(str(p.relative_to(ROOT)))
+            raw = m.group(1)
+            arg = raw.strip('\'"')
+            name = arg if raw[0] in '\'"' else ts_const.get(arg)
+            if name is None:
+                unresolvable.setdefault(arg, set()).add(str(p.relative_to(ROOT)))
+                continue
+            listened.setdefault(name, set()).add(str(p.relative_to(ROOT)))
 
     rust_joined = '\n'.join(rs_text.values())
     print('=== listened for, but no Rust side emits it ===')
@@ -119,6 +129,12 @@ def main() -> int:
     for k in dead:
         print(f'  {k:40} {sorted(listened[k])[0]}')
     print(f'  ({len(dead)} of {len(listened)} listened channels)')
+
+    if unresolvable:
+        print('=== listening wrappers whose channel is their own argument (not a finding) ===')
+        for k in sorted(unresolvable):
+            print(f'  {k:40} {sorted(unresolvable[k])[0]}')
+        print('  (the callers of these pass the names checked above)')
     return 0
 
 
