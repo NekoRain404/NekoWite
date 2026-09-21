@@ -109,6 +109,11 @@ pub fn run() {
         .manage(open_file::PendingOpen::default())
         .manage(state::WatcherState::default())
         .manage(state::VaultRegistry::default())
+        // The images the image dialog has handed back this session. It is managed here for the same
+        // reason the vault registry is: `pick_image_files` mints into it and `import_attachment`
+        // spends from it, and the two commands are in different files — the state is what makes the
+        // pick the only thing that can authorise the import (finding S4).
+        .manage(commands::fs::PickedImages::default())
         .manage(state::AiState::default())
         .manage(state::KeyVault::default())
         // The agent subsystem's two handles: the engine definitions and the one

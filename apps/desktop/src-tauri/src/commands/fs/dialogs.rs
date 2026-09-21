@@ -14,6 +14,8 @@
 use crate::state::VaultRegistry;
 use crate::storage::file_store;
 
+use super::picked::PickedImages;
+
 #[tauri::command]
 pub async fn open_folder_dialog(
     app: tauri::AppHandle,
@@ -73,25 +75,39 @@ pub async fn save_file_dialog(
 /// (empty when the dialog was cancelled), filtered to the image extensions the
 /// import path accepts so an "All files" selection cannot smuggle a
 /// non-image into the vault.
+///
+/// **This is the only thing that mints an import grant**, and it does so for exactly the paths it
+/// is about to return: `import_attachment` copies a path the user chose here and refuses every
+/// other one (finding S4 in `docs/audits/2026-09-21-code-review.md` — see `picked.rs` for why the
+/// grant is a set of paths rather than a token beside each one).
 #[tauri::command(rename_all = "snake_case")]
-pub async fn pick_image_files(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+pub async fn pick_image_files(
+    app: tauri::AppHandle,
+    picked: tauri::State<'_, PickedImages>,
+) -> Result<Vec<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     use tauri_plugin_dialog::FilePath;
-    let picked = app
+    let chosen = app
         .dialog()
         .file()
         .add_filter("Images", file_store::IMPORT_IMAGE_EXTENSIONS)
         .blocking_pick_files();
-    let Some(paths) = picked else {
+    let Some(paths) = chosen else {
         return Ok(Vec::new());
     };
-    Ok(paths
+    let paths: Vec<std::path::PathBuf> = paths
         .into_iter()
         .filter_map(|p| match p {
             FilePath::Path(p) => Some(p),
             _ => None,
         })
         .filter(|p| file_store::is_importable_image(p))
+        .collect();
+    // Minted before the answer is built, and from the same vector: a path this command returned but
+    // did not grant would be an import the user asked for and the backend refused.
+    picked.mint(paths.iter().cloned());
+    Ok(paths
+        .into_iter()
         .map(|p| p.to_string_lossy().to_string())
         .collect())
 }

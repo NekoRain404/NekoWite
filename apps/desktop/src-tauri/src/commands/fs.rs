@@ -80,6 +80,7 @@ mod children {
     pub(super) mod dialogs;
     pub(super) mod files;
     pub(super) mod media;
+    pub(super) mod picked;
     pub(super) mod vaults;
     pub(super) mod watch;
 }
@@ -119,6 +120,14 @@ pub use children::media::{
     __cmd__resolve_media_path, __tauri_command_name_resolve_media_path, asset_media_grant,
     authorized_media_grant, resolve_media_path,
 };
+// The picker's grant table is state, not a command: `lib.rs` manages it, the dialog mints into it
+// and the import spends it. Re-exported for the same reason the commands are — it is part of this
+// module's surface, and a test target reaches it as `commands::fs::PickedImages`.
+//
+// `allow(unused_imports)` for the neighbours' reason: a target that `#[path]`-includes this tree
+// compiles the state in without managing or naming it.
+#[allow(unused_imports)]
+pub use children::picked::PickedImages;
 #[allow(unused_imports)]
 pub use children::vaults::{
     __cmd__register_vault, __tauri_command_name_register_vault, register_vault,

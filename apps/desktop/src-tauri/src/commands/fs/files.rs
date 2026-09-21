@@ -17,6 +17,8 @@ use crate::state::{require_opened_vault, VaultRegistry};
 use crate::storage::file_store::{self, FileEntry, FileStat};
 use crate::storage::trash_store;
 
+use super::picked::PickedImages;
+
 // The frontend gateway invokes every command with snake_case argument names
 // (`vault_root`, `max_history`, `trash_path`, `default_name`, `start_dir`),
 // while the default `#[tauri::command]` expects camelCase — hence
@@ -133,13 +135,31 @@ pub async fn rename_entry(
 /// Copy a user-picked image into the vault's assets directory and return its
 /// vault-relative path. The bytes move backend-side (no base64 IPC hop) and the
 /// destination is still confined to the opened vault.
+///
+/// **"User-picked" is enforced here, not assumed.** The source path is deliberately outside the
+/// vault — a picker exists so a file can come from anywhere — so nothing about the *destination*
+/// confinement says anything about the source. What makes this call legitimate is that the user
+/// chose this exact path in the image dialog a moment ago, which is what [`PickedImages::release`]
+/// answers; without it, any window that can invoke this command could name a path of its own and
+/// read the copy back through the asset protocol (finding S4 in
+/// `docs/audits/2026-09-21-code-review.md`).
 #[tauri::command(rename_all = "snake_case")]
 pub async fn import_attachment(
     vault: String,
     source_path: String,
     dir: String,
     state: tauri::State<'_, VaultRegistry>,
+    picked: tauri::State<'_, PickedImages>,
 ) -> Result<String, String> {
     require_opened_vault(&state, &vault)?;
+    // Spent before the copy, so a failure of the copy does not leave a usable grant behind: the
+    // user picks again, which is one click, and the rule stays one-shot.
+    if !picked.release(std::path::Path::new(&source_path)) {
+        return Err(format!(
+            "refusing to import an image this session did not pick: {source_path}. \
+             The backend only copies a file the user chose in the image dialog. \
+             Use \"Insert image\" to choose it again."
+        ));
+    }
     file_store::import_attachment(&vault, &source_path, &dir)
 }
