@@ -15,17 +15,23 @@ that shows it, so that you can check it again in six months when it may no longe
 ### 1.1 Pull first, do not rebuild
 
 Ten commits of application work were made and pushed to `origin/main` on 2026-09-21
-(`9393e0b` through `e326a8b`), followed by two commits that add this document and the audit it is
-built on (`a5d50c7`, `82ef853`). So twelve, and the tip should be `82ef853`:
+(`9393e0b` through `e326a8b`), followed by the commits that add this document and the audit it is
+built on. All of it is on `origin/main`.
+
+**This paragraph deliberately does not quote a commit hash.** An earlier revision did, and it was
+stale within one commit — which is the same failure this whole document is about, so it is worth
+leaving visible. The check that does not rot is to ask whether the range is present and whether your
+working copy agrees with the remote:
 
 ```bash
 git fetch origin
-git log --oneline -12 origin/main     # 9393e0b .. 82ef853, all dated 2026-09-21
-git rev-parse HEAD origin/main        # both should print 82ef853b6e383a2266e68c3813be3a6bcd83debd
+git log --oneline --reverse 9393e0b^..origin/main   # starts at 9393e0b and ends at the tip
+git log --oneline origin/main -- docs/HANDOVER.md   # the commit that added this file must be listed
+git rev-parse HEAD origin/main                       # these two must agree
 ```
 
-If `HEAD` is not that commit, you are reading a checkout that predates this document — the file
-would not be here at all if it did, so this is a check on your remote, not on the file.
+If the second command prints nothing, you are reading a checkout that predates this document. If the
+third prints two different hashes, you are behind the remote — pull before you build.
 
 CI (`.github/workflows/ci.yml`) runs on every push. Its `check` job and `rust` job are the two
 things that decide whether that commit is sound.
