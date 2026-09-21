@@ -23,9 +23,9 @@ exports are part of the contract too (they are erased at runtime, but still carr
 
 > **What that test does and does not prove (2026-09-22).** It is a list, not a snapshot: adding
 > an export does not fail it, and an export that is *not* on the list can be deleted with the
-> test still green. That gap was real — the barrel exports 101 names, the list required 46, and
-> **11 names the table below calls public were on neither**, including the whole signature
-> family and the governance serialize/load pair. They are on the list now, so the sentence
+> test still green. That gap was real — the barrel re-exports 74 runtime values, the list
+> required 46, and **11 names the table below calls public were on neither**, including the
+> whole signature family and the governance serialize/load pair. They are on the list now, so the sentence
 > above is true of every name this document promises; keeping it true means adding a name here
 > when this document adds one there.
 
