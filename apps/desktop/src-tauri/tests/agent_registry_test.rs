@@ -633,24 +633,24 @@ fn a_credential_cannot_move_the_roots_the_engine_was_isolated_into() {
     let env = adapters::opencode::bundled_registration("/opt/nekowite/opencode".into())
         .launch(root, &credentials)
         .env;
-    let effective = |name: &str| {
+    let effective = |env: &[(String, Secret)], name: &str| {
         env.iter()
             .rfind(|(variable, _)| variable == name)
             .map(|(_, value)| value.expose().to_string())
     };
 
     assert_eq!(
-        effective("HOME").as_deref(),
+        effective(&env, "HOME").as_deref(),
         Some(root.join("HOME").to_string_lossy().as_ref()),
         "a credential moved the engine's HOME: {env:?}"
     );
     assert_eq!(
-        effective("XDG_CONFIG_HOME").as_deref(),
+        effective(&env, "XDG_CONFIG_HOME").as_deref(),
         Some(root.join("XDG_CONFIG_HOME").to_string_lossy().as_ref()),
         "a credential moved the engine's configuration root: {env:?}"
     );
     assert_eq!(
-        effective("OPENCODE_CONFIG_DIR").as_deref(),
+        effective(&env, "OPENCODE_CONFIG_DIR").as_deref(),
         Some(
             root.join("XDG_CONFIG_HOME/opencode")
                 .to_string_lossy()
@@ -660,8 +660,38 @@ fn a_credential_cannot_move_the_roots_the_engine_was_isolated_into() {
          the one `environment.rs` measured the consent gate depending on: {env:?}"
     );
     assert_eq!(
-        effective("ANTHROPIC_API_KEY").as_deref(),
+        effective(&env, "ANTHROPIC_API_KEY").as_deref(),
         Some("sk-ant-oat01-not-a-real-key"),
         "the profile's own credential must still reach the engine: {env:?}"
+    );
+
+    // **And the affordance the other way round, which is why the fix is a filter and not an
+    // order.** `environment.rs` says it builds the isolation entries for `env_extra` to be able to
+    // override deliberately — that vector is the *host's* text, written where the engine's adapter
+    // is, not a field the renderer fills. Putting the roots last (the first version of this fix)
+    // silently took that away; removing the credential's copy of a name takes nothing from the
+    // definition.
+    let mut with_definition =
+        adapters::opencode::bundled_registration("/opt/nekowite/opencode".into());
+    assert!(
+        env.iter().any(|(name, _)| name == "OPENCODE_DB"),
+        "the isolation list has to name the root this asserts about: {env:?}"
+    );
+    with_definition.env_extra.push((
+        "OPENCODE_DB".to_string(),
+        "/shared/one-database".to_string(),
+    ));
+    let with_definition = with_definition.launch(root, &credentials).env;
+    assert_eq!(
+        effective(&with_definition, "OPENCODE_DB").as_deref(),
+        Some("/shared/one-database"),
+        "a registration's own variable must still be able to name a root deliberately: \
+         {with_definition:?}"
+    );
+    // …and the credential's copy of that same root is still dropped, in the same run.
+    assert_eq!(
+        effective(&with_definition, "HOME").as_deref(),
+        Some(root.join("HOME").to_string_lossy().as_ref()),
+        "{with_definition:?}"
     );
 }

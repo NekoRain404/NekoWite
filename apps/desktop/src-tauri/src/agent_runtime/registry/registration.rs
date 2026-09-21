@@ -155,32 +155,43 @@ impl AgentRegistration {
     /// otherwise), which is what makes injecting them *this* engine's credentials rather than a
     /// copy between engines.
     ///
-    /// **The order of the three groups is the guarantee, and it used to be wrong.** A credential
-    /// went last, so the value a user typed for this profile beat everything — including the roots
-    /// the host isolates the engine into. `environment.rs` records as *measured* that a mis-set
-    /// `OPENCODE_CONFIG_DIR` stops this app's shipped permission block from being applied: the
-    /// consent gate, turned off from a text field the renderer can write (finding S5 in
-    /// `docs/audits/2026-09-21-code-review.md`). The order is now:
+    /// **What a credential may not do is move a root the host set**, and the way that is enforced
+    /// here is a *filter*, not a position — because the three constraints cannot all be met by an
+    /// order:
     ///
-    /// 1. the definition's own variables (`env_extra`),
-    /// 2. the profile's credentials — the intent the old order was for, and it still holds: the
-    ///    definition is shared by every profile of one agent, and the profile is not,
-    /// 3. the isolation roots, applied **last**, so nothing reachable from the credentials surface
-    ///    can move the engine's `HOME`, its `XDG_*` roots or the names in its own namespace.
+    /// 1. the definition's `env_extra` may deliberately override an isolation root, and
+    ///    `environment.rs` says so where it builds them ("they come last, so nothing above can
+    ///    outrank them and `AgentRegistration::env_extra` can still put one back deliberately");
+    /// 2. a credential must beat the definition — the profile is not shared and the definition is;
+    /// 3. a credential must not beat an isolation root.
     ///
-    /// Step 3 is the half that does not depend on knowing every name; `credentials::reserved_name`
-    /// is the half that refuses the ones that are not about the engine's identity at all, and it is
-    /// where the user is told why.
+    /// One list cannot satisfy 1 < 2 < 3 < 1, so the cycle is broken where the *user's* text enters:
+    /// the roots go first, the definition may override them, and the credentials are appended with
+    /// the names the host has already decided **removed**. `credentials::reserved_name` is the other
+    /// half and the one the user meets: it refuses such a name when it is typed, with the reason.
+    /// This filter is what holds for a value that was stored before that rule existed, and for one a
+    /// future isolation list grows a name for.
     ///
     /// Also what a diagnostic prints — and now that is safe: every value is a [`Secret`], so this
     /// struct's derived `Debug` prints names and `<redacted>`, while a caller that has to show a
     /// variable's value does it through [`redacted_env`].
     pub fn launch(&self, managed_root: &Path, credentials: &Credentials) -> EngineLaunch {
-        let mut env: Vec<(String, Secret)> = env_pairs(self.env_extra.iter().cloned());
-        env.extend(credentials.launch_pairs());
-        if let EnvPolicy::ProfileIsolated = self.env {
-            env.extend(env_pairs(isolated_profile_env(managed_root)));
-        }
+        let isolation = match self.env {
+            EnvPolicy::ProfileIsolated => isolated_profile_env(managed_root),
+            EnvPolicy::UserEnvironment => Vec::new(),
+        };
+        // The roots first, then the registration's own variables, so an explicit setting still wins
+        // over the policy's default root — the affordance that made this an order in the first
+        // place.
+        let mut env: Vec<(String, Secret)> = env_pairs(isolation.iter().cloned());
+        env.extend(env_pairs(self.env_extra.iter().cloned()));
+        let decided: Vec<&str> = isolation.iter().map(|(name, _)| name.as_str()).collect();
+        env.extend(
+            credentials
+                .launch_pairs()
+                .into_iter()
+                .filter(|(name, _)| !decided.contains(&name.as_str())),
+        );
         EngineLaunch {
             program: self.program.clone(),
             args: self.args.clone(),
