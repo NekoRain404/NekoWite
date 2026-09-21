@@ -14,20 +14,32 @@ that shows it, so that you can check it again in six months when it may no longe
 
 ### 1.1 Pull first, do not rebuild
 
-Ten commits were made and pushed to `origin/main` on 2026-09-21 (`9393e0b` through `e326a8b`). The
-tree you have been handed and `origin/main` are the same commit:
+Ten commits of application work were made and pushed to `origin/main` on 2026-09-21
+(`9393e0b` through `e326a8b`), followed by two commits that add this document and the audit it is
+built on (`a5d50c7`, `82ef853`). So twelve, and the tip should be `82ef853`:
 
 ```bash
 git fetch origin
-git log --oneline -10 origin/main     # 9393e0b .. e326a8b, all dated 2026-09-21
-git rev-parse HEAD origin/main        # both must print e326a8ba7a0c9f9ac31510b075a87f8d2be56f46
+git log --oneline -12 origin/main     # 9393e0b .. 82ef853, all dated 2026-09-21
+git rev-parse HEAD origin/main        # both should print 82ef853b6e383a2266e68c3813be3a6bcd83debd
 ```
 
+If `HEAD` is not that commit, you are reading a checkout that predates this document — the file
+would not be here at all if it did, so this is a check on your remote, not on the file.
+
 CI (`.github/workflows/ci.yml`) runs on every push. Its `check` job and `rust` job are the two
-things that decide whether that commit is sound; they were run by hand before the push and are
-described in §4. **Do not re-package.** `release/` already holds a complete, verified set of
-artefacts built from this source tree (§4.5), and rebuilding without a reason is how you end up
-with a bundle that does not match the source you are reading.
+things that decide whether that commit is sound.
+
+**What to expect from the tip, stated as a prediction rather than an observation** — CI itself has
+not been watched: the `rust` job should **fail**, because `cargo test --locked` is its first step and
+that is the red case in §9.1; and the `check` job should pass, because every one of its steps was run
+by hand on this tree and is recorded with its result in §4.5. That failure was known and written down
+before the push rather than discovered by it — it is the first item in the work list (§9.1, §9.1a),
+and §9.1a is the reason it matters more than one test.
+
+**Do not re-package.** `release/` already holds a complete, verified set of artefacts built from this
+source tree (§4.4), and rebuilding without a reason is how you end up with a bundle that does not
+match the source you are reading.
 
 ### 1.2 Prerequisites
 
