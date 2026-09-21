@@ -194,14 +194,48 @@ function buildGovernancePayload(): GovernanceFilePayload {
 
 /** Debounced, async persistence of the governance state to the MAC file. Fire-and-
  *  forget; a missing/incomplete fs is a silent no-op (state still lives in memory
- *  for the session). */
+ *  for the session).
+ *
+ *  The write itself is guarded in [`writeGovernanceFromMemory`], which is where the
+ *  reason lives; this function only owns the debounce. */
 export function scheduleGovernanceSave(): void {
   if (!currentVault) return
   if (governanceSaveTimer) clearTimeout(governanceSaveTimer)
   governanceSaveTimer = setTimeout(() => {
     governanceSaveTimer = null
-    if (currentVault) void writeGovernanceFile(currentVault, buildGovernancePayload())
+    const vault = currentVault
+    if (vault) void writeGovernanceFromMemory(vault)
   }, GOVERNANCE_SAVE_DEBOUNCE_MS)
+}
+
+/**
+ * The debounced write, refused on the two states that are not ours to overwrite.
+ *
+ * After [`loadGovernanceFile`], the in-memory records ARE the file's records plus
+ * this session's mutations — so writing them back is a read-modify-write and not an
+ * erasure, which is the property the old fire-and-forget write relied on and never
+ * checked. What it assumes is that the file is *still* the one that was loaded, and
+ * the two states that break that assumption are exactly the two the reader refuses:
+ * a MAC that no longer verifies, and content that is not a MAC envelope at all.
+ * Neither may be clobbered — the reader's own contract says so for `not-ours`
+ * ("never clobber it: a stale or mismatched read"), and overwriting a tampered file
+ * is how the attacker's version becomes the trusted one on the next read — so the
+ * write is skipped instead. Reading first is what makes that check current rather
+ * than a statement about load time.
+ *
+ * It is skipped **silently**, and that is a deliberate limit rather than an
+ * oversight: this path has no caller to answer (it is a debounced effect of
+ * mutations whose own callers were answered already), and the state it failed to
+ * persist is exactly what the settings panel's next read reports as `tampered` or
+ * `unreadable`. A notice invented here would have no context to name.
+ *
+ * `absent` is not a refusal: a vault with no file yet is a first run, and writing
+ * one is what creates it.
+ */
+async function writeGovernanceFromMemory(vault: string): Promise<void> {
+  const read = await readGovernanceFile(vault)
+  if (read.kind === 'tampered' || read.kind === 'not-ours') return
+  await writeGovernanceFile(vault, buildGovernancePayload())
 }
 
 /**
@@ -304,8 +338,9 @@ export async function refreshDisabledPlugins(vault: string): Promise<DisabledPlu
   }
 }
 
-/** The vault's answer for the on/off switch. Three outcomes, because the user's
- *  next move differs for each: nothing to do, fix the file, or try again. */
+/** The vault's answer for the on/off switch. Four outcomes, because the user's
+ *  next move differs for each: nothing to do, fix the file, leave it alone, or
+ *  try again. */
 export type GovernanceSaveResult =
   /** The file now holds the set we asked it to hold. */
   | 'saved'
@@ -313,6 +348,10 @@ export type GovernanceSaveResult =
    *  overwriting an unverifiable governance file is how an attacker's version
    *  becomes the trusted one on the next read. */
   | 'tampered'
+  /** The file is not a MAC envelope this app wrote — someone else's file, or a
+   *  stale read — so nothing was written either. Same rule as `tampered` and a
+   *  different sentence: the remedy is to leave it alone, not to fix it. */
+  | 'unreadable'
   /** The write did not land (or could not be confirmed), so the decision lives
    *  only in memory and is gone after a restart. */
   | 'failed'
@@ -341,6 +380,11 @@ export async function persistDisabledPlugins(
   try {
     const read = await readGovernanceFile(vault)
     if (read.kind === 'tampered') return 'tampered'
+    // Not a MAC envelope at all: someone else's file, or a stale read. The reader's own contract
+    // says never to clobber it, and the old code did exactly that — it fell through to a fresh
+    // payload and wrote over whatever was there, which for a user file at this path is data loss
+    // and for a mismatched read is a file rewrites state it never read.
+    if (read.kind === 'not-ours') return 'unreadable'
     let payload: GovernanceFilePayload | null = null
     if (read.kind === 'ok') {
       try {

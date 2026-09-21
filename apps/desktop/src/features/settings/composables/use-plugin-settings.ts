@@ -115,6 +115,10 @@ export function usePluginSettings(): PluginSettingsModel {
     }
     if (outcome.saved === 'tampered') {
       notifyError(t('settings.plugins.toggleTampered'))
+    } else if (outcome.saved === 'unreadable') {
+      // Not "changed outside the app" and not "could not be written": the file is somebody
+      // else's, and the app deliberately left it exactly as it was.
+      notifyError(t('settings.plugins.toggleForeignFile'))
     } else if (outcome.saved === 'failed') {
       notifyError(t('settings.plugins.toggleNotSaved'))
     }

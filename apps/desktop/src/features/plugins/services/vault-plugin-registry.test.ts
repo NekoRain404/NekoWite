@@ -254,6 +254,27 @@ describe('switching a plugin back on', () => {
     expect(isVaultPluginDisabled(ID)).toBe(true)
   })
 
+  it('keeps the plugin off when the file is not one this app wrote', async () => {
+    // The other state the reader refuses, and it gets its own sentence: a file that is not a MAC
+    // envelope is not "changed outside the app" (there is nothing of ours to change), it is
+    // somebody else's — so the remedy is to leave it alone rather than to fix or remove it.
+    const foreign = '{"note":"not a governance envelope"}\n'
+    fsMock.files.set(fsKey(PLUGIN_GOVERNANCE_FILE), foreign)
+
+    const reload = vi.fn<(vault: string) => Promise<void>>(async () => undefined)
+    const outcome = await setVaultPluginDisabled(ID, false, { vault: VAULT, reload })
+
+    expect(outcome).toEqual({
+      disabled: true,
+      refused:
+        "the library's plugin state file is not one this app wrote, so nothing was written",
+      saved: 'unreadable',
+    })
+    expect(reload).not.toHaveBeenCalled()
+    // And the file is untouched, byte for byte: the write that used to happen here is the bug.
+    expect(fsMock.files.get(fsKey(PLUGIN_GOVERNANCE_FILE))).toBe(foreign)
+  })
+
   it('keeps the plugin off when the file could not be verified', async () => {
     await seedGovernanceFile({ disabled: [ID] })
     await setVaultPluginDisabled(ID, true, { vault: VAULT })

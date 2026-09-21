@@ -159,9 +159,13 @@ export interface VaultPluginToggleOutcome {
  *  reason verbatim, and the two cases have different remedies: one is a write
  *  that did not land, the other is a file someone else has changed. */
 function unwrittenReason(result: Exclude<GovernanceSaveResult, 'saved'>): string {
-  return result === 'tampered'
-    ? "the library's plugin state file was changed outside the app, so nothing was written"
-    : "the library's plugin state file could not be written"
+  if (result === 'tampered') {
+    return "the library's plugin state file was changed outside the app, so nothing was written"
+  }
+  if (result === 'unreadable') {
+    return "the library's plugin state file is not one this app wrote, so nothing was written"
+  }
+  return "the library's plugin state file could not be written"
 }
 
 export async function setVaultPluginDisabled(
