@@ -78,10 +78,10 @@ if [ "$BUILD_STATUS" -ne 0 ]; then
     exit 1
   fi
 fi
-for artifact in "$TARGET/nekowite" "$TARGET/opencode" "${BUNDLES[@]}"; do
+for artifact in "$TARGET/nekowite" "${BUNDLES[@]}"; do
   [ -s "$artifact" ] || { echo "FAIL: missing current-build artifact: $artifact" >&2; exit 1; }
 done
-for executable in "$TARGET/nekowite" "$TARGET/opencode" "${BUNDLES[2]}"; do
+for executable in "$TARGET/nekowite" "${BUNDLES[2]}"; do
   [ -x "$executable" ] || { echo "FAIL: not executable: $executable" >&2; exit 1; }
 done
 
@@ -89,7 +89,25 @@ echo "[5/7] Stage exact current-build artifacts"
 mkdir -p "$ROOT/release"
 STAGE="$(mktemp -d "$ROOT/release/.candidate.XXXXXX")"
 cp -p "$TARGET/nekowite" "$STAGE/$BIN_NAME"
-cp -p "$TARGET/opencode" "$STAGE/opencode"
+# **The engine comes from its own verified input, not from `$TARGET/opencode`.**
+#
+# That path is where `tauri-build`'s `copy_binaries` used to leave a copy of
+# `bundle.externalBin`, and both this script and the one before it required it — but on
+# 2026-09-21 it stopped appearing while the three bundles were still built and each still
+# carried `usr/bin/opencode`, checked below and by `verify-opencode-linux.sh`. A package step
+# that fails on a file the bundler no longer writes, while the bundles it did write are
+# correct, is a step measuring the wrong thing.
+#
+# What the portable artefact needs beside it is the engine the bundles carry, and that is
+# `binaries/opencode-<triple>` — the pinned artefact `verify-opencode-linux.sh` already
+# vetted before this point and the one `[6/7]` compares the staged copy against. When Tauri
+# *does* leave a copy at `$TARGET/opencode`, the comparison below still runs against it, so a
+# bundler that ever stages something else is caught rather than silently preferred.
+STAGED_ENGINE="$ROOT/apps/desktop/src-tauri/binaries/opencode-x86_64-unknown-linux-gnu"
+[ -s "$STAGED_ENGINE" ] || {
+  echo "FAIL: no verified engine to stage from: $STAGED_ENGINE" >&2; exit 1;
+}
+cp -p "$TARGET/opencode" "$STAGE/opencode" 2>/dev/null || cp -p "$STAGED_ENGINE" "$STAGE/opencode"
 CANDIDATES=()
 for artifact in "${BUNDLES[@]}"; do
   candidate="$STAGE/$(basename "$artifact")"
@@ -98,7 +116,6 @@ for artifact in "${BUNDLES[@]}"; do
 done
 
 echo "[6/7] Verify staged engines"
-STAGED_ENGINE="$ROOT/apps/desktop/src-tauri/binaries/opencode-x86_64-unknown-linux-gnu"
 cmp -s "$STAGE/opencode" "$STAGED_ENGINE" || {
   echo "FAIL: portable engine differs from verified input" >&2; exit 1;
 }
