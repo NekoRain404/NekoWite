@@ -46,6 +46,39 @@ impl VaultFiles for RealVault {
     }
 }
 
+/// The port's second answer: the text landed, and the history snapshot around it did not.
+///
+/// It writes nothing, because the subject it serves is the host's **copy** of the port's answer —
+/// the write itself is the subject of the cases above, and those use the app's real path for it.
+/// `RealVault` cannot produce this answer on demand: `write_file` reports a snapshot failure only
+/// when the note's own history directory refuses one, which is a condition of that function's, not
+/// something a test can stage from here.
+struct SnapshotlessVault {
+    warning: &'static str,
+}
+
+impl VaultFiles for SnapshotlessVault {
+    fn frontend_path(&self, _vault_root: &str, _path: &str) -> Result<String, String> {
+        // The read direction is the only caller of this (`note_by_path`), and no case here sends a
+        // read. A refusal rather than a panic so a future read request fails as a refusal to serve
+        // rather than as a crash inside the dispatcher.
+        Err("this port serves the write direction only".to_string())
+    }
+    fn read(&self, _vault_root: &str, _path: &str) -> Result<String, String> {
+        // The baseline read: refusing it is "the file did not exist", which is what the dedicated
+        // write direction does with a read it cannot serve (`files.read(...).ok()`).
+        Err("no such file".to_string())
+    }
+    fn write(
+        &self,
+        _vault_root: &str,
+        _path: &str,
+        _content: &str,
+    ) -> Result<Option<String>, String> {
+        Ok(Some(self.warning.to_string()))
+    }
+}
+
 /// The window side, for the tests in this file that are not about reads: no window is
 /// registered for any vault, so a read is refused rather than served from disk. What a read
 /// serves is `agent_live_note_test.rs`'s subject, and this file says only that a host with no
@@ -108,6 +141,20 @@ fn read_request(path: &Path, line: Option<u32>, limit: Option<u32>) -> String {
 /// makes the vault the root every request is confined to — the engine's request
 /// names a path but never a vault.
 async fn start(vault: &Path, capture: &Path, fs_request: Option<String>) -> AgentRuntime {
+    start_with(vault, capture, fs_request, Arc::new(RealVault)).await
+}
+
+/// The same fixture engine, with the file port named by the caller.
+///
+/// The port is a parameter for the one case that has to read back a warning the real write path
+/// produces only when the note's own history directory refuses a snapshot: a condition this file
+/// cannot stage, and one whose production is `save_store`'s subject rather than this host's.
+async fn start_with(
+    vault: &Path,
+    capture: &Path,
+    fs_request: Option<String>,
+    files: Arc<dyn VaultFiles>,
+) -> AgentRuntime {
     let mut env = vec![(
         "NWK_FAKE_CAPTURE".to_string(),
         capture.to_string_lossy().into_owned(),
@@ -135,7 +182,7 @@ async fn start(vault: &Path, capture: &Path, fs_request: Option<String>) -> Agen
         identity(),
         connection,
         events,
-        Arc::new(RealVault),
+        files,
         LiveNotes::new(Arc::new(LiveNoteTable::new()), Arc::new(NoWindow)),
     );
     runtime.initialize().await.expect("initialize");
@@ -271,6 +318,11 @@ async fn an_engine_write_lands_through_the_apps_own_write_path() {
         "the file did not exist, so there is no baseline to claim"
     );
     assert!(!changes[0].result_hash.is_empty());
+    assert!(
+        changes[0].warning.is_none(),
+        "a creation has no previous version, so there was no snapshot to fail and nothing for the \
+         record to report"
+    );
     runtime.shutdown();
 }
 
@@ -297,6 +349,49 @@ async fn the_baseline_is_the_bytes_the_write_replaced() {
         "a replacement must not hash the same as what it replaced"
     );
     assert_eq!(fs::read_to_string(&note).expect("content"), "HELLO");
+    runtime.shutdown();
+}
+
+#[tokio::test]
+async fn the_record_keeps_the_ports_word_about_a_snapshot_that_did_not_land() {
+    // Finding F9 in `docs/audits/2026-09-21-code-review.md`: the warning was received and thrown
+    // away at the destructuring, so a write that landed without a history snapshot was
+    // indistinguishable from one that landed with it. What the port said is now the record's.
+    let vault = temp_dir("warning");
+    let capture = vault.join("capture");
+    let note = vault.join("note.md");
+    const SNAPSHOT_WARNING: &str = "Saved, but the previous version could not be kept in history: \
+                                    the history directory is read-only";
+
+    let runtime = start_with(
+        &vault,
+        &capture,
+        Some(write_request(&note)),
+        Arc::new(SnapshotlessVault {
+            warning: SNAPSHOT_WARNING,
+        }),
+    )
+    .await;
+
+    // The reply, not the record, is what says the write is over: this port writes no file, so
+    // there is no filesystem event to wait on at all.
+    assert!(
+        wait_for(|| !reply(&capture).is_empty()).await,
+        "the engine must be answered, one way or the other; captured: {:?}",
+        captured(&capture)
+    );
+
+    let changes = runtime.changes();
+    assert_eq!(changes.len(), 1, "one delegated write, one record");
+    assert_eq!(
+        changes[0].warning.as_deref(),
+        Some(SNAPSHOT_WARNING),
+        "the sentence the port answered with must travel on the change it is about; a record that \
+         drops it claims a history the app does not have"
+    );
+    // A creation, so the baseline is absent for its own reason and not because the warning
+    // replaced it: the two facts are separate fields precisely so this stays readable.
+    assert!(changes[0].baseline_hash.is_none());
     runtime.shutdown();
 }
 

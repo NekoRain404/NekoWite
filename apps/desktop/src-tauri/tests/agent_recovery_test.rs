@@ -83,6 +83,10 @@ fn temp_vault(label: &str) -> PathBuf {
 
 /// One agent write, as the host records it after performing it: `fs_capability`'s own shape,
 /// with the baseline hash `None` for a file that did not exist.
+///
+/// `warning` is `None` throughout this file on purpose: the subject here is what a recovery does
+/// with the baseline, and the port's sentence about a history snapshot that could not be kept is
+/// what `agent_fs_capability_test.rs` reads off the record.
 fn change(vault: &Path, path: &str, baseline: Option<&str>, result: &str) -> ChangeRecord {
     ChangeRecord {
         session_id: "ses_recovery_1".to_string(),
@@ -92,6 +96,7 @@ fn change(vault: &Path, path: &str, baseline: Option<&str>, result: &str) -> Cha
         result_hash: sha256(result),
         source: "agent",
         at: "2026-09-16T00:00:00Z".to_string(),
+        warning: None,
     }
 }
 

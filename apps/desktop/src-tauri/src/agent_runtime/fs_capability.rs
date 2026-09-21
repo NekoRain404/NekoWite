@@ -247,6 +247,16 @@ pub struct ChangeRecord {
     pub result_hash: String,
     pub source: &'static str,
     pub at: String,
+    /// The app's own word about the optional part of the save — the history snapshot — or `None`
+    /// when the save kept it.
+    ///
+    /// Carried rather than dropped because the port's contract carries it: `VaultFiles::write`
+    /// answers `Some(warning)` exactly when the text landed and something optional around it did
+    /// not. A write that landed without a history snapshot and one that landed with it are
+    /// otherwise the same record, so a surface reading this one would offer to put back a version
+    /// that nothing kept. `RecoveryOutcome` carries the same sentence to the window for the same
+    /// reason.
+    pub warning: Option<String>,
 }
 
 /// Serves the engine's file requests against the app's write path, and its reads against the
@@ -422,7 +432,7 @@ impl FsCapability {
                 .await;
 
                 match written {
-                    Ok(Ok((baseline, _warning, content))) => {
+                    Ok(Ok((baseline, warning, content))) => {
                         // The baseline becomes recovery material before the record is written,
                         // and from the same read: this is the text the write just replaced. A
                         // creation has none (`None`), which is not an empty file — the distinction
@@ -438,6 +448,11 @@ impl FsCapability {
                             result_hash: hash_of(&content),
                             source: "agent",
                             at: chrono::Utc::now().to_rfc3339(),
+                            // The port's answer about the snapshot travels with the change it
+                            // belongs to: the alternative is a record that reads as a clean save
+                            // because the sentence was dropped at exactly the destructuring that
+                            // received it (finding F9 in `docs/audits/2026-09-21-code-review.md`).
+                            warning,
                         });
                         let _ = responder.respond(WriteTextFileResponse::new());
                     }
