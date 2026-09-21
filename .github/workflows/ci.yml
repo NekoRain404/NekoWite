@@ -47,6 +47,10 @@ jobs:
       - run: |
           bash scripts/boot-probe.test.sh
           bash scripts/package-linux.test.sh
+      # The WebKit measurement harness's own tests. Its probes need the real engine and stay out of
+      # CI, but these two files are pure logic — crop arithmetic and verdict rules — under `node --test`,
+      # which no vitest project and no Playwright pattern collects.
+      - run: pnpm --filter @nekowite/desktop test:webkit-harness
       - run: pnpm test
       # The perf harness is a separate vitest project, so `pnpm test` never
       # reached it — and it sat broken for two stages because nothing ran it.

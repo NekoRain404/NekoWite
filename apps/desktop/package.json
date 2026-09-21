@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run --passWithNoTests",
+    "test:webkit-harness": "node --test e2e/webkit/*.test.mjs",
     "typecheck": "vue-tsc -b",
     "lint": "eslint . --max-warnings 462",
     "perf": "vitest run --config vitest.perf.config.ts",

@@ -25,6 +25,7 @@
 #   clippy      `cargo clippy --all-targets --locked` (reported, not ratcheted; see the audit ledger)
 #   instruments `check-reachability.py`, `check-dead-exports.py`, `check-channels.py`
 #   scripts     the suites that test this repository's own shell scripts
+#   harness     the WebKit measurement harness's own `node:test` files
 #   build       `tauri build --no-bundle` — the artefact the process-level cases below drive
 #   rust        the whole suite with `NEKOWITE_REQUIRE_PROCESS_TESTS=1`, so a case that cannot run
 #               fails instead of skipping (finding T1)
@@ -171,6 +172,16 @@ scripts_step() {
 }
 step scripts "the shell-script suites" \
   scripts_step
+
+# The WebKitGTK measurement harness (`apps/desktop/e2e/webkit/`) is driven by hand against the engine
+# that ships, so its probes are deliberately not gate material — but its two `*.test.mjs` files are
+# pure logic: the HiDPI crop arithmetic and the verdict rules that decide whether a probe measured
+# anything, both exercised through stubs. They need no engine, no browser and 63 ms. Nothing invoked
+# them either: `*.test.mjs` matches no vitest project and no Playwright `spec` pattern, so they sat
+# with the other assets the audit found nothing running. `node --test` is their runner, and the
+# package script is the one definition of how — this step and CI both call it.
+step harness "the measurement harness's own tests" \
+  pnpm --filter @nekowite/desktop test:webkit-harness
 step build "tauri build --no-bundle" \
   pnpm --filter @nekowite/desktop exec tauri build --no-bundle
 
@@ -194,13 +205,22 @@ fi
 
 echo
 echo "=== the gate, $(date -Is) ==="
+# `grep -c` prints its count *and* exits 1 when the count is zero, so the obvious `grep -c … || echo 0`
+# appends a second zero and turns one reading into two lines ("0\n0 targets"). Every count in this
+# summary goes through here instead. It matters most for the line whose whole purpose is to catch zero:
+# the Rust target count, where a malformed reading is exactly the kind of thing a reader skips past.
+count_matches() {
+  local count
+  count="$(grep -c "$1" "$2" 2>/dev/null || true)"
+  printf '%s' "${count:-0}"
+}
 for row in "${SUMMARY[@]}"; do
   IFS='|' read -r name status log <<< "$row"
   target_count=""
   case "$name" in
     rust)
       # The counts a green suite is judged by: a run that collected no targets is not a pass.
-      target_count=" — $(grep -c '^test result:' "$log" 2>/dev/null || echo 0) targets, \
+      target_count=" — $(count_matches '^test result:' "$log") targets, \
 $(grep -E '^test result:' "$log" 2>/dev/null | awk -F'[ ;]' '{p+=$4; f+=$6} END {printf "%d passed, %d failed", p, f}')"
       ;;
     verify)
@@ -214,7 +234,7 @@ $(grep -E '^test result:' "$log" 2>/dev/null | awk -F'[ ;]' '{p+=$4; f+=$6} END 
       } END { if (runs) printf "%d tests across %d package runs", sum, runs }' "$log" 2>/dev/null)"
       ;;
     clippy)
-      target_count=" — $(grep -c '^warning' "$log" 2>/dev/null || echo 0) warning lines"
+      target_count=" — $(count_matches '^warning' "$log") warning lines"
       ;;
     scripts)
       # Each suite prints one `PASS: <name>`/`FAIL: <name>` line per check. Both are counted, and the
@@ -222,8 +242,14 @@ $(grep -E '^test result:' "$log" 2>/dev/null | awk -F'[ ;]' '{p+=$4; f+=$6} END 
       # run that had failed, which is the reading-that-flatters defect this gate exists to stop. The
       # two numbers also say the suites ran their cases rather than exiting 0 having done nothing — a
       # suite whose assertions were deleted passes with either count at zero.
-      target_count=" — $(grep -c '^PASS: ' "$log" 2>/dev/null || echo 0) checks passed, \
-$(grep -c '^FAIL: ' "$log" 2>/dev/null || echo 0) failed"
+      target_count=" — $(count_matches '^PASS: ' "$log") checks passed, \
+$(count_matches '^FAIL: ' "$log") failed"
+      ;;
+    harness)
+      # `node --test`'s own totals — `ℹ pass 5`, `ℹ fail 0` — so a run that collected no test file at
+      # all reads as zero rather than as a pass.
+      target_count=" — $(grep -E '^ℹ (pass|fail) ' "$log" 2>/dev/null | awk '{printf "%s %s, ", $2, $3}' \
+| sed 's/, $//')"
       ;;
     e2e)
       # Playwright's own last line. A run that collected nothing says "no tests found" and never
