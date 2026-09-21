@@ -1902,6 +1902,35 @@ is not automatable here, because the dialog belongs to the OS; round 13 closed t
 document's content, the `@page` rules, the frame's lifecycle). The fifth — `git tag` being empty — is
 certain, and `docs/RELEASING.md` now says to create the tag rather than cite one.
 
+**The round's own gate then failed once, on an e2e case — and the cause was the test measuring a race.** The
+run came back `FAIL e2e (exit 1) — 296 passed`, the one failure being `agent-popup-host-scope.spec.ts`'s "the
+config picker's list follows its trigger while the rail is still arriving", which failed **its own instrument
+guard**:
+
+> the press landed inside the draw: the control still had 1.6351318359375px to travel when it was pressed
+> (1073.5869140625 → 1058.6351318359375 → 1057)
+
+That is a press which landed when the 300 ms drawer had all but finished, so the attempt measured nothing.
+The case already knew this shape — its own note records four such presses in forty runs on an unloaded
+machine, and it retries three times — but under a full parallel suite all three attempts missed, which turns
+a busy machine into a red gate. The retry was treating the symptom; the cause is that the measurement is a
+race against a CSS transition, and the fix is to stop racing. `--app-motion` supplies the rail's duration
+(`appShell.css`), so the case now lengthens `transition-duration` on the rail's enter/leave classes before it
+starts. The guard's 10px threshold is untouched, and a machine that still cannot catch the drawer still
+fails.
+
+Measured with a temporary log in place and the file restored byte-identically
+(`md5 cc53692f0c7a765ea47fb8b6f85bb9f4`): the press now lands with **72.9px** of travel ahead against the
+**1.6px** of the failed run — the same order the case's own forty-run note saw at its best, and seven times
+the guard's demand. The comment in the file records why the duration is written against the transition
+classes rather than the variable: the global `prefers-reduced-motion` rule in `styles/motion.css` forces
+`transition-duration: 0.01ms !important` onto `*`, and an `!important` class rule outranks it on specificity.
+
+This is the third flake this programme has had to diagnose rather than retry — §16's two-instances case, §16's
+Playwright browser cache, and this one — and all three share a shape worth naming: the test's *instrument*
+was right every time, and what was wrong was the assumption underneath it about how much time the machine
+has.
+
 ### The gate
 
 | Step | Result |
