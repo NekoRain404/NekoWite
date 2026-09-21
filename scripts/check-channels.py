@@ -135,6 +135,16 @@ def main() -> int:
         for k in sorted(unresolvable):
             print(f'  {k:40} {sorted(unresolvable[k])[0]}')
         print('  (the callers of these pass the names checked above)')
+        print()
+
+    # **A non-empty list above is a failure, not a reading.** An event emitted to nobody, and a
+    # handler waiting for an event that never comes, are both silent in the running application —
+    # nothing throws, nothing logs, and the feature simply does not work. Both lists are empty on a
+    # healthy tree, which is what makes this the instrument CI can gate on: an exit code that means
+    # "there is nothing to read here" is worth more than a report someone has to remember to open.
+    if silent or dead:
+        print(f'FAIL: {len(silent)} channel(s) emitted to nobody, {len(dead)} listened for with no emitter')
+        return 1
     return 0
 
 

@@ -160,8 +160,15 @@ def main() -> int:
         for p, spec in dangling[:30]:
             print(f'  {spec:52} from {p.relative_to(ROOT)}')
         print(f'  ({len(dangling)} specifiers)')
-    else:
-        print('=== specifiers that resolve to nothing: none ===')
+        print()
+        # **A non-empty list here is a failure, not a reading.** A specifier that resolves to nothing
+        # is a typo or a file that moved: the import is broken, and on a page it is silently dropped.
+        # The list is empty on a healthy tree (the one thing this script reports that has a clean
+        # state — "source files no page can reach" is 552 files of specs and configs by design), which
+        # is what makes an exit code meaningful here and turns `ci.yml`'s line into a gate.
+        print(f'FAIL: {len(dangling)} specifier(s) resolve to nothing')
+        return 1
+    print('=== specifiers that resolve to nothing: none ===')
     return 0
 
 

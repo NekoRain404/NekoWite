@@ -21,6 +21,14 @@ as noise is what let the real cases sit in it. So this pass separates the two:
 Types and interfaces are excluded: an exported type is a contract, and TypeScript's `import type`
 leaves no runtime caller to look for. Only `function` and arrow-function `const` are checked, and
 only from files that are not specs themselves.
+
+**It reports and never fails, and that is a decision rather than an oversight.** `check-reachability`
+and `check-channels` exit non-zero on their findings because those findings have a clean state (no
+broken specifier, no channel without a counterpart). This one does not: "exported so the spec can
+reach it" is a legitimate idiom, and the list has held around ninety names for as long as it has
+existed, so failing on a non-empty list would make the gate red on a healthy tree. `ci.yml` therefore
+runs it for its output — a crash still fails the step — and the ratchet question (a ceiling like the
+renderer's `--max-warnings 462`) is recorded in the audit ledger as a decision nobody has taken.
 """
 import re
 import sys
