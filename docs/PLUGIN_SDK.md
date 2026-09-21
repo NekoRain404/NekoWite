@@ -133,9 +133,9 @@ Loading runs in two phases:
 > no `'unsafe-eval'`) and therefore **blocks blob-import plugins**. The host detects the
 > Tauri runtime and refuses to attempt the import, surfacing **one** per-session notice
 > that vault plugins are disabled until the plugin host is moved behind real isolation.
-> Built-in plugins (bundled first-party code) are unaffected. So today: **vault plugins
-> are effectively disabled in a production Tauri build**; they load in a plain-browser
-> demo build.
+> Built-in plugins (bundled first-party code) are unaffected. So today **vault plugins are
+> disabled in both builds** — the production Tauri build by the CSP, the plain-browser demo
+> build by an explicit refusal (§ 4), because a browser demo has no isolation at all.
 
 ---
 
@@ -268,11 +268,13 @@ policy applied before any import is:
 > in the main window and a granted permission can reach Tauri IPC / the file system.
 > Keep the trusted key secret; anyone who holds it can sign.
 >
-> The default policy (`permit-unsigned-with-notice`) is a deliberate product choice for
-> the current demo/browser loader: it is **not** silent — the plugin is logged as
-> unsigned/untrusted and the strict policy is the guardrail. For real third-party
-> distribution, set `setPluginTrustPolicy('require-trust')` so unsigned plugins are
-> refused until explicitly trusted.
+> The default policy (`permit-unsigned-with-notice`, set in
+> `features/plugins/services/trust-policy.ts`) is a deliberate product choice for the trust
+> gate: it is **not** silent — the plugin is logged as unsigned/untrusted and the strict
+> policy is the guardrail. For real third-party distribution, set
+> `setPluginTrustPolicy('require-trust')` so unsigned plugins are refused until explicitly
+> trusted. No shipped build reaches this gate today (§ 4), so the policy decides what happens
+> the day one does.
 
 > 📦 **Where the trust state lives.** The trusted key, trusted-source allowlist, plugin
 > digests, revocations, and version policy are persisted as a single vault-relative
