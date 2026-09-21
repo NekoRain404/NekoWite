@@ -1667,6 +1667,27 @@ these defects found several of them *as* drifted line numbers. A document that q
 document that will be wrong again in a week; a document that names `saveTab` or "the range-count watcher"
 is wrong only when the code actually moves.
 
+**§1.8's recovery document is closed too, in the same round.** Six defects, and the two that matter are
+not the path typos. It said `reloadFromDisk` closes the conflict dialog; the component's own comment
+records the opposite choice, because a component that performs the reload and dismisses itself cannot be
+asked to do one without the other. And it described the **browser demo's** `beforeunload` fallback as the
+application's close behaviour, which would leave a reader believing the app cannot save on close: the real
+route is Tauri's `close-requested` in `app/app-lifecycle.ts`, which can await, and it is where the
+placeholder reconciliation and the dirty/untitled rescues run. The rest: four paths that do not exist
+(including `stores/tabs.test.ts`, which never has — the cases it stood for live in four other files the
+document now names), a symbol that does not exist (`relocatePendingAssets` is `relocate`), a third
+snapshot exemption it did not have (`storage/save_store.rs` snapshots only when the previous content is
+non-empty **and different**), and the vault-switch step, which is `removeAllTabs()` under a contract that
+says it touches no filesystem — the 「关闭全部」 command is a different function that flushes and prompts
+first and then calls the same one.
+
+**Two mistakes of mine are part of the record, because both were caught by checking.** `closeAll` does
+exist (`stores/tab-close.ts:272`); my first search for it was killed by a broken pipe, and I read the
+truncated output as "it appears only in comments" — a claim that would have gone into the document. And
+`applyVault` is in `app-bootstrap.ts`, not `vault-switch.ts`, which I had written the other way round. A
+negative grep is the weakest evidence there is, and this round is the third time in this programme that
+one nearly became a sentence.
+
 ### The real-engine attempt, and what it measured about its own instrument
 
 The round also tried to take a reading on the engine that ships — `node e2e/webkit/measure.mjs --only
@@ -1705,8 +1726,8 @@ One run, all nine steps, exit 0.
 
 ### What remains, after §1.9 closed
 
-The audit's §1 now has three open sections — §1.3 (`docs/PLUGIN_SDK.md`), §1.4
-(`docs/PLUGIN_ISOLATION.md`) and §1.8 (`docs/RECOVERY.md`) — plus §3's file-size row, which cannot be
+The audit's §1 now has two open sections — §1.3 (`docs/PLUGIN_SDK.md`) and §1.4
+(`docs/PLUGIN_ISOLATION.md`) — plus §3's file-size row, which cannot be
 fixed because the three files holding the wrong numbers are read-only by instruction, and §5's three
 architecture ledgers, which are read-only by the same instruction and were reported rather than edited.
 §1.1, §1.2, §1.5, §1.6, §1.7, §1.9 and §1.10 are closed, in §15, §16 and this round.
