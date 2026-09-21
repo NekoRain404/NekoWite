@@ -25,6 +25,14 @@
 //! [`lib.rs`] itself only assembles app state, builds the main window and
 //! registers commands.
 
+// The crate has no `unsafe` in it today — measured, and the reason
+// `agent_runtime::process::shutdown` invokes `kill(1)` rather than calling `libc::kill` for the one
+// operation where a mistake ends other people's processes. Declaring it makes that a rule the
+// compiler keeps rather than a coincidence somebody measured: the next `unsafe` (the pty calls
+// `Cargo.toml`'s `libc` is already reserved for, §4.3) has to argue for itself at the item, with an
+// `#[allow(unsafe_code)]` and a reason, instead of arriving unnoticed inside a large diff.
+#![deny(unsafe_code)]
+
 pub mod agent_runtime;
 pub mod commands;
 pub mod desktop_pet;

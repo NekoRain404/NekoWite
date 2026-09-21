@@ -30,10 +30,13 @@ pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
 /// `pkill -f opencode` would reach the user's own installation, which this host
 /// never started and has no business ending.
 ///
-/// `kill(1)` is invoked rather than `libc::kill` because `libc` is not a direct
-/// dependency of this crate and adding one would edit `Cargo.lock`. The path is
-/// probed rather than assumed: the binary lives under `/bin` on distributions
-/// that never merged `/usr`.
+/// `kill(1)` is invoked rather than `libc::kill` because it needs no `unsafe` block, and the library
+/// declares `#![deny(unsafe_code)]`: the alternative would be the first `unsafe` in the tree, for the
+/// one call where a mistake ends other people's processes. (`libc` **is** a direct dependency —
+/// `Cargo.toml` keeps it for the pty half of §4.3's native terminal — so the reason is the unsafe
+/// block, not the dependency; this comment said the opposite until `docs/DOC-AUDIT.md` §6 read it
+/// against the manifest.) The path is probed rather than assumed: the binary lives under `/bin` on
+/// distributions that never merged `/usr`.
 pub fn signal_group(pgid: i32, signal: &str) -> io::Result<()> {
     const CANDIDATES: [&str; 2] = ["/usr/bin/kill", "/bin/kill"];
     let binary = CANDIDATES
