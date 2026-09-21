@@ -1178,6 +1178,24 @@ The e2e suite was not re-run: the round's frontend change is a new refusal sente
 Playwright suite does not drive (toggling a plugin needs a library with plugins, and this build does
 not load them), and the panel's rendering is unchanged.
 
+**The bundles, rebuilt again** because this round changes shipped behaviour (a plugin switch can no
+longer destroy a file that is not ours, and refusing now has its own sentence):
+
+| Artifact | sha256 |
+|---|---|
+| `release/nekowite_1.0.0_x64` | `451642216ae580b0b771cbf42c6a04430b92770fd72ac15188bc5e7c7a35594d` |
+| `release/opencode` | `ca6c0e1f42be3120595bf6848937e7586ec862c87fa7aa111e89c7cc6e9a4650` (the pinned input, unchanged) |
+| `release/nekowite_1.0.0_amd64.deb` | `a7762e11490afbe39e3869d122e8a5a6d6da53a45c77b0edb8d915ac4dd350da` |
+| `release/nekowite-1.0.0-1.x86_64.rpm` | `bfd6e479e3c236599e4a7ac202bfa8aff9879a3c516f91569b7000e1694b8a2b` |
+| `release/nekowite_1.0.0_amd64.AppImage` | `b9c0a9bafdf16ce0e6ddc5fb016db78927f1ca3a8dae7472e248f2950aa463a1` |
+
+The build these replaced is at `release/superseded/build.l3mgGl/`, verified by digest rather than by
+name: that file's sha256 is `5c549a8c…`, the first line of §12's table. The AppImage's sidecar was
+driven in place again (version with an empty environment, no credentials, an ACP handshake inside a
+network namespace with only loopback), and the two things that run still cannot show are the ones the
+script names itself: a machine with no system `opencode`, and the engine's notice file.
+
+
 
 
 
