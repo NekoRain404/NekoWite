@@ -55,7 +55,11 @@ export interface TabPersistenceDeps {
   settings: TabAutosaveSettingsPort
   t: (key: string, params?: Record<string, unknown>) => string
   notifyError(message: string): void
-  /** The write path (`tab-save.ts`): the timer must never write on its own. */
+  /** The write path (`tab-save.ts`): the timer must never write on its own —
+   *  and it takes no save options, which is deliberate. Its call is the bare
+   *  one, so a tab with no path cannot be named from here: `saveTab` opens a
+   *  Save-As dialog only for a caller that speaks for the user, and this timer
+   *  is not one (`TabSaveOptions.mayNameNewFile`). */
   saveTab(id: string): Promise<boolean>
 }
 
@@ -102,6 +106,14 @@ export function createTabPersistence(deps: TabPersistenceDeps) {
           autoDeadlines.delete(id)
           // Dirty guard lives here, not in saveTab/saveActive: a clean tab must
           // never produce a no-op write (and a spurious history snapshot).
+          //
+          // The call is bare on purpose, and the untitled half of that is the
+          // fix: fired 15 s into the first keystroke of a brand-new note, this
+          // timer used to reach the save path's `!path` branch, which opened a
+          // native Save-As dialog over the note the user was still typing into.
+          // A tab with no path is left dirty here instead — its text is still in
+          // the editor, and Ctrl+S, the close and the untitled-tab rescue all
+          // offer to name it.
           const tab = tabs.value.find((x) => x.id === id)
           if (tab && tab.dirty) void saveTab(id)
         },

@@ -25,6 +25,7 @@
 import type { Ref } from 'vue'
 import { flushEdits } from '../services/editor-ownership'
 import type { OpenTab } from './tabs'
+import type { TabSaveOptions } from './tab-save'
 
 /** How many writes one tab gets in pursuit of being settled.
  *
@@ -37,16 +38,25 @@ const SETTLE_ATTEMPTS = 3
 
 export function createTabSettler(deps: {
   tabs: Ref<OpenTab[]>
-  saveTab(id: string): Promise<boolean>
+  saveTab(id: string, opts?: TabSaveOptions): Promise<boolean>
 }) {
   const { tabs, saveTab } = deps
 
-  async function saveUntilSettled(id: string): Promise<boolean> {
+  /**
+   * `opts` travel to every attempt. The callers that speak for the user reach
+   * `saveTab` through here — the close of a dirty untitled tab, and the
+   * untitled rescue's save answer — and a save they chose may name the file it
+   * has no path for (`tab-save.ts`'s `mayNameNewFile`). Nothing in this module
+   * sets it itself: `flushDirty` below stays bare, because a bulk flush is
+   * background work and a dialog from it would land on whatever the user is
+   * typing into or has just switched to.
+   */
+  async function saveUntilSettled(id: string, opts?: TabSaveOptions): Promise<boolean> {
     for (let attempt = 0; attempt < SETTLE_ATTEMPTS; attempt++) {
       // A failed write is not retried: the reasons a save returns false (a
       // refusal, an unwritable document, the vault changed under it) are not
       // reasons a second identical write would fare any better.
-      if (!(await saveTab(id))) return false
+      if (!(await saveTab(id, opts))) return false
       const tab = tabs.value.find((x) => x.id === id)
       if (!tab) return true
       if (!tab.dirty) return true

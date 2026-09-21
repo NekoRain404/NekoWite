@@ -554,3 +554,49 @@ describe('hasUnsavedWork and flushDirty', () => {
     expect(ok).toBe(false)
   })
 })
+
+describe('a save that may name a new file', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetFsMocks()
+  })
+
+  it('a bare saveTab never asks a path-less tab where to go', async () => {
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab(null, 'a brand-new note')
+    const tab = s.tabs[0]
+    s.markDirty(tab.id)
+
+    // `saveTab` is the autosave timer's, the window-blur save's and the bulk
+    // flush's entry point, and none of those speaks for the user: a file dialog
+    // raised by any of them lands on top of the note they are typing into, or on
+    // top of whatever window they just switched to. Refusing to write and
+    // leaving the tab dirty is the answer that loses nothing — the text is still
+    // in the editor, and every route that DOES speak for the user can still name
+    // the file.
+    await expect(s.saveTab(tab.id)).resolves.toBe(false)
+
+    expect(saveFileDialogMock).not.toHaveBeenCalled()
+    expect(writeMock).not.toHaveBeenCalled()
+    expect(tab.path).toBeNull()
+    expect(tab.dirty).toBe(true)
+  })
+
+  it('a save the user asked for does ask, and binds the tab to the picked name', async () => {
+    writeMock.mockResolvedValue(null)
+    saveFileDialogMock.mockResolvedValue('/vault/notes/named.md')
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab(null, 'a brand-new note')
+    const tab = s.tabs[0]
+    s.markDirty(tab.id)
+
+    await expect(s.saveTab(tab.id, { mayNameNewFile: true })).resolves.toBe(true)
+
+    expect(saveFileDialogMock).toHaveBeenCalledWith('untitled.md', '/vault')
+    expect(tab.path).toBe('/vault/notes/named.md')
+    expect(writeMock).toHaveBeenCalledWith('/vault', '/vault/notes/named.md', 'a brand-new note', 10)
+    expect(tab.dirty).toBe(false)
+  })
+})

@@ -33,6 +33,7 @@
  */
 
 import type { OpenTab } from './tabs'
+import type { TabSaveOptions } from './tab-save'
 
 /** What the user chose for the untitled dirty tabs a bulk route is about to
  *  destroy. Structural rather than imported: `UntitledCloseChoice`
@@ -52,8 +53,14 @@ export interface UntitledRescuePorts {
   /** The gate the closes ask, not `saveTab`: one landed write is not a saved tab
    *  (`tab-settle.ts`), and this loop's whole job is to run at the moment the
    *  autosave timers are cancelled — so a write that was overtaken by a keystroke
-   *  has nowhere else to go. `false` ends the route. */
-  settle(id: string): Promise<boolean>
+   *  has nowhere else to go. `false` ends the route.
+   *
+   *  The options are the loop's to pass on, and it passes them for exactly the
+   *  answers below that name a tab: the untitled half runs after the user
+   *  answered "save", so it carries `mayNameNewFile` (a path-less tab cannot be
+   *  written without the dialog that asks for its name); the late path'd half
+   *  does not, because nobody was asked about it. */
+  settle(id: string, opts?: TabSaveOptions): Promise<boolean>
   /** What this route does with a tab the user chose to discard. "Close all"
    *  leaves it where it is — `removeAllTabs()` takes the set a moment later, and
    *  removing it here would move the moment it disappears above the pass that is
@@ -120,7 +127,10 @@ export function createUntitledRescue(ports: UntitledRescuePorts) {
         for (const tab of untitled) answered.add(tab.id)
         if (choice === 'save') {
           for (const tab of untitled) {
-            if (!(await settle(tab.id))) return false
+            // The licence travels with the ANSWER, not with this loop: the user
+            // was asked about this tab and said save, so the dialog that names it
+            // is the question they answered (`TabSaveOptions.mayNameNewFile`).
+            if (!(await settle(tab.id, { mayNameNewFile: true }))) return false
             if (stale()) return false
           }
         } else {
@@ -133,7 +143,9 @@ export function createUntitledRescue(ports: UntitledRescuePorts) {
       // A tab that is dirty HERE became dirty after the flush: the flush settles
       // what it touched, so what is left is the typing the answer above was
       // overtaken by. It is settled rather than asked about — it has a file, and
-      // the question is only ever about text that has nowhere to go.
+      // the question is only ever about text that has nowhere to go. Bare
+      // `settle`, with no naming licence: nobody was asked about these tabs, and
+      // they are the same background work the caller's own flush does.
       const late = listTabs().filter((tab) => tab.path && tab.dirty)
       if (late.length === 0) break
       for (const tab of late) {

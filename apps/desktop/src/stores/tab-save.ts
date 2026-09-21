@@ -90,6 +90,24 @@ export interface TabSaveOptions {
    * suspicious of.
    */
   userAsked?: boolean
+  /**
+   * This save may ask the user to name a file the tab does not have yet — the
+   * Save-As dialog the `!path` branch raises.
+   *
+   * The failure it prevents: `saveTab` is also the autosave timer's, the
+   * window-blur save's and the bulk flush's entry point, and none of those
+   * speaks for the user. A dialog raised by the timer appears over a brand-new
+   * note while they are still typing into it 15 s after the first keystroke
+   * (`tab-persistence.ts`), and one raised by the blur save appears over
+   * whatever window they just switched to (`app-lifecycle.ts`). So only the
+   * callers that do speak for the user set it: Ctrl+S (`saveActive`), the close
+   * of a dirty untitled tab (`tab-close.ts`), and the untitled-tab rescue's save
+   * answer, which settles a tab only after the user answered "save" to an
+   * explicit prompt about it (`untitled-rescue.ts`). A save without the licence
+   * writes nothing and leaves the tab dirty — the text is still in the editor,
+   * and every route that can name the file still offers to.
+   */
+  mayNameNewFile?: boolean
 }
 
 export function createTabSave(deps: TabSaveDeps) {
@@ -148,6 +166,16 @@ export function createTabSave(deps: TabSaveDeps) {
     // dialog proposes `untitled.md` from the tab's state, not from this pick.
     let pickedInThisSave = false
     if (!path) {
+      // An untitled tab has no file to write to, so a save of one is a Save-As —
+      // but only a save that speaks for the user may ask for the name. `saveTab`
+      // is also the autosave timer's, the window-blur save's and the bulk
+      // flush's entry point, and those run while the user is typing or has just
+      // switched away: the native dialog they used to raise landed over the note
+      // they were in, or over whatever window they had just switched to. Without
+      // the licence this writes nothing and leaves the tab dirty, which is the
+      // truth — the text is in no file, and the callers that DO speak for the
+      // user can still name it (see `TabSaveOptions.mayNameNewFile`).
+      if (opts.mayNameNewFile !== true) return false
       // Untitled tab: an explicit save means "save as", not a silent no-op.
       const picked = await files.saveFileDialog('untitled.md', vault.value)
       if (!picked || !ownsTarget()) return false
@@ -310,10 +338,12 @@ export function createTabSave(deps: TabSaveDeps) {
    *  file it was aimed at refuses to take it — the same latitude an untitled
    *  tab already has. And it is the ONE caller that speaks for the user: a save
    *  they ask for again, having been told the file changed under them, is their
-   *  answer to that question (see `TabSaveOptions.userAsked`). */
+   *  answer to that question (see `TabSaveOptions.userAsked`). The name question
+   *  on a tab with no file is theirs for the same reason — they pressed the key
+   *  (see `TabSaveOptions.mayNameNewFile`). */
   async function saveActive(): Promise<void> {
     const tab = activeTab.value
-    if (tab) await saveTab(tab.id, { offerCopy: true, userAsked: true })
+    if (tab) await saveTab(tab.id, { offerCopy: true, userAsked: true, mayNameNewFile: true })
   }
 
   /** The conflict prompt's "Keep local", recorded where the next save reads it

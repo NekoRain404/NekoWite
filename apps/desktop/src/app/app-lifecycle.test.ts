@@ -118,6 +118,32 @@ describe('createAppLifecycle', () => {
     expect(typeof registeredCloseHandler()).toBe('function')
   })
 
+  it('the window-blur save asks a path-less tab nothing', async () => {
+    const addEventListenerSpy = vi.spyOn(window, 'addEventListener')
+    try {
+      h.appearanceMock.autosaveOnBlur = true
+      h.tabsMock.activeTab = { id: 'tab-untitled', dirty: true }
+      const lifecycle = createAppLifecycle({ windowTracking: h.windowTracking })
+      await lifecycle.mount()
+
+      const blur = addEventListenerSpy.mock.calls.find(([type]) => type === 'blur')?.[1] as
+        | (() => void)
+        | undefined
+      expect(typeof blur).toBe('function')
+      blur!()
+
+      // The id, and nothing else: no `mayNameNewFile`, no `offerCopy`, no
+      // `userAsked`. Losing focus is not the user asking for anything, so a save
+      // that answered a path-less tab with a Save-As dialog would throw a picker
+      // into whatever window they just switched to (`app-lifecycle.ts`), and the
+      // save that does go through must stay the bare one.
+      expect(h.tabsMock.saveTab).toHaveBeenCalledTimes(1)
+      expect(h.tabsMock.saveTab).toHaveBeenCalledWith('tab-untitled')
+    } finally {
+      addEventListenerSpy.mockRestore()
+    }
+  })
+
   it('close-requested prevents the close when dirty, flushes, then closes when clean', async () => {
     h.tabsMock.hasUnsavedWork.mockReturnValue(true)
     h.tabsMock.flushDirty.mockResolvedValue(true)
@@ -261,7 +287,16 @@ describe('createAppLifecycle', () => {
     // Through the gate, not `saveTab`: this IS the close, so the autosave timer
     // a keystroke armed is cancelled by it and the write has to carry the newer
     // text itself (`tab-settle.ts`).
-    expect(h.tabsMock.saveUntilSettled).toHaveBeenCalledWith('tab-untitled')
+    //
+    // And with the naming licence, which this assertion did not carry before the
+    // rule existed: this IS the Save-As prompt's answer, so the write that
+    // performs it must be allowed to open the dialog (`TabSaveOptions
+    // .mayNameNewFile`). Asserted rather than left implicit because the failure
+    // is silent both ways — lose the option and the close stops asking (the stub
+    // still answers true, so only this line can tell that the prompt is gone).
+    expect(h.tabsMock.saveUntilSettled).toHaveBeenCalledWith('tab-untitled', {
+      mayNameNewFile: true,
+    })
     expect(h.windowMock.close).toHaveBeenCalled()
   })
 

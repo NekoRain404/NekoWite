@@ -192,8 +192,11 @@ export function createVaultSwitch(deps: VaultSwitchDeps): VaultSwitch {
       // set, and a keystroke during the write would go with it — the write
       // path's own comment promises the newer text a pending autosave timer of
       // its own (see `tab-settle.ts`), and this switch is where that promise
-      // stops being keepable.
-      settle: (id) => tabs.saveUntilSettled(id),
+      // stops being keepable. Its options are the loop's to carry: the untitled
+      // half runs after the user answered "save", so the Save-As dialog the
+      // path-less write needs is the question they just answered
+      // (`TabSaveOptions.mayNameNewFile`).
+      settle: (id, opts) => tabs.saveUntilSettled(id, opts),
       onDiscard: (tab) => tabs.removeTab(tab.id),
       isStale,
     })

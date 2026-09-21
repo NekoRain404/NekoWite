@@ -480,7 +480,14 @@ describe('createDesktopRuntime', () => {
       const runtime = createDesktopRuntime()
       await runtime.applyVault('/vault')
 
-      expect(h.tabsMock.saveUntilSettled).toHaveBeenCalledWith('tab-untitled')
+      // With the naming licence: this call IS the Save-As write the user just
+      // answered "save" to, and the write path opens the dialog only for a
+      // caller that carries it (`TabSaveOptions.mayNameNewFile`). Without it the
+      // switch would stop asking and the tab would stay behind — a silence only
+      // this line can see, since the stub answers true either way.
+      expect(h.tabsMock.saveUntilSettled).toHaveBeenCalledWith('tab-untitled', {
+        mayNameNewFile: true,
+      })
       expect(h.tabsMock.saveTab).not.toHaveBeenCalled()
       expect(h.tabsMock.setVault).toHaveBeenCalledWith('/vault')
     })

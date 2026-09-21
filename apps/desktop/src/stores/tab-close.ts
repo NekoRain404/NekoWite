@@ -26,6 +26,7 @@ import { flushEdits } from '../services/editor-ownership'
 import { flushSourceEdits } from '../services/source-view'
 import { createUntitledRescue } from './untitled-rescue'
 import type { OpenTab } from './tabs'
+import type { TabSaveOptions } from './tab-save'
 
 /** What the user chose for the untitled dirty tabs blocking a bulk close. */
 export type UntitledCloseChoice = 'save' | 'discard'
@@ -37,8 +38,11 @@ export interface TabCloseDeps {
   /** Persistence commands the close flows call. `saveUntilSettled` is the gate
    *  a close asks, not `saveTab`: one landed write is not a saved tab
    *  (`tab-settle.ts`), and a close that reads it as one drops the text the
-   *  write could not carry. */
-  saveUntilSettled(id: string): Promise<boolean>
+   *  write could not carry. Its options travel to `saveTab` unchanged, which is
+   *  how this close tells the write path that a dirty untitled tab's name
+   *  question is one the user just asked by pressing the X
+   *  (`TabSaveOptions.mayNameNewFile`). */
+  saveUntilSettled(id: string, opts?: TabSaveOptions): Promise<boolean>
   flushDirty(): Promise<boolean>
   /** The route out of a flush that a refused write blocked: a copy of the text
    *  under a name the user picks, for a file that will refuse every retry. The
@@ -226,7 +230,12 @@ export function createTabClose(deps: TabCloseDeps) {
     // the clean close is meant to be untouched by this fix.
     flushSourceEdits()
     const current = tabs.value.find((x) => x.id === id)
-    if (current?.dirty && !(await saveUntilSettled(id))) return
+    // `mayNameNewFile` is the X speaking: a user who closes a dirty tab with no
+    // path is asking for the save, so "where should this go?" is the question
+    // they mean — the same latitude Ctrl+S has. It is inert for a tab that has a
+    // path; withholding it here would not make the close safer, it would make
+    // the X a silent no-op on exactly the document that exists nowhere else.
+    if (current?.dirty && !(await saveUntilSettled(id, { mayNameNewFile: true }))) return
     removeTab(id)
     captureSession()
   }

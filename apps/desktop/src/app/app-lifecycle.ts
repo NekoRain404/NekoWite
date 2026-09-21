@@ -87,7 +87,10 @@ export function createAppLifecycle(deps: {
     blurSaving = true
     // `saveTab` rather than `saveActive`: losing focus is not the user asking
     // for anything, and a save that answers a refusal with a file dialog would
-    // throw a picker into whatever window they just switched to.
+    // throw a picker into whatever window they just switched to. The same rule
+    // covers a tab that has no path yet — `saveTab` will not name a new file for
+    // a caller that does not speak for the user (`TabSaveOptions`), so a blur
+    // over an untitled note writes nothing and leaves it dirty.
     void tabs.saveTab(tab.id).finally(() => {
       blurSaving = false
     })
@@ -132,7 +135,7 @@ export function createAppLifecycle(deps: {
         // what this user is doing.
         messageKey: 'tabs.untitledCloseAllMsg',
       }),
-    settle: (id) => tabs.saveUntilSettled(id),
+    settle: (id, opts) => tabs.saveUntilSettled(id, opts),
     // A tab the user chose to discard leaves the set as the answer arrives, as
     // it always did: a later refusal can still keep the window open, and a tab
     // they ruled on must not be waiting behind it.

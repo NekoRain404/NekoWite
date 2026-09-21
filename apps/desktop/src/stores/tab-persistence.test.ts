@@ -128,6 +128,28 @@ describe('autosave debounce', () => {
     expect(writeMock).not.toHaveBeenCalled()
   })
 
+  it('never opens a save-as dialog for an untitled tab (it stays dirty instead)', async () => {
+    const s = useTabsStore()
+    s.setVault('/vault')
+    await s.openTab(null, 'a brand-new note')
+    const tab = s.tabs[0]
+    s.markDirty(tab.id)
+    s.scheduleAutosave(tab.id)
+
+    await vi.advanceTimersByTimeAsync(20000)
+
+    // The timer is background work and speaks for nobody: it has no answer to
+    // "where should this new note go?". Asking was a native Save-As dialog over
+    // the note the user was still typing into — the `!path` branch of `saveTab`
+    // opened one for every caller, and this timer is the caller that fires
+    // 15 s into a first keystroke. Writing nothing and staying dirty is the
+    // truth: the text is in no file, and the routes that DO speak for the user
+    // (Ctrl+S, the close, the untitled-tab rescue) still offer to save it.
+    expect(saveFileDialogMock).not.toHaveBeenCalled()
+    expect(tab.path).toBeNull()
+    expect(tab.dirty).toBe(true)
+  })
+
   /** A keystroke every 5 s for a minute: never a pause long enough for the
    *  trailing timer, which is the case the ceiling exists for. */
   async function typeForAMinute(
