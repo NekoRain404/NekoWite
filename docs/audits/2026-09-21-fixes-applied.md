@@ -1724,6 +1724,25 @@ that honours a resize (the maintainer's own desktop), or an Xvfb with a window m
 
 One run, all nine steps, exit 0.
 
+### The gate
+
+| Step | Result |
+|---|---|
+| `verify` | PASS — **5947 tests across 3 package runs**: §16's 5936 plus the **11** new export cases |
+| `fmt` | PASS |
+| `clippy` | PASS — 97 warning lines, under the 110 ceiling |
+| `instruments` | PASS |
+| `scripts` | PASS — 89 checks, 0 failed |
+| `harness` | PASS — 5 passed, 0 failed |
+| `build` | PASS |
+| `rust` | PASS — 79 targets, **1409 passed, 0 failed** |
+| `e2e` (`--with-e2e`) | PASS — 297 passed |
+
+Two runs: the first was green and preceded the accessibility test's extension, the second is the run above,
+after it. No bundles were rebuilt, for the reason §16 gave and this round does not change: nothing the
+application runs at runtime was touched — the round is eleven tests, four documents, a harness comment and
+one assertion's id list.
+
 ### What remains, after §1.9 closed
 
 The audit's §1 now has two open sections — §1.3 (`docs/PLUGIN_SDK.md`) and §1.4
