@@ -27,7 +27,8 @@ import type {
 import { useTabsStore } from '../../../stores/tabs'
 
 export interface ExportSettingsModel {
-  /** Whether a note is open for the export buttons to act on. */
+  /** Whether a note is open for the export buttons to act on, and its text has been read — a tab
+   *  whose first read has not landed is not exportable, and an open note with no text is. */
   hasActiveTab: ComputedRef<boolean>
   /** Writable, so the section binds them with `v-model` and the write still
    *  lands in the store rather than in a copy (§10.3-C). */
@@ -82,7 +83,20 @@ export function useExportSettings(): ExportSettingsModel {
   const refs = useRefsStore()
   const settings = useSettingsStore()
 
-  const hasActiveTab = computed(() => !!tabs.activeTab?.content)
+  // **"A note is open" and not "the note has text".** Those are different questions, and this used to
+  // answer the second while the interface above documents the first: `!!tabs.activeTab?.content` left
+  // an open, genuinely empty note unexportable — the user could see the tab and the buttons stayed
+  // disabled with nothing saying why (finding F10 in `docs/audits/2026-09-21-code-review.md`).
+  //
+  // What the old form was *protecting* against is real, and the flag for it is `loading`, not
+  // emptiness: a tab whose first read has not landed holds a placeholder wearing the note's path
+  // (`OpenTab`'s own docblock), and exporting that would write an empty document over a note that has
+  // text. So the gate is the flag that means exactly that, and an empty note is exportable — as an
+  // empty document, which is what it is.
+  const hasActiveTab = computed(() => {
+    const tab = tabs.activeTab
+    return tab !== null && tab.loading !== true
+  })
 
   /**
    * The options every exporter is handed.

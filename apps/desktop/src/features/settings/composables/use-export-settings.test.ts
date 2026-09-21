@@ -121,9 +121,17 @@ describe('useExportSettings', () => {
     // the way a component's would be.
     expect(m.hasActiveTab.value).toBe(false)
 
-    openTab({ content: '' })
-    // The old gate: a tab whose content has not loaded yet is not exportable.
+    // The state that is *not* exportable, and the reason the old form of this gate looked right:
+    // the tab is open but its first read has not landed, so what it holds is a placeholder wearing
+    // the note's path — exporting that would write an empty document over a note that has text
+    // (finding F10).
+    openTab({ content: '', loading: true })
     expect(m.hasActiveTab.value).toBe(false)
+
+    // And the state the old form got wrong: a note that is genuinely empty. It is open, the reader
+    // can see it, and exporting it writes an empty document, which is what it is.
+    openTab({ content: '' })
+    expect(m.hasActiveTab.value).toBe(true)
 
     openTab({ content: '# Alpha' })
     expect(m.hasActiveTab.value).toBe(true)
