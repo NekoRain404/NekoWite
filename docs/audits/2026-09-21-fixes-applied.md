@@ -1252,6 +1252,92 @@ no source file, so `verify`, `fmt`, `clippy`, `build` and the Rust suite cannot 
 §13's run (5926 tests, 79 targets, 1409 passed, clippy 97). No bundles were rebuilt for the same
 reason — nothing that ships changed.
 
+---
+
+## 15. The round after that: the audit document this session had not read
+
+**`docs/DOC-AUDIT.md` exists, is 375 lines, and had already found most of what the last two rounds
+"discovered".** It audits every `docs/*.md` file against the code at commit `e326a8b` with a
+per-claim evidence column ("Read `<file>:<line>`", "Ran", "Unverified"). This session had not opened
+it. Two of §14's guide corrections are rows in its §1.6 table, and one of them was fixed in the **wrong
+direction**: it says the guide's daily-note claim is wrong, and §14's round checked the claim against
+`src/templates/daily.md` — the file the claim names — instead of against the code path the button
+takes. The button renders `DEFAULT_DAILY_TEMPLATE` (a title and one bullet); the four sections belong
+to the *picker's* 每日日记 template. The daily-note e2e written in this round is what surfaced it.
+
+The lesson is not "read more documents". It is the one this programme keeps relearning from the other
+side: **a document that lists the defects is evidence too**, and reading it is cheaper than
+rediscovering its contents from the code. §14 is left exactly as written, with this section as the
+correction, because the sequence — rediscover, miss, then find the catalogue — is the finding.
+
+**The audit's §6 is a code defect, and it was still open.** `Cargo.toml` declares `libc = "0.2"`
+directly, nothing in `src/` calls it, and `agent_runtime/process/shutdown.rs` justified invoking
+`kill(1)` rather than `libc::kill` with a premise that is false ("`libc` is not a direct dependency of
+this crate and adding one would edit `Cargo.lock`"). The audit offered two options — remove it, or keep
+it and use it — and **missed the manifest's reason for the third**: `Cargo.toml:54-60` keeps `libc` for
+the pty half of §4.3's native terminal ("the mature PTY crate §4.3 asks for is still an unapproved
+dependency; this is the substitutable half of it"), and its claim about the lock file checks out
+(`Cargo.lock` holds `libc 0.2.189`, listed by a dozen crates). So the dependency is deliberate and the
+*comment* was the defect. It now gives the reason that holds and can be measured — `kill(1)` needs no
+`unsafe` block, and `src/` contains **zero** occurrences of `unsafe` — and the measurement became a
+rule: `lib.rs` declares `#![deny(unsafe_code)]`, so the pty work `libc` is reserved for has to argue
+for itself at the item. Mutation proof: a planted `unsafe { 1 }` fails the build with
+`error: usage of an unsafe block` and the file restored byte-identically.
+
+**`docs/PRIVACY.md` had four false claims, and the most consequential is a privacy promise.** 「除你
+自己配置的 AI 请求外，应用不会主动连接任何服务器」 is false: the application itself fetches the pet's
+character library (`desktop_pet/resources.rs:53`) and the ACP agent registry
+(`commands/agent_catalogue.rs:44`), and the bundled `opencode` engine is a separate process whose
+provider connections the document never mentioned at all. The master-password interface the document
+said did not exist has existed since `VaultKeySettings.vue` — whose own header comment names that line
+as what it obsoleted. The Windows-only paths are paired with Linux now, and the system-directory
+inventory gained the six directories the code defines (`agent-runtime/`, `downloads/`,
+`agent-recovery/`, `agent-profiles/`, `agent-catalogue/`, `desktop-pet/`) plus the WebView's own
+user-data directories, which a listing of this machine's real data directory shows and which is where
+the settings the same section lists actually live.
+
+**And `clippy` is the last gate step that could not fail — it has a ceiling now.** `cargo clippy` runs
+without `-D warnings` in the script and in CI, so it could only fail by crashing. It is held to **110**
+warning lines with slack on purpose (clippy's version is not pinned; an exact ceiling would break on a
+toolchain bump rather than on a change), proven by moving the ceiling rather than by waiting for
+fourteen warnings: at `CLIPPY_CEILING=96` the step fails with `FAIL clippy (exit 1) — 97 warning lines`
+and the run exits 1; restored byte-identically it passes. `check-dead-exports.py`'s `CEILING` is the
+same shape with no slack, and both files say why they differ.
+
+**Also this round, the first e2e coverage of the daily note** (`e2e/daily-note.spec.ts`, four cases,
+398 lines): the path the service computes, the template with its variables interpolated, and a second
+press opening the same note and keeping what was typed into it — with three mutations as its evidence,
+including one that showed the create-only refusal is a *second* guard behind the existence check.
+
+### What the audit lists that is still open
+
+Left open deliberately, because a fix written from a claim I have not verified against the code is the
+failure mode this round is about: §1.1's remaining PRIVACY items (the vault inventory's `plugins/` and
+`.tmp/` entries, and the percent-escaped history path at `:37`); §1.6's remaining guide rows
+(「索引」 opens a placeholder rather than a panel, the floating toolbar is always present rather than
+selection-triggered, the Base URL field renders for all seven providers, the graph's toolbar sits above
+the canvas, two settings pages are missing from the list, the save indicator has a fourth state, the
+page sizes include A3/A5/Legal, 专注模式 lives on the appearance page, and the bundled plugin is named
+`Status`); §1.7's `docs/test-plan.md`, which describes a test surface that no longer exists; and §2,
+§3 and §5's tables. They are the next round's work rather than this round's claims.
+
+### The gate
+
+| Step | Result |
+|---|---|
+| `verify` | PASS — **5926 tests across 3 package runs**, unchanged: the round's new spec is Playwright's, and vitest does not collect it |
+| `fmt` | PASS |
+| `clippy` | PASS — 97 warning lines, and for the first time **under a ceiling** rather than merely reported |
+| `instruments` | PASS |
+| `build` | PASS |
+| `rust` | PASS — **79 targets, 1409 passed, 0 failed**; the attribute and the comment add no cases, which is what an unchanged count should mean here |
+| `e2e` (`--with-e2e`) | PASS — **297 passed**, four more than §13's 293, which is the daily-note spec and nothing else |
+
+No bundles were rebuilt: the round's Rust change is a crate attribute and a comment, so nothing that
+runs changed. The packaged artefacts from §13 remain the current ones for the shipped behaviour.
+
+
+
 
 
 
