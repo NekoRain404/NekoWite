@@ -153,17 +153,40 @@ export function usePaletteEntries(options: UsePaletteEntriesOptions): UsePalette
 
   // A file appearing or disappearing elsewhere in the app invalidates the
   // cached walk; an open palette shows the new list at once.
-  let fsUnlisten: Promise<() => void> | null = null
+  //
+  // Registration can fail — a gateway with no such subscription, or a Tauri
+  // `listen` that rejects — and the rejection used to be dropped on the floor:
+  // the promise was stored raw and `.then` was called on it at unmount with no
+  // rejection arm, so the palette kept offering files the app no longer had and
+  // nothing was reported. The shape below is `use-note-graph.ts`'s, for the same
+  // call and the same reason, including its `disposed` guard: a subscription
+  // that arrives after this component is gone is released rather than stored.
+  let fsUnlisten: (() => void) | null = null
+  let disposed = false
 
   onMounted(() => {
-    fsUnlisten = fsService.onFsChange(() => {
-      vaultFileIndex.invalidate()
-      if (options.isOpen()) void loadFiles()
-    })
+    Promise.resolve(
+      fsService.onFsChange(() => {
+        vaultFileIndex.invalidate()
+        if (options.isOpen()) void loadFiles()
+      }),
+    )
+      .then((unlisten) => {
+        if (disposed) unlisten?.()
+        else fsUnlisten = unlisten
+      })
+      .catch(() => {
+        // No subscription: the walk is fetched on every open instead (see
+        // `refreshForOpen`), so the list can be stale for one open and not for
+        // longer — which is the honest answer, and a silent one is better than
+        // an unhandled rejection in a palette that still works.
+      })
   })
 
   onBeforeUnmount(() => {
-    void fsUnlisten?.then((unlisten) => unlisten())
+    disposed = true
+    fsUnlisten?.()
+    fsUnlisten = null
   })
 
   return { hasDocument, rows, flatRows, refreshForOpen }
