@@ -56,6 +56,13 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+# The e2e step only exists under `--with-e2e`, so `--only e2e` on its own would match nothing and the
+# script would say so and exit 2 — a request for exactly that step, answered with "no step matched".
+# Naming it in `--only` is the same request as passing the flag, so it implies it.
+case ",$ONLY," in
+  *",e2e,"*) WITH_E2E=1 ;;
+esac
+
 # The engine the process-level cases watch for has to be staged beside the built app, and removed
 # again afterwards: a `target/release/opencode` left behind makes a later `cargo test` pass for a
 # reason nobody chose (the handover's §9.1), and its absence makes those cases skip — which is what
@@ -199,8 +206,40 @@ step rust "the whole suite, process tests required" \
   rust_step
 
 if [ "$WITH_E2E" -eq 1 ]; then
-  step e2e "the Playwright suite" \
+  # Playwright resolves its browser cache from `XDG_CACHE_HOME` — which this script points at the
+  # repository's own scratch, for pnpm's sake, above. A machine whose browsers were installed the
+  # ordinary way (`pnpm exec playwright install chromium` → `~/.cache/ms-playwright`) therefore gets
+  # `browserType.launch: Executable doesn't exist` for every single test: 297 failures in about a
+  # millisecond each, which reads exactly like a catastrophic regression and is not one. The step
+  # pins the variable to whichever of the three plausible locations actually holds browsers, and
+  # turns "no browsers anywhere" into one readable line instead of 297 phantom failures.
+  e2e_step() {
+    local candidates=(
+      "${PLAYWRIGHT_BROWSERS_PATH:-}"
+      "$XDG_CACHE_HOME/ms-playwright"
+      "${HOME:-/nonexistent}/.cache/ms-playwright"
+    )
+    local found="" candidate
+    for candidate in "${candidates[@]}"; do
+      if [ -n "$candidate" ] && [ -d "$candidate" ]; then
+        found="$candidate"
+        break
+      fi
+    done
+    if [ -z "$found" ]; then
+      echo "no Playwright browsers in any of:" >&2
+      for candidate in "${candidates[@]}"; do
+        [ -n "$candidate" ] && echo "  $candidate" >&2
+      done
+      echo "install them with: pnpm --filter @nekowite/desktop exec playwright install chromium" >&2
+      return 1
+    fi
+    export PLAYWRIGHT_BROWSERS_PATH="$found"
+    echo "playwright browsers: $PLAYWRIGHT_BROWSERS_PATH"
     pnpm --filter @nekowite/desktop e2e
+  }
+  step e2e "the Playwright suite" \
+    e2e_step
 fi
 
 echo
