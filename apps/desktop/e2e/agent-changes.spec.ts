@@ -12,9 +12,17 @@
  * The review itself is the real service, and the events are real ones: a session is opened on the
  * memory runtime from T1 and the frames are pushed through `gateway.subscribe`, so what the panel
  * renders is what the contract's own validator let through. The view component is mounted directly
- * rather than found in the editor workspace, for the reason E1 and E4 mount theirs: hosting the
- * review is T16's wiring, and until it exists there is nothing in the running application to
- * drive. Every assertion below stays true once the workspace hosts it.
+ * rather than found in the editor workspace, for the reason E1 and E4 mount theirs: every rule
+ * below is about the component under a **scripted** runtime, and the application's own session is
+ * nobody's script.
+ *
+ * **This paragraph used to give a different reason, and it was false.** It said hosting the review
+ * was T16's wiring and that "until it exists there is nothing in the running application to drive".
+ * The hosting exists: `ui/EditorPane.vue` mounts `AgentChangedFiles` — this review's own surface —
+ * with a docblock saying why the list sits where the notes are (Review opens the note, Keep answers
+ * about it, Reject writes it back). What was genuinely missing was a test holding it there, and
+ * `ui/EditorPane.agentSurfaces.test.ts` is that test; the assertions below are unchanged by it,
+ * because a scripted runtime is still what they need.
  *
  * The host is a fake in the page, and it is deliberately a *fake*: T10's front end cannot write a
  * file at all — that is the property `no click here reaches a document` asserts — so what the fake
