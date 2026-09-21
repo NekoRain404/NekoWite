@@ -1450,7 +1450,7 @@ configuration that lints it. This is the second such row found this session; §1
 
 | Step | Result |
 |---|---|
-| `verify` | PASS — **5933 tests across 3 package runs**; §15's 5926 plus the seven in the MDX validation suite, which is the only test this round added to a vitest project |
+| `verify` | PASS — **5936 tests across 3 package runs**: §15's 5926, plus the seven in the MDX validation suite that this round pulled into a vitest project, plus the three in `history-typing.test.ts` |
 | `fmt` | PASS |
 | `clippy` | PASS — 97 warning lines, under the 110 ceiling |
 | `instruments` | PASS — 0 broken specifiers, 0 of 21 channels unnamed, 0 of 6 unemitted, 89 of 1372 exports uncalled (at the ceiling) |
@@ -1460,17 +1460,36 @@ configuration that lints it. This is the second such row found this session; §1
 | `rust` | PASS — **79 targets, 1409 passed, 0 failed** |
 | `e2e` (`--with-e2e`) | PASS — **297 passed**, unchanged from §15; the round's e2e work is the step that runs it, not the specs in it |
 
+One run, all nine steps, exit 0 — after the first attempt of exactly that run came back `FAIL e2e — 1 passed`
+for the browser-cache reason recorded above, which is the round's best illustration of its own theme: the
+gate is a reading, and a reading has to be true.
+
+**§1.5's release checklist is closed too.** The document's body described the Windows flow while the Linux
+path — the only one CI and the suites cover — appeared in a single bullet at the end, so a maintainer
+following it would not have staged `opencode` beside the portable binary: the failure
+`b14e2de fix(package): the portable executable shipped without its engine` already fixed once. It is now
+Linux-first with the Windows flow as a marked appendix, and the audit's individual claims are each
+corrected against the tree: the gate section lists CI's real steps and the two places CI is *weaker* than
+`scripts/gate.sh` (its `cargo test` does not set `NEKOWITE_REQUIRE_PROCESS_TESTS=1`, and root `pnpm test:e2e`
+uses the fixed port) rather than claiming "the same as CI"; the signature check no longer points at an
+`.exe` that does not exist; `LICENSE` is described as tracked, not 「尚未提交」; the source-tag instruction
+notes that `git tag` is empty and cites `b4bb816` as the hash precedent; and the changelog instruction
+notes that folding `## [Unreleased]` into `## [1.0.0]` would collide with `CHANGELOG.md:413`. The audit's
+last bullet stands as a fact about the gate rather than a defect in the document, and is now written into
+it: the browser suite drives Playwright's Chromium, not the WebKitGTK that ships.
+
 No bundles were rebuilt. Nothing the application runs at runtime changed this round: a vitest `include`
 pattern, a gate script, a CI workflow, a Rust module comment, and four documents.
 
 ### What the audit lists that is still open
 
 §1.2 (`docs/SECURITY.md`'s dormant gate), §1.3 (`docs/PLUGIN_SDK.md`), §1.4
-(`docs/PLUGIN_ISOLATION.md`), §1.5 (`docs/RELEASING.md` — the audit's most consequential remaining row,
-since it says the Linux path it omits can produce a broken release), §1.8 (`docs/RECOVERY.md`), §1.9
-(`docs/A11Y.md`), §1.10 (`docs/debug.md`, `docs/development-log.md`), and the §2, §3 and §5 tables.
-Plus the three gaps the rewritten test plan now names out loud: undo-step granularity, PDF export as an
-outcome, and window geometry through the backend.
+(`docs/PLUGIN_ISOLATION.md`), §1.8 (`docs/RECOVERY.md`), §1.9 (`docs/A11Y.md`), §1.10 (`docs/debug.md`,
+`docs/development-log.md`), and the §2, §3 and §5 tables. §1.5 and §1.6 are closed above; §1.1 and §1.7
+were closed in §15 and in this round respectively. Plus two gaps the rewritten test plan still names out
+loud — PDF export as an outcome (`use-note-export.ts` has no test file) and window geometry through the
+backend — and one the round found rather than inherited: CI never runs the process-level Rust cases,
+because it builds no package of this tree, so those cases are green there without executing.
 
 
 
