@@ -14,7 +14,12 @@
  * ones, because "the file accepted the decision" is a claim about actual bytes.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { listVaultPlugins, resetVaultPluginStateForTests, setVaultPluginDisabled } from './vault-plugin-registry'
+import {
+  listVaultPlugins,
+  readVaultPlugins,
+  resetVaultPluginStateForTests,
+  setVaultPluginDisabled,
+} from './vault-plugin-registry'
 import { isVaultPluginDisabled } from './governance-store'
 import {
   PLUGIN_GOVERNANCE_FILE,
@@ -322,5 +327,57 @@ describe('switching a plugin back on', () => {
     const rows = await listVaultPlugins(VAULT)
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ id: ID, disabled: true })
+  })
+})
+
+describe('what the switch file could be established as', () => {
+  // The rule the plugin list itself is held to, one layer down: "nothing here is
+  // switched off" and "the file that records it could not be verified" must not
+  // look alike. The rows come out of the in-memory record either way, so this
+  // value is the only thing that tells the reader which of the two they are
+  // looking at — and a panel that draws switches it cannot vouch for is the
+  // defect the toggle path was fixed for, one layer up.
+  it('reports a verified file, and the rows are its own', async () => {
+    await seedGovernanceFile({ disabled: [ID] })
+
+    const listing = await readVaultPlugins(VAULT)
+
+    expect(listing.switches).toBe('verified')
+    expect(listing.rows.map((row) => ({ id: row.id, disabled: row.disabled }))).toEqual([
+      { id: ID, disabled: true },
+    ])
+  })
+
+  it('reports a vault with no file yet as absent, which is not a failure', async () => {
+    const listing = await readVaultPlugins(VAULT)
+
+    expect(listing.switches).toBe('absent')
+    // The row is still drawn, and switched on: a vault that has never had a
+    // plugin switched off has no policy to apply, not an unreadable one.
+    expect(listing.rows.map((row) => row.disabled)).toEqual([false])
+  })
+
+  it('reports a file whose MAC did not verify as tampered, and does not read it', async () => {
+    await seedGovernanceFile({ disabled: [ID] })
+    tamperSeededFile()
+
+    const listing = await readVaultPlugins(VAULT)
+
+    expect(listing.switches).toBe('tampered')
+    // The file's own claim — `disabled: [ID]` — is not applied: an unverified
+    // envelope is not a policy, which is the whole reason it has its own answer.
+    expect(listing.rows.map((row) => row.disabled)).toEqual([false])
+  })
+
+  it('reports both shapes it cannot read as a policy as unreadable', async () => {
+    fsMock.files.set(fsKey(PLUGIN_GOVERNANCE_FILE), 'not a MAC envelope at all')
+    expect((await readVaultPlugins(VAULT)).switches).toBe('unreadable')
+
+    // The other shape: a genuine envelope over bytes that are not a policy. The
+    // MAC proves who wrote it, not that it means anything — and the app leaves
+    // both files exactly as they are.
+    const envelope = await createMacEnvelope('{ this is not json', KEY)
+    fsMock.files.set(fsKey(PLUGIN_GOVERNANCE_FILE), JSON.stringify(envelope))
+    expect((await readVaultPlugins(VAULT)).switches).toBe('unreadable')
   })
 })

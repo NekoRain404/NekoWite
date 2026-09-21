@@ -16,16 +16,22 @@ import PluginSettings from './PluginSettings.vue'
 import { useVaultSessionStore } from '../../../stores/vault-session'
 import { t } from '../../../i18n'
 import { onNotify } from '../../../services/errors'
-import type { VaultPluginSummary } from '../../../services/plugins'
+import type { VaultPluginSummary } from '../../../features/plugins'
+
+/** A listing whose switch file verified: the ordinary case, where the rows are
+ *  the vault's own state. The tampered/unreadable states get their own cases. */
+function verified(rows: VaultPluginSummary[]) {
+  return { rows, switches: 'verified' as const }
+}
 
 const mocks = vi.hoisted(() => ({
-  listVaultPlugins: vi.fn(),
+  readVaultPlugins: vi.fn(),
   setVaultPluginDisabled: vi.fn(),
   isPluginImportAllowedByCsp: vi.fn(() => true),
 }))
 
-vi.mock('../../../services/plugins', () => ({
-  listVaultPlugins: mocks.listVaultPlugins,
+vi.mock('../../../features/plugins', () => ({
+  readVaultPlugins: mocks.readVaultPlugins,
   setVaultPluginDisabled: mocks.setVaultPluginDisabled,
   isPluginImportAllowedByCsp: mocks.isPluginImportAllowedByCsp,
 }))
@@ -62,7 +68,7 @@ beforeEach(() => {
   localStorage.clear()
   pinia = createPinia()
   setActivePinia(pinia)
-  mocks.listVaultPlugins.mockReset()
+  mocks.readVaultPlugins.mockReset()
   mounted = []
   document.body.innerHTML = ''
   useVaultSessionStore().vault = '/vault'
@@ -76,7 +82,7 @@ afterEach(() => {
 
 describe('PluginSettings section', () => {
   it('says the folder could not be read, not that there are no plugins', async () => {
-    mocks.listVaultPlugins.mockRejectedValue(new Error('EACCES: permission denied'))
+    mocks.readVaultPlugins.mockRejectedValue(new Error('EACCES: permission denied'))
     await mountSection()
 
     expect(document.querySelector('[data-test="plugins-unreadable"]')?.textContent).toBe(
@@ -86,11 +92,43 @@ describe('PluginSettings section', () => {
   })
 
   it('says the library has no plugins when the read succeeded and found none', async () => {
-    mocks.listVaultPlugins.mockResolvedValue([])
+    mocks.readVaultPlugins.mockResolvedValue(verified([]))
     await mountSection()
 
     expect(document.body.textContent).toContain(t('settings.plugins.empty'))
     expect(document.querySelector('[data-test="plugins-unreadable"]')).toBeNull()
+  })
+
+  it('says the switches are not the vault’s when its state file was changed outside the app', async () => {
+    mocks.readVaultPlugins.mockResolvedValue({ rows: [ROW], switches: 'tampered' })
+    await mountSection()
+
+    expect(document.querySelector('[data-test="plugins-switches-unverified"]')?.textContent).toBe(
+      t('settings.plugins.switchesTampered'),
+    )
+    // The rows stay: the notice qualifies them, it does not replace them with an
+    // error state, because the switches below still work for this session.
+    expect(document.querySelector('.plugin-row')).not.toBeNull()
+  })
+
+  it('says the same about a file it cannot read as a policy, in its own words', async () => {
+    mocks.readVaultPlugins.mockResolvedValue({ rows: [ROW], switches: 'unreadable' })
+    await mountSection()
+
+    expect(document.querySelector('[data-test="plugins-switches-unverified"]')?.textContent).toBe(
+      t('settings.plugins.switchesUnreadable'),
+    )
+  })
+
+  it('says nothing about the state file when it verified, or when there is none', async () => {
+    mocks.readVaultPlugins.mockResolvedValue(verified([ROW]))
+    await mountSection()
+    expect(document.querySelector('[data-test="plugins-switches-unverified"]')).toBeNull()
+
+    document.body.innerHTML = ''
+    mocks.readVaultPlugins.mockResolvedValue({ rows: [ROW], switches: 'absent' })
+    await mountSection()
+    expect(document.querySelector('[data-test="plugins-switches-unverified"]')).toBeNull()
   })
 
   it('takes the tick back off the switch when the plugin could not be started', async () => {
@@ -98,7 +136,7 @@ describe('PluginSettings section', () => {
     // A refused switch (the gates said no, or the library's file would not take
     // the decision) leaves the record where it was, so the switch has to come
     // back off and say what stopped it.
-    mocks.listVaultPlugins.mockResolvedValue([ROW])
+    mocks.readVaultPlugins.mockResolvedValue(verified([ROW]))
     mocks.setVaultPluginDisabled.mockResolvedValue({
       disabled: true,
       refused: 'revoked: version 1.0.0 is no longer allowed',

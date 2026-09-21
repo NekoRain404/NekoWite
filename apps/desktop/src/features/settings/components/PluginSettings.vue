@@ -10,7 +10,7 @@
 import { t } from '../../../i18n'
 import { usePluginSettings } from '../composables/use-plugin-settings'
 
-const { runnable, loading, loadFailed, vaultPath, rows, togglePlugin } = usePluginSettings()
+const { runnable, loading, loadFailed, switches, vaultPath, rows, togglePlugin } = usePluginSettings()
 </script>
 
 <template>
@@ -22,6 +22,13 @@ const { runnable, loading, loadFailed, vaultPath, rows, togglePlugin } = usePlug
       class="settings-note plugin-blocked"
       data-test="plugins-blocked"
     >{{ t('settings.plugins.blocked') }}</span>
+    <!-- Its own `v-if` rather than a link in the chain below: the rows are what
+         it is about, and they are drawn even when the list is empty. -->
+    <span
+      v-if="switches === 'tampered' || switches === 'unreadable'"
+      class="settings-note plugin-switches-unverified"
+      data-test="plugins-switches-unverified"
+    >{{ switches === 'tampered' ? t('settings.plugins.switchesTampered') : t('settings.plugins.switchesUnreadable') }}</span>
     <span
       v-if="loading"
       class="settings-note"

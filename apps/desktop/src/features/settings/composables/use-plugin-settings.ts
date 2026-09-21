@@ -1,6 +1,6 @@
 import { computed, onMounted, ref, type ComputedRef, type Ref } from 'vue'
-import { isPluginImportAllowedByCsp, listVaultPlugins, setVaultPluginDisabled } from '../../../services/plugins'
-import type { VaultPluginSummary } from '../../../services/plugins'
+import { isPluginImportAllowedByCsp, readVaultPlugins, setVaultPluginDisabled } from '../../../features/plugins'
+import type { DisabledPluginsRead, VaultPluginSummary } from '../../../features/plugins'
 import { useVaultSessionStore } from '../../../stores/vault-session'
 import { notifyError } from '../../../services/errors'
 import { t } from '../../../i18n'
@@ -11,6 +11,10 @@ export interface PluginSettingsModel {
   loading: Ref<boolean>
   /** Set when the last read of the plugins folder FAILED. */
   loadFailed: Ref<boolean>
+  /** What the vault's stored switch state could be established as on the last
+   *  read. The rows' `disabled` flags come out of the in-memory record, so this
+   *  is the fact that says whether those flags are the vault's or the app's. */
+  switches: Ref<DisabledPluginsRead>
   vaultPath: ComputedRef<string>
   rows: Ref<VaultPluginSummary[]>
   togglePlugin: (row: VaultPluginSummary, enabled: boolean) => Promise<void>
@@ -41,6 +45,17 @@ export function usePluginSettings(): PluginSettingsModel {
    * and the trash section's `trashUnreadable`.
    */
   const loadFailed = ref(false)
+  /**
+   * What the last read established about the vault's switch file.
+   *
+   * "Nothing is switched off here" and "the file that records it could not be
+   * verified" must not render the same either — the rows below are drawn from
+   * the in-memory record, and with a tampered or unreadable file that record is
+   * this session's belief rather than the vault's contents. `absent` is the
+   * honest start: no read has happened yet, and a vault with no file is the same
+   * answer.
+   */
+  const switches = ref<DisabledPluginsRead>('absent')
   /** Whether THIS build can run plugin code at all. The list below reads the
    *  plugins folder either way, so a released build would otherwise show a tidy
    *  list of plugins with working-looking switches and never run one. */
@@ -56,11 +71,14 @@ export function usePluginSettings(): PluginSettingsModel {
     if (!vault) {
       rows.value = []
       loadFailed.value = false
+      switches.value = 'absent'
       return
     }
     loading.value = true
     try {
-      rows.value = await listVaultPlugins(vault)
+      const listing = await readVaultPlugins(vault)
+      rows.value = listing.rows
+      switches.value = listing.switches
       loadFailed.value = false
     } catch (e) {
       // The list is unknown, not empty. The toast carries the backend reason
@@ -69,6 +87,9 @@ export function usePluginSettings(): PluginSettingsModel {
       notifyError(t('settings.plugins.readFailed', { msg: e instanceof Error ? e.message : String(e) }))
       rows.value = []
       loadFailed.value = true
+      // `switches` is deliberately left where it was: the failure state owns the
+      // section (it renders the failure note instead of any row), so a value
+      // nothing draws must not be invented here.
     } finally {
       loading.value = false
     }
@@ -104,5 +125,5 @@ export function usePluginSettings(): PluginSettingsModel {
     void refreshPluginRows()
   })
 
-  return { runnable, loading, loadFailed, vaultPath, rows, togglePlugin, refreshPluginRows }
+  return { runnable, loading, loadFailed, switches, vaultPath, rows, togglePlugin, refreshPluginRows }
 }

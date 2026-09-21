@@ -25,7 +25,7 @@ import {
   resetGovernanceStoreForTests,
   setDisabledPluginRecord,
 } from './governance-store'
-import type { GovernanceSaveResult } from './governance-store'
+import type { DisabledPluginsRead, GovernanceSaveResult } from './governance-store'
 import { resetPermissionStateForTests } from './permissions'
 import { resetIntegrityStateForTests } from './integrity'
 import { resetTrustPolicyStateForTests } from './trust-policy'
@@ -46,23 +46,38 @@ export interface VaultPluginSummary {
   unstable: boolean
 }
 
+/** The vault's plugins, and what the stored switch state could be established as. */
+export interface VaultPluginListing {
+  rows: VaultPluginSummary[]
+  /** What the read of the vault's switch file established. The rows' `disabled`
+   *  flags come out of the in-memory record either way — this is the fact that
+   *  says whether that record can be trusted to match the vault, and it is the
+   *  caller's to report because a row cannot see it. */
+  switches: DisabledPluginsRead
+}
+
 /**
  * List the plugins in a vault for the settings surface: manifests are read, but
  * nothing is imported or executed (`preloadVaultPlugin` only reads files). The
  * flags come from the live state, so a row always describes what is actually
  * loaded rather than what the last load happened to do.
+ *
+ * The switch file's state is returned beside the rows rather than logged: a
+ * panel that draws every switch as "on" because the file could not be verified
+ * is describing a state the app does not hold, which is the defect the toggle
+ * path was fixed for (`setVaultPluginDisabled`) one layer up.
  */
-export async function listVaultPlugins(vault: string): Promise<VaultPluginSummary[]> {
+export async function readVaultPlugins(vault: string): Promise<VaultPluginListing> {
   // The switch is stored in the vault's governance file, which the strict-CSP
   // build never loads through the plugin path; read it here so the rows show
   // what is actually configured.
-  await refreshDisabledPlugins(vault)
+  const switches = await refreshDisabledPlugins(vault)
   const adapter = makeVaultPluginFsAdapter(vault)
   let entries: PluginFsEntry[]
   try {
     entries = await adapter.readdir(joinPath(vault, 'plugins'))
   } catch {
-    return []
+    return { rows: [], switches }
   }
   // Same shape the loader uses: only directories are candidate plugins.
   const dirs = entries.filter((e) => e.isDirectory()).map((e) => e.name)
@@ -85,7 +100,14 @@ export async function listVaultPlugins(vault: string): Promise<VaultPluginSummar
     })
   }
   out.sort((a, b) => a.id.localeCompare(b.id))
-  return out
+  return { rows: out, switches }
+}
+
+/** The rows alone, for a caller that has nothing to say about the switch file's
+ *  state. New callers should prefer [`readVaultPlugins`]: the state is the half
+ *  a panel needs to avoid drawing switches it cannot vouch for. */
+export async function listVaultPlugins(vault: string): Promise<VaultPluginSummary[]> {
+  return (await readVaultPlugins(vault)).rows
 }
 
 /**

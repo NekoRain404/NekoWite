@@ -12,16 +12,25 @@ import { usePluginSettings, type PluginSettingsModel } from './use-plugin-settin
 import { useVaultSessionStore } from '../../../stores/vault-session'
 import { onNotify } from '../../../services/errors'
 import { t } from '../../../i18n'
-import type { VaultPluginSummary } from '../../../services/plugins'
+import type { VaultPluginSummary } from '../../../features/plugins'
+
+/** A listing whose switch file verified, which is the ordinary case: the rows a
+ *  test is about, and the state that means the rows are the vault's own. */
+function verified(rows: VaultPluginSummary[]) {
+  return { rows, switches: 'verified' as const }
+}
 
 const mocks = vi.hoisted(() => ({
-  listVaultPlugins: vi.fn(),
+  readVaultPlugins: vi.fn(),
   setVaultPluginDisabled: vi.fn(),
   isPluginImportAllowedByCsp: vi.fn(() => true),
 }))
 
-vi.mock('../../../services/plugins', () => ({
-  listVaultPlugins: mocks.listVaultPlugins,
+// The feature entry point, not the `services/plugins` shim: this composable was
+// one of the three callers the shim's own doc names as un-migrated, and it reads
+// the listing (rows *and* the switch file's state) now.
+vi.mock('../../../features/plugins', () => ({
+  readVaultPlugins: mocks.readVaultPlugins,
   setVaultPluginDisabled: mocks.setVaultPluginDisabled,
   isPluginImportAllowedByCsp: mocks.isPluginImportAllowedByCsp,
 }))
@@ -59,7 +68,7 @@ beforeEach(() => {
   localStorage.clear()
   pinia = createPinia()
   setActivePinia(pinia)
-  mocks.listVaultPlugins.mockReset().mockResolvedValue([ALFA])
+  mocks.readVaultPlugins.mockReset().mockResolvedValue(verified([ALFA]))
   // The switch answers with what the app holds and what the file said; the
   // ordinary case is "applied, and the file took it".
   mocks.setVaultPluginDisabled
@@ -78,7 +87,7 @@ describe('usePluginSettings', () => {
     useVaultSessionStore().vault = '/vault'
     const m = await mountModel()
 
-    expect(mocks.listVaultPlugins).toHaveBeenCalledWith('/vault')
+    expect(mocks.readVaultPlugins).toHaveBeenCalledWith('/vault')
     expect(m.rows.value).toEqual([ALFA])
     expect(m.loading.value).toBe(false)
   })
@@ -86,8 +95,32 @@ describe('usePluginSettings', () => {
   it('lists nothing without a vault rather than reading an empty path', async () => {
     const m = await mountModel()
 
-    expect(mocks.listVaultPlugins).not.toHaveBeenCalled()
+    expect(mocks.readVaultPlugins).not.toHaveBeenCalled()
     expect(m.rows.value).toEqual([])
+    // No vault means no file was read, which is what `absent` says: the section
+    // must not warn about a file it never looked for.
+    expect(m.switches.value).toBe('absent')
+  })
+
+  it('carries what the vault’s switch file could be established as', async () => {
+    // The rows come out of the in-memory record, so with a file that could not be
+    // verified they are this session's belief. The model has to surface that, or
+    // the panel draws switches it cannot vouch for.
+    useVaultSessionStore().vault = '/vault'
+    mocks.readVaultPlugins.mockResolvedValue({ rows: [ALFA], switches: 'tampered' })
+    const m = await mountModel()
+
+    expect(m.switches.value).toBe('tampered')
+    // And the rows are still the rows: the notice explains them, it does not
+    // replace them.
+    expect(m.rows.value).toEqual([ALFA])
+  })
+
+  it('reports a verified file as verified, so nothing is warned about', async () => {
+    useVaultSessionStore().vault = '/vault'
+    const m = await mountModel()
+
+    expect(m.switches.value).toBe('verified')
   })
 
   it('shows an empty list when the read fails, not a stale one — and says that is what happened', async () => {
@@ -98,7 +131,7 @@ describe('usePluginSettings', () => {
     useVaultSessionStore().vault = '/vault'
     const messages: string[] = []
     const off = onNotify((msg) => messages.push(msg))
-    mocks.listVaultPlugins.mockRejectedValue(new Error('EACCES: permission denied'))
+    mocks.readVaultPlugins.mockRejectedValue(new Error('EACCES: permission denied'))
     const m = await mountModel()
     off()
 
@@ -111,11 +144,11 @@ describe('usePluginSettings', () => {
 
   it('clears the failure once a read succeeds', async () => {
     useVaultSessionStore().vault = '/vault'
-    mocks.listVaultPlugins.mockRejectedValue(new Error('unreadable'))
+    mocks.readVaultPlugins.mockRejectedValue(new Error('unreadable'))
     const m = await mountModel()
     expect(m.loadFailed.value).toBe(true)
 
-    mocks.listVaultPlugins.mockResolvedValue([ALFA])
+    mocks.readVaultPlugins.mockResolvedValue(verified([ALFA]))
     await m.refreshPluginRows()
 
     expect(m.loadFailed.value).toBe(false)
@@ -125,12 +158,12 @@ describe('usePluginSettings', () => {
   it('re-reads after a toggle, so the row reports the outcome and not the click', async () => {
     useVaultSessionStore().vault = '/vault'
     const m = await mountModel()
-    mocks.listVaultPlugins.mockResolvedValue([{ ...ALFA, disabled: true, active: false }])
+    mocks.readVaultPlugins.mockResolvedValue(verified([{ ...ALFA, disabled: true, active: false }]))
 
     await m.togglePlugin(ALFA, false)
 
     expect(mocks.setVaultPluginDisabled).toHaveBeenCalledWith('alfa', true, { vault: '/vault' })
-    expect(mocks.listVaultPlugins).toHaveBeenCalledTimes(2)
+    expect(mocks.readVaultPlugins).toHaveBeenCalledTimes(2)
     expect(m.rows.value[0]!.disabled).toBe(true)
   })
 
@@ -157,7 +190,7 @@ describe('usePluginSettings', () => {
       }),
     ])
     // Still re-read: the record is the answer to "did it move", the sentence is not.
-    expect(mocks.listVaultPlugins).toHaveBeenCalledTimes(2)
+    expect(mocks.readVaultPlugins).toHaveBeenCalledTimes(2)
   })
 
   it('says the decision is only for this session when the file did not take it', async () => {

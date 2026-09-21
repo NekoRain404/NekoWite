@@ -252,26 +252,55 @@ function resetTrustRecordsForTamper(): void {
   memoryDigestMap.clear()
 }
 
+/** What a read of the vault's stored switch state established.
+ *
+ *  Four cases rather than a boolean, because three of them mean the switches the
+ *  panel is about to draw are not what the vault says — and the panel holds
+ *  itself to exactly this rule for the plugin list one function above it ("this
+ *  library has no plugins" and "the plugins folder could not be read" must never
+ *  render the same, `use-plugin-settings.ts`). The same distinction is owed to
+ *  the file the switches live in. */
+export type DisabledPluginsRead =
+  /** Verified: the set in memory is what the file holds. */
+  | 'verified'
+  /** No file yet — a vault where no plugin has ever been switched off. */
+  | 'absent'
+  /** A MAC envelope whose MAC does not verify. Nothing in it is trusted, and the
+   *  app deliberately does not overwrite it (see `persistDisabledPlugins`). */
+  | 'tampered'
+  /** The file is there and is not a policy this app can read: not a MAC envelope
+   *  at all (`not-ours`), or a verified envelope whose payload does not parse.
+   *  It is left alone either way. */
+  | 'unreadable'
+
 /**
  * Read the disabled set straight from a vault's governance file.
  *
  * The loader normally applies it, but the loader is not always reached: the
  * strict-CSP build skips plugin loading entirely, so the settings panel - whose
  * job is to show and change this switch - has to be able to read it on its own.
- * A missing or unverifiable file reads as "nothing disabled": this must never
- * invent a policy, and never be the reason a panel fails to render.
+ * A missing or unverifiable file leaves the in-memory set untouched rather than
+ * clearing it: this must never invent a policy, and never be the reason a panel
+ * fails to render. What it does do is **say which of the four cases it hit**, so
+ * the caller can tell the reader that the switches below are not the vault's.
  */
-export async function refreshDisabledPlugins(vault: string): Promise<void> {
+export async function refreshDisabledPlugins(vault: string): Promise<DisabledPluginsRead> {
   try {
     const read = await readGovernanceFile(vault)
-    if (read.kind !== 'ok') return
+    if (read.kind === 'absent') return 'absent'
+    if (read.kind === 'tampered') return 'tampered'
+    if (read.kind === 'not-ours') return 'unreadable'
     const payload = JSON.parse(read.payload) as GovernanceFilePayload
     disabledPlugins.clear()
     for (const id of Array.isArray(payload.disabled) ? payload.disabled : []) {
       if (typeof id === 'string' && id) disabledPlugins.add(id)
     }
+    return 'verified'
   } catch {
-    /* no governance file yet */
+    // A MAC that verified over bytes that do not parse as JSON: the envelope
+    // proves who wrote it, not that it is a policy. Same answer as a file that
+    // is not ours, because the caller's move is the same one — leave it alone.
+    return 'unreadable'
   }
 }
 
