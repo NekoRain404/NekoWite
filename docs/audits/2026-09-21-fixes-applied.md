@@ -635,3 +635,53 @@ half of the start was missing instead of timing out anonymously. What was wrong 
 which assumed the staging step had been done by hand. It now stages the verified engine from
 `binaries/` before the suite and removes it on the way out, including after a failure — so the gate
 is reproducible by one command, which is the property the earlier gates only appeared to have.
+
+---
+
+## 7. The e2e suite, which none of the four gate commands runs
+
+`AGENTS.md`'s four commands are `typecheck`, `lint`, `test` and `build`. The e2e suite — 293 cases
+driving the real UI in a real browser — is a fifth thing, and it is not in any of them (`T3` in the
+review says the same about `pnpm perf`). It was run for the first time in this session, at the
+maintainer's instruction to use real control and debugging rather than only unit-level readings, and
+it found things nothing else could.
+
+**What it caught.** Eleven cases red, all from the line-budget programme:
+
+```text
+Error: const CHARACTER_WINDOW_SLACK: (f64, f64) = ( is not in window_host.rs
+```
+
+`e2e/support/petWindow.ts` reads the character window's rule out of the Rust source rather than
+restating it, and the wave-1 split moved `CHARACTER_WINDOW_SLACK` and `CHARACTER_WINDOW_MIN_WIDTH`
+into `window_host/geometry.rs`. The unit suite, `pnpm typecheck`, lint and the whole Rust suite all
+passed, because every one of them *imports or links* the code — the e2e reader is the only reader
+that resolves a **file name**, and a path only a test walks is invisible to a compiler. **`e2e/**` is
+the third place a split can break a reader**, after `tests/**/*.rs` and `src/**/*.ts`, and the
+programme's own reference sweep had looked in neither of the first two only because it enumerated
+extensions rather than readers.
+
+**Two load-sensitive cases, both real flakes.** `combo-popup-width` measured a list `446.18` wide
+against a field of `454.28` — a `0.98` scale mid-arrival — and `select-popup-scope` measured a gap of
+`3.9495` where the assertion wants `4 ± 0.05`. Both passed when run alone (12/12 and 6/6) and failed
+under 16 workers; the first also reported *identical* numbers twice, which is what falsified the
+first guess at it (a field still growing). Both now call `support/settled.ts`, which the repository
+already had for exactly this: the first fix had addressed the wrong quantity, and the file that says
+so was already in the tree.
+
+**A trap worth one line of its own.** The pnpm workaround this environment needs
+(`XDG_CACHE_HOME=$PWD/.tmp-review-pnpm/cache`) also moves Playwright's browser directory, so the
+first run failed all 293 cases with `Executable doesn't exist at …/ms-playwright/…`. The suite needs
+`PLAYWRIGHT_BROWSERS_PATH=$HOME/.cache/ms-playwright` alongside it. Nothing about the failure said
+"browsers", only that every case had failed in three milliseconds.
+
+**The four runs, in order**, which is also the method: 293 failed (browsers); **281 passed / 12
+failed** (the eleven pet cases and one flake); **292 passed / 1 failed** (after re-pointing the
+reader; the remaining failure the second flake); **293 passed, exit 0** (after `settled`). The first
+and last are the readings that matter — the middle two are what turned a red suite into a diagnosis.
+
+**What this says about the gate.** A green `pnpm test` said nothing about any of it, and the release
+checklist in `AGENTS.md` does not run the suite that found it. Adding `pnpm e2e` to the gate is a
+maintainer's decision — it needs a browser, a dev server and three minutes — but it belongs in the
+same conversation as the review's `T3`, because "green" currently means four commands rather than the
+whole tree's evidence.
