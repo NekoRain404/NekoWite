@@ -226,13 +226,29 @@
 - 新增 `apps/desktop/perf/perf.bench.test.ts` + `perf/perf.setup.ts` +
   `vitest.perf.config.ts`；根/桌面脚本 `pnpm perf` 运行，断言 §9 上界。CI 可用
   `pnpm --filter @nekowite/desktop perf` 作为门禁；其为独立 vitest 配置，不进入常规
-  `pnpm test` 主套件（CI 慢时可为注释跳过的选项）。
+  `pnpm test` 主套件。
+
+> **校正（2026-09-22 核）**：上面那句的括号原文是「CI 慢时可为注释跳过的选项」，与同一句里
+> 「作为门禁」自相矛盾，也不再成立——`.github/workflows/ci.yml` 无条件运行 `pnpm perf`，且它同时
+> 在 `pnpm verify` 里，所以 `scripts/gate.sh` 与 CI 都会跑它。**不要**在 CI 慢时把它注释掉：
+> 它断言的是 `docs/PERF.md` 的预算，去掉它等于去掉性能门禁。该 harness 今天的状态是
+> 2 个文件 / 10 个用例，全部通过（见 §5）。
+
 - 本文件作为基准记录；后续每次改动在表格上方追加一行 before/after。
 
 ### 5. 回归验证
+
+> 这一节是**那一轮（2026-09-15）的记录**，不是今天的读数；数字保留原样以免抹掉历史。
 
 - `pnpm -r typecheck`（clean）、`pnpm -r lint`（0/0）、`pnpm -r test`（editor-core 259、
   plugin-host 49、desktop 776 = 769 基线 + 7 新测试）、`cd apps/desktop && pnpm exec playwright test`
   （4/4）、`cd apps/desktop/src-tauri && cargo test`（42+8+4 等全部通过，0 警告）。
 - 新增/更新测试：vault 遍历截断“表面化+抬起”、后端 search 可配置/不静默、图片导入编码前
   拒绝、perf 上界断言（各 harness 用例内 `expect`）。
+
+> **今天（2026-09-22）的同一批读数**，来自 `scripts/gate.sh` 一次全绿运行
+> （`verify` 步骤的日志，四个 vitest 项目各自一行）：
+> editor-core **74 文件 / 962 用例**、plugin-host **10 / 132**、desktop **443 / 4842**、
+> perf **2 / 10**；合计 **5936 用例，0 失败**。Playwright 是 **297 用例 / 46 文件**（`--list` 实测），
+> Rust 是 **79 个目标 / 1409 用例通过、0 失败**。lint 不再是 0/0：桌面项目的告警上限是 462，
+> 即告警**可以**让 lint 失败。这些数字会继续变，所以引用时请连同命令一起抄。

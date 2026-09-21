@@ -32,6 +32,8 @@ A local-first desktop knowledge base: WYSIWYG writing, files that stay plain Mar
 | **研究与引用** | 导入 `.bib`、`.ris`、CSL，侧栏管理 `@citekey` 并自动编号 |
 | **公式与发布** | MathLive 可视化编辑 `$…$` / `$$…$$`，导出 HTML 与 PDF |
 | **AI 辅助** | 自备密钥；续写（Tab）、侧栏聊天、选区改写 / 润色 / 翻译。可接 OpenAI、Claude、Gemini、Grok、DeepSeek，或本地 LM Studio / Ollama |
+| **智能体** | 右侧栏的智能体面板，在你打开的知识库里工作；随包内置一个引擎，也可以自己指定其它 ACP 智能体程序 |
+| **桌面宠物** | 一个可以待在桌面上的角色窗口（外加一只浮球），七个设置子页：常规与交互、角色与动画、气泡与消息、通知与声音、养成与统计、项目与多角色、高级与集成 |
 | **个人工作流** | 每日笔记、模板、维基链接、知识图谱、历史版本、回收站、主题 |
 
 ## 适合谁
@@ -93,15 +95,22 @@ Linux 二进制依赖系统里的 GTK / WebKitGTK。Windows 便携版不需要�
 ## 开发
 
 ```bash
+bash scripts/gate.sh --with-e2e   # 全部门禁：与本仓库 CI 等价的一步（见下）
 pnpm typecheck       # 全仓库类型检查
-pnpm lint            # ESLint
-pnpm test            # Vitest
-pnpm test:e2e        # Playwright
+pnpm lint            # ESLint（桌面项目的告警上限是 462，超过即失败）
+pnpm test            # Vitest，三个包
+pnpm perf            # 性能预算断言（独立 vitest 配置，CI 与 gate 都会跑）
+pnpm test:e2e        # Playwright（直接调用会用固定端口 1420；本地跑请用 pnpm --filter @nekowite/desktop e2e）
 pnpm build           # 桌面前端
 
 cd apps/desktop/src-tauri
 cargo test
 ```
+
+`scripts/gate.sh` 依次跑 typecheck / lint / 三个包的测试 / perf / 构建 / `check:export-css`、
+`cargo fmt --check`、`cargo clippy`（带告警上限）、三个源码 instrument、两个 shell 套件、
+WebKit harness 测试、`tauri build` 与 Rust 全套（含真实进程用例），`--with-e2e` 再加 Playwright；
+每一步都会跑完再汇总，任一步失败退出码为 1。只跑子集用 `--only verify,fmt`。
 
 ```text
 apps/desktop/              Vue 界面与 Tauri 壳
@@ -147,7 +156,9 @@ export default definePlugin({
 - [docs/SECURITY.md](docs/SECURITY.md) — 安全模型里已强制 / 未实现的项
 - [docs/RECOVERY.md](docs/RECOVERY.md) — 历史、回收站、冲突与崩溃恢复
 - [docs/RELEASING.md](docs/RELEASING.md) — 维护者：版本号、门禁与打包
+- [docs/test-plan.md](docs/test-plan.md) — 实际跑哪些测试、每个功能域由哪些文件守着、哪里还没人守
 - [docs/PERF.md](docs/PERF.md) · [docs/A11Y.md](docs/A11Y.md)
+- [docs/audits/](docs/audits/) — 逐条核对文档与代码的记录（含每次修复后的账本）
 - [CHANGELOG.md](CHANGELOG.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md) · [.github/SECURITY.md](.github/SECURITY.md)
 
