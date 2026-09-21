@@ -1945,4 +1945,6 @@ has.
 | `rust` | PASS — 79 targets, 1409 passed, 0 failed |
 | `e2e` (`--with-e2e`) | PASS — 297 passed |
 
-One run, all nine steps, exit 0. No bundles were rebuilt: this round adds one probe and three documents.
+Two runs: the first failed its `e2e` step on the flake recorded above (296 of 297), the second — the
+reading in this table — is all nine steps and exit 0. No bundles were rebuilt: this round adds one
+probe, three documents and an e2e case's timing.
