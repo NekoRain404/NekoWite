@@ -8,7 +8,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::desktop_pet::window_host::{
-    ball_window_size, character_window_size, HostRefusal, PetWindowHost, Placement,
+    ball_window_size, character_window_size, HostRefusal, PetWindowHost, Placement, WindowAction,
     BALL_DEFAULT_SIZE, BALL_LABEL, CHARACTER_DEFAULT_SIZE, DEFAULT_CHARACTER_CAP,
     DESKTOP_PET_BALL_PAGE, DESKTOP_PET_PAGE, HARD_CHARACTER_CAP, PET_WINDOW_STYLE,
 };
@@ -342,6 +342,68 @@ fn the_bubble_fits_the_window_it_is_drawn_in() {
         "the bubble caps itself at {bubble}px and the window it is drawn in is {window_width}px \
          wide (the window rule's own width): the surface would be clipped, not overhanging"
     );
+}
+
+/// **A hide that one window refuses must not claim the pet is hidden — and must not stop asking.**
+///
+/// Finding F6 in `docs/audits/2026-09-21-code-review.md`. The old body used `?` inside the loop, so
+/// the first refusal returned early: the windows after it were never asked, the ball was never
+/// asked at all, and the flag was left at the value it had — which is the one thing the old code
+/// got half right by accident. Two properties are asserted here, and they are the two halves of the
+/// fix: every window is asked before anything is reported, and the flag moves only when all of them
+/// agreed.
+///
+/// The refusal is planted on the **first** window on purpose. That is the arrangement in which the
+/// early return is visible in the calls the fake recorded: the second window and the ball come
+/// after the refusal, so a run that stopped at it can be told from one that finished.
+#[test]
+fn a_window_that_will_not_hide_leaves_the_pet_visible_and_still_asks_the_rest() {
+    let (mut host, surfaces) = with_host();
+    let first = host.open("cat").expect("the first character fits");
+    let second = host.open("dog").expect("the second character fits");
+    assert!(host.is_visible(), "a pet that was just opened is on screen");
+    surfaces
+        .state()
+        .refuse_visible
+        .push(first.label.as_str().to_string());
+
+    let refusal = host
+        .set_visible(false)
+        .expect_err("one window refused to hide, so the hide was not complete");
+    assert!(
+        matches!(
+            refusal,
+            HostRefusal::Window {
+                action: WindowAction::Hide,
+                ..
+            }
+        ),
+        "the refusal must name the hide it was asked for"
+    );
+
+    // Every window was asked, in order, and the ball with them — the loop finishes before the
+    // refusal is reported, which is what stops a half-hidden pet from being the outcome.
+    assert_eq!(
+        surfaces.state().visible_calls,
+        vec![
+            (first.label.as_str().to_string(), false),
+            (second.label.as_str().to_string(), false),
+            (BALL_LABEL.to_string(), false),
+        ]
+    );
+
+    // The flag still says the pet is visible, because one window is: a page that read it would draw
+    // the control that hides the pet again rather than claiming a state the desktop contradicts.
+    assert!(
+        host.is_visible(),
+        "a pet with a window still on screen must not report itself hidden"
+    );
+
+    // And that control is the retry: once the compositor stops refusing, the *same* call finishes
+    // the job and moves the flag, which is the whole reason the flag was left alone.
+    surfaces.state().refuse_visible.clear();
+    host.set_visible(false).expect("the retry is the same call");
+    assert!(!host.is_visible(), "the second ask hid every window");
 }
 
 /// The number that follows a marker in a TypeScript file, or a panic naming the marker that moved.

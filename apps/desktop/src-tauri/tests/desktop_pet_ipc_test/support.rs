@@ -56,6 +56,12 @@ pub struct SurfaceState {
     /// Labels the window system refuses to close, so the host's handling of a real failure has a
     /// way to be reached without inventing one.
     pub refuse_close: Vec<String>,
+    /// Every show/hide, as (label, value) in the order they were asked for. `hidden` holds the
+    /// current answer; this holds the *asking*, which is what a case about a half-failed hide needs
+    /// — the point of the fix is that the windows after the refusing one were still asked.
+    pub visible_calls: Vec<(String, bool)>,
+    /// Labels this fake refuses to show or hide, the way `refuse_close` refuses a close.
+    pub refuse_visible: Vec<String>,
     pub work_area: Option<WorkArea>,
 }
 
@@ -186,9 +192,14 @@ impl PetSurfaces for FakeSurfaces {
     }
 
     fn set_visible(&mut self, label: &PetWindowLabel, visible: bool) -> Result<(), String> {
-        self.state()
-            .hidden
-            .insert(label.as_str().to_string(), !visible);
+        let mut state = self.state();
+        state
+            .visible_calls
+            .push((label.as_str().to_string(), visible));
+        if state.refuse_visible.contains(&label.as_str().to_string()) {
+            return Err("the compositor declined".to_string());
+        }
+        state.hidden.insert(label.as_str().to_string(), !visible);
         Ok(())
     }
 

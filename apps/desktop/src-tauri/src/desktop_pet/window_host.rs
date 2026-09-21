@@ -318,29 +318,45 @@ impl PetWindowHost {
     /// `set_visible(true)` — from the settings page, which is the way back on a desktop with no
     /// tray (§7.1) — shows the same pet again. A teardown here would make the difference between
     /// "not now" and "never" a matter of which button the user found.
+    ///
+    /// Every open window is asked before anything is reported, and the flag moves only when all of
+    /// them agreed — the shape [`Self::set_always_on_top`] and [`Self::set_character_size`] already
+    /// use. A compositor that refused one window has not refused the others, so stopping at the
+    /// first would leave the rest in the state the user just changed; and a pet that reported
+    /// itself hidden while a window was still on screen would be a control that lies (§5.2), as
+    /// well as taking away the retry — asking again is the same call, and it is only offered while
+    /// the flag still says the pet is visible.
     pub fn set_visible(&mut self, visible: bool) -> Result<(), HostRefusal> {
         let labels: Vec<PetWindowLabel> = self
             .instances
             .iter()
             .map(|open| open.label.clone())
             .collect();
+        let mut refusal: Option<HostRefusal> = None;
         for label in &labels {
-            self.surfaces
-                .set_visible(label, visible)
-                .map_err(|detail| HostRefusal::Window {
+            if let Err(detail) = self.surfaces.set_visible(label, visible) {
+                refusal.get_or_insert(HostRefusal::Window {
                     action: if visible {
                         WindowAction::Show
                     } else {
                         WindowAction::Hide
                     },
                     detail,
-                })?;
+                });
+            }
         }
         // The ball is shown and hidden with the rest, and a ball that is not open is not an error:
         // its own switch may be off, or the compositor may have refused it.
-        self.ball.set_visible(&mut *self.surfaces, visible)?;
-        self.visible = visible;
-        Ok(())
+        if let Err(refused) = self.ball.set_visible(&mut *self.surfaces, visible) {
+            refusal.get_or_insert(refused);
+        }
+        if refusal.is_none() {
+            self.visible = visible;
+        }
+        match refusal {
+            Some(refused) => Err(refused),
+            None => Ok(()),
+        }
     }
 
     /// Whether clicks that land on this window reach the pet or pass through to what is below it.
