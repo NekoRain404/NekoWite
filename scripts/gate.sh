@@ -104,7 +104,15 @@ step fmt "cargo fmt --all --check" \
 step clippy "cargo clippy --all-targets --locked" \
   cargo clippy --all-targets --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
 step instruments "the three source instruments" \
-  bash -c 'python3 scripts/check-reachability.py && python3 scripts/check-dead-exports.py && python3 scripts/check-channels.py'
+  bash -c 'status=0
+    # All three run even when one fails, for the reason the whole gate does: the log is worth more
+    # than the first failure. Two of them exit non-zero on their findings; `check-dead-exports`
+    # reports and always exits 0 (see its docstring and ci.yml).
+    for instrument in check-reachability check-dead-exports check-channels; do
+      echo "--- $instrument"
+      python3 "scripts/$instrument.py" || status=1
+    done
+    exit $status'
 step build "tauri build --no-bundle" \
   pnpm --filter @nekowite/desktop exec tauri build --no-bundle
 

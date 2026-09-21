@@ -1103,6 +1103,83 @@ ran the Playwright suite through the same harness and reported **293 passed** on
 the count matters there for the same reason it does everywhere else, since a run that collected no
 tests exits 0 and prints no such line.
 
+---
+
+## 13. The round after that: two writers that ignored the reader's rule, and instruments CI never ran
+
+**The reader stated the rule in its own type, and two writers broke it.** `governance-file.ts` names
+four outcomes and attaches the instruction to one of them: content that is "not a MAC envelope we
+wrote" is "Never clobber it". Both writers did:
+
+- `persistDisabledPlugins` refused `tampered` and let `not-ours` fall through — no payload, so it
+  built a fresh one and wrote it over whatever sat at `.nekowite/plugin-governance.json`. Flipping one
+  plugin switch destroyed a user file that happened to live there; on a mismatched read it wrote a file
+  that then verifies as ours, so the state it never read was gone for good.
+- `scheduleGovernanceSave` wrote the in-memory records after 250 ms **with no read at all**. It is
+  armed by trusting a key, revoking a plugin, moving a version range and the digest map, and
+  `loadGovernanceFile` sets `currentVault` *before* it decides the file was tampered — so the two
+  states the reader refuses were exactly the two this path would overwrite.
+
+Both obey it now: the switch write answers the new `'unreadable'`, and the debounced write goes
+through `writeGovernanceFromMemory`, which reads first and skips on `tampered` or `not-ours` — reading
+is what makes the check *current* rather than a statement about load time. `absent` is still written in
+both, because a first run is how a vault gets a file at all.
+
+**`'unreadable'` gets its own sentence rather than reusing tampering's**, because the user's remedy
+differs: a tampered file is one of ours that someone changed (fix or remove it), a foreign one is
+somebody else's and the app leaves it alone. `unwrittenReason` and the new
+`settings.plugins.toggleForeignFile` copy say so in both languages, and the panel's read-side notice
+already carried the matching state from §11.
+
+The evidence is a **new spec beside the store**, which had no spec of its own at all — including the
+debounced writer, which nothing had ever driven. It asserts the **bytes** rather than a return value
+("nothing was written" is exactly the claim a summary can make while the file changes underneath it)
+and asserts that **no write was even attempted**, since a write that landed and was then compared
+byte-for-byte would still have replaced the file's inode, mode and mtime.
+
+**The mutation checks, and one of them nearly lied.** Both are recorded here because the second
+attempt is the instructive one:
+
+| Mutation | Reading |
+|---|---|
+| the switch write's `not-ours` guard removed | exit 1, exactly two cases red: `expected 'saved' to be 'unreadable'` and the registry's toggle case |
+| the debounced writer's read removed | exit 1, exactly its two refusal cases red |
+| **first attempt** at the first mutation: removed the *reader's* identically-spelled line | **all 23 tests passed** — the mutation was not applied to the code under test, and only the assertion that the guard was really gone caught it |
+
+**Three instruments that CI never ran, and none of which could fail.** They found three
+unreachable-code instances for the review; they were run by hand, and a checkout that only saw CI had
+no reading of them. They are stdlib Python over the source tree, so the `check` job can run them — but
+all three ended in `return 0`, so adding them as they were would have produced a step that can only
+fail if the script crashes, and a comment calling that a gate. Two of them now can fail, and the third
+is documented as the reading it is:
+
+| Instrument | Verdict |
+|---|---|
+| `check-reachability.py` | exits **1** on a specifier that resolves to nothing (its other list — 552 unreachable spec files and configs — stays a report) |
+| `check-channels.py` | exits **1** on a channel emitted to nobody, or listened for with no emitter; both failures are silent in the running app |
+| `check-dead-exports.py` | always exits 0, and its docstring now says why: ~ninety uncalled exports are mostly "exported so the spec can reach it", so failing would make the gate red on a healthy tree (the ratchet is a decision, recorded here, not taken) |
+
+Read both ways: healthy tree, all three exit 0; a planted `import … from './this-does-not-exist-xyz'`
+gives `FAIL: 1 specifier(s) resolve to nothing` and exit 1; a planted `listen('planted-channel')` in
+the adapter gives exit 1. Both plants were removed byte-identically, and the workflow still parses.
+
+### The gate
+
+| Step | Result |
+|---|---|
+| `verify` | PASS — **5926 tests across 3 package runs** (seven more than the previous round: the six new writer cases and the registry's foreign-file case), lint at its ceiling, perf's 10, the renderer build, `check:export-css` |
+| `fmt` | PASS |
+| `clippy` | PASS — 97 warning lines, unchanged |
+| `instruments` | PASS — and this is the first round the step could have failed: two of the three now exit non-zero on their findings, which is why the step was re-run on its own after the loop replaced the `&&` chain (the chain would have hidden the other two instruments' sections behind the first failure) |
+| `build` | PASS |
+| `rust` | PASS — **79 targets, 1409 passed, 0 failed**, no skip announcements; unchanged from the previous round, as a round with no Rust source change should read |
+
+The e2e suite was not re-run: the round's frontend change is a new refusal sentence on a path the
+Playwright suite does not drive (toggling a plugin needs a library with plugins, and this build does
+not load them), and the panel's rendering is unchanged.
+
+
+
 
 
 
