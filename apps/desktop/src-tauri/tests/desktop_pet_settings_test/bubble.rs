@@ -214,11 +214,7 @@ fn bubble_of(read: &PetAppearance) -> &BubbleMessage {
 }
 
 /// A `message` record's whole submission, so a write in these cases is the one the page makes.
-fn message_write(
-    store: &PetSettingsStore,
-    revision: f64,
-    changes: &[(&str, Value)],
-) -> PetSettingsWrite {
+fn message_write(revision: f64, changes: &[(&str, Value)]) -> PetSettingsWrite {
     PetSettingsWrite {
         domain: PetSettingsDomain::Message,
         revision,
@@ -250,7 +246,6 @@ fn the_lines_and_the_layout_a_window_is_handed_are_the_ones_the_store_holds() {
 
     // The write the 气泡与消息 page makes: a phrase the user typed, and a layout.
     let outcome = store.apply(&message_write(
-        &store,
         PET_SETTINGS_INITIAL_REVISION as f64,
         &[
             ("quickBubbles", json!(["先喝口水", "整理一下引用"])),
@@ -333,7 +328,6 @@ fn the_bubble_rides_every_appearance_arm_because_the_bubble_is_drawn_in_all_of_t
     // leave a fresh install drawing the built-in layout for a user who chose another.
     let (store, _data) = support::store("bubble-domain-arms");
     store.apply(&message_write(
-        &store,
         PET_SETTINGS_INITIAL_REVISION as f64,
         &[
             ("quickBubbles", json!(["在的"])),
@@ -398,11 +392,7 @@ fn the_bubble_theme_a_window_is_handed_is_the_member_the_store_holds() {
     for member in ["light", "dark", "system"] {
         let store_read = store.read(PetSettingsDomain::Message);
         let revision = store_read.record().expect("a message record").revision;
-        let outcome = store.apply(&message_write(
-            &store,
-            revision as f64,
-            &[("theme", json!(member))],
-        ));
+        let outcome = store.apply(&message_write(revision as f64, &[("theme", json!(member))]));
         assert!(
             matches!(outcome, PetSettingsUpdate::Applied { .. }),
             "the write the settings page makes: {outcome:?}"
@@ -435,7 +425,6 @@ fn the_bubble_size_and_dot_a_window_is_handed_are_the_ones_the_store_holds() {
     let store_read = store.read(PetSettingsDomain::Message);
     let revision = store_read.record().expect("a message record").revision;
     let outcome = store.apply(&message_write(
-        &store,
         revision as f64,
         &[("fontSize", json!(14)), ("dot", json!("claude"))],
     ));

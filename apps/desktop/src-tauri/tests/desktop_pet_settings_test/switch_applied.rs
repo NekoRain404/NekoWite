@@ -187,7 +187,7 @@ fn the_switches_are_the_state_and_a_contradictory_master_is_not_an_input() {
 /// cannot be told wrongly — which is why it draws no such control (`PetGeneralSettings.vue`).
 #[test]
 fn a_stored_record_reads_back_with_the_master_its_switches_mean() {
-    let (store, data) = support::store("master-derived");
+    let (store, _data) = support::store("master-derived");
     write_record(
         &store,
         PET_SETTINGS_SCHEMA_VERSION,
@@ -222,7 +222,7 @@ fn a_stored_record_reads_back_with_the_master_its_switches_mean() {
 /// which is the direction the derivation exists to make unarguable.
 #[test]
 fn the_master_follows_a_single_switch_that_is_still_on() {
-    let (store, data) = support::store("master-derived-one");
+    let (store, _data) = support::store("master-derived-one");
     write_record(
         &store,
         PET_SETTINGS_SCHEMA_VERSION,

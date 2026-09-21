@@ -23,9 +23,10 @@
 //! compiles rather than a copy of it.
 
 // The re-exports `skills.rs` writes for the library are unused in a copy that reaches only part of
-// it, which is what a `#[path]`-included module looks like from one target's side.
+// it, and the items this target never calls are reported as dead rather than being dead — both are
+// what a `#[path]`-included module looks like from one target's side (`desktop_pet_resources_test.rs`).
 #[path = "../src/agent_runtime/skills.rs"]
-#[allow(unused_imports)]
+#[allow(dead_code, unused_imports)]
 mod skills;
 
 use std::fs;

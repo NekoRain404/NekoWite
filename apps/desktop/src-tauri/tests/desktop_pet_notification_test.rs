@@ -40,7 +40,6 @@
 // and `desktop_pet_settings_test.rs`'s own header both describe. `use` rather than `pub use`: the
 // name is bound here, under the path every case below already writes, and nothing outside this
 // crate can reach it.
-use nekowite_lib::agent_runtime;
 use nekowite_lib::desktop_pet;
 
 // `#[path]` rather than a bare `mod`, for the reason `desktop_pet_ipc_test.rs` gives: this target's

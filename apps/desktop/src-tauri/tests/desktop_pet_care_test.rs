@@ -27,7 +27,12 @@
 //! One target and one command: `cargo test --test desktop_pet_care_test` runs all of them, because a
 //! test in a file nobody runs is not evidence.
 
+// The read and codec paths these cases do not reach are dead in this compilation unit rather than
+// in the library — a `#[path]`-included module looks like this from one target's side, which is the
+// note `desktop_pet_resources_test.rs` carries for its trees. `unused_imports` is here because
+// `care_ledger.rs`'s own `codec::Decoded` import is one of them.
 #[path = "../src/desktop_pet"]
+#[allow(dead_code, unused_imports)]
 mod desktop_pet {
     pub mod care_ledger;
 }

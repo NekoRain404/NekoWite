@@ -47,7 +47,10 @@
 // than reached through `nekowite_lib` because `move_no_clobber` is `pub(crate)`: the transaction's
 // commit point is that function, and a test that used a different one would be testing a different
 // transaction. `agent_settings_ipc_test.rs` declares its tree for the same reason.
+// Only `fs_error` is live in this crate, which compiles the file for the publish path above; the
+// rest of it is reported as dead rather than being dead, the note the trees below carry.
 #[path = "../src/errors.rs"]
+#[allow(dead_code)]
 mod errors;
 // Only the paths `storage::atomic_write` reaches are live in this crate; the rest of these two
 // trees is reported as dead rather than being dead, the same note `agent_settings_ipc_test.rs`
@@ -67,7 +70,11 @@ mod storage {
     pub mod temp_files;
 }
 
+// The catalogue, fetch and remote halves are the library's to reach; these cases reach only what
+// they assert on, so the rest is reported as dead rather than being dead, and `resources.rs`'s
+// re-exports with it. The same note the two trees above carry.
 #[path = "../src/desktop_pet"]
+#[allow(dead_code, unused_imports)]
 mod desktop_pet {
     pub mod resources;
 }

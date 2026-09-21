@@ -139,11 +139,6 @@ impl FakeSurfaces {
         self.state().always_on_top.clone()
     }
 
-    /// Every resize the host asked for, in order.
-    pub fn resizes(&self) -> Vec<(String, (f64, f64))> {
-        self.state().resized.clone()
-    }
-
     /// The live windows that are not the ball's.
     pub fn live_characters(&self) -> Vec<String> {
         self.live()

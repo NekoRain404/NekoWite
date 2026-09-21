@@ -111,16 +111,9 @@ fn identity() -> AgentIdentity {
     }
 }
 
-/// A reverse request, as the engine's own frame: `id`, `method`, `params`. The
-/// fixture sends it verbatim, so what is tested is the engine's real shape and
-/// not a shape this file invented for itself.
-fn request(method: &str, path: &Path, tail: &str) -> String {
-    format!(
-        r#"{{"jsonrpc":"2.0","id":"fs-1","method":"{method}","params":{{"sessionId":"ses_fake_1","path":{},"sessionId_unused":null{tail}}}}}"#,
-        serde_json::to_string(&path.to_string_lossy().into_owned()).expect("path")
-    )
-}
-
+// The two requests the fixture is handed, written as the engine's own frames (`id`, `method`,
+// `params`) rather than assembled from a struct this file invented: the fixture passes them through
+// verbatim, so what is tested is the engine's real shape.
 fn write_request(path: &Path) -> String {
     format!(
         r#"{{"jsonrpc":"2.0","id":"fs-1","method":"fs/write_text_file","params":{{"sessionId":"ses_fake_1","path":{},"content":"HELLO"}}}}"#,

@@ -33,7 +33,7 @@ use nekowite_lib::desktop_pet::settings::{
     PET_SETTINGS_INITIAL_REVISION, PET_SETTINGS_SCHEMA_VERSION,
 };
 use nekowite_lib::desktop_pet::window_host::{stored_always_on_top, BALL_LABEL, PET_WINDOW_STYLE};
-use nekowite_lib::desktop_pet::{PetWindowHost, UNSELECTED_CHARACTER};
+use nekowite_lib::desktop_pet::UNSELECTED_CHARACTER;
 
 use crate::support;
 

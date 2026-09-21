@@ -48,7 +48,7 @@ fn a_record_this_build_did_not_write_touches_no_window() {
 /// was written is what it has to keep meaning: `enabled` on was a pet, both windows of it.
 #[test]
 fn a_record_from_before_the_switch_existed_opens_the_windows_it_always_did() {
-    let (store, data) = support::store("startup-before-characterWindow");
+    let (store, _data) = support::store("startup-before-characterWindow");
     write_record(
         &store,
         PET_SETTINGS_SCHEMA_VERSION - 1,
