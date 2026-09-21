@@ -24,6 +24,7 @@
 #   fmt         `cargo fmt --all --check`
 #   clippy      `cargo clippy --all-targets --locked` (reported, not ratcheted; see the audit ledger)
 #   instruments `check-reachability.py`, `check-dead-exports.py`, `check-channels.py`
+#   scripts     the suites that test this repository's own shell scripts
 #   build       `tauri build --no-bundle` — the artefact the process-level cases below drive
 #   rust        the whole suite with `NEKOWITE_REQUIRE_PROCESS_TESTS=1`, so a case that cannot run
 #               fails instead of skipping (finding T1)
@@ -138,6 +139,38 @@ step instruments "the three source instruments" \
       python3 "scripts/$instrument.py" || status=1
     done
     exit $status'
+# The two suites that test the repository's own shell scripts. They were written and left unrun: no
+# step here and no job in CI invoked either, so both could rot to a permanent failure with every check
+# green — the same "a reading that does not mean what it says" the other instruments exist to stop,
+# one level up (the scripts guard the project and nothing guarded the scripts).
+#
+# Each suite prints one `PASS:`/`FAIL:` line per check and sets its exit code from the failures it
+# counted, so the exit code is a *summary* of the log rather than independent evidence — a suite that
+# lost that last line would exit 0 with `FAIL:` in its output, and a step reading only the status
+# would call that green. The log is therefore read as well, and a `FAIL:` line fails this step
+# whatever the suite's own status says.
+scripts_step() {
+  local status=0 failed_checks=0 suite_status=0
+  # Inside the gate's own log directory rather than `/tmp`, so the per-suite output it collects is
+  # kept as evidence beside the log it is summarised from.
+  local collected="$LOG_DIR/scripts.checks"
+  : > "$collected"
+  for suite in boot-probe package-linux; do
+    echo "--- $suite.test.sh"
+    suite_status=0
+    bash "scripts/$suite.test.sh" > "$collected" 2>&1 || suite_status=$?
+    cat "$collected"
+    [ "$suite_status" -eq 0 ] || status=1
+    failed_checks=$((failed_checks + $(grep -c '^FAIL: ' "$collected" || true)))
+  done
+  if [ "$failed_checks" -gt 0 ]; then
+    echo "scripts: $failed_checks check(s) printed FAIL — see $collected" >&2
+    status=1
+  fi
+  return $status
+}
+step scripts "the shell-script suites" \
+  scripts_step
 step build "tauri build --no-bundle" \
   pnpm --filter @nekowite/desktop exec tauri build --no-bundle
 
@@ -182,6 +215,15 @@ $(grep -E '^test result:' "$log" 2>/dev/null | awk -F'[ ;]' '{p+=$4; f+=$6} END 
       ;;
     clippy)
       target_count=" — $(grep -c '^warning' "$log" 2>/dev/null || echo 0) warning lines"
+      ;;
+    scripts)
+      # Each suite prints one `PASS: <name>`/`FAIL: <name>` line per check. Both are counted, and the
+      # failures are shown even on a red step: a count of passing checks alone read "89 checks" for a
+      # run that had failed, which is the reading-that-flatters defect this gate exists to stop. The
+      # two numbers also say the suites ran their cases rather than exiting 0 having done nothing — a
+      # suite whose assertions were deleted passes with either count at zero.
+      target_count=" — $(grep -c '^PASS: ' "$log" 2>/dev/null || echo 0) checks passed, \
+$(grep -c '^FAIL: ' "$log" 2>/dev/null || echo 0) failed"
       ;;
     e2e)
       # Playwright's own last line. A run that collected nothing says "no tests found" and never

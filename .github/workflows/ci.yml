@@ -31,6 +31,22 @@ jobs:
           python3 scripts/check-reachability.py
           python3 scripts/check-dead-exports.py
           python3 scripts/check-channels.py
+      # The suites that test this repository's own shell scripts. Like the instruments above, both
+      # existed and nothing invoked them — not this workflow, not `scripts/gate.sh` — so either could
+      # have rotted to a permanent failure with every job green. `scripts/gate.sh` runs the same two
+      # locally.
+      #
+      # `package-linux.test.sh` needs a real `rpm` on the machine: it mocks `rpm` with a command that
+      # only exits 0, and asserts that `scripts/package-linux.sh` rejects that decoy and pins the real
+      # tool (`RPM version N`) instead — the case the packager turns into "no working RPM tool". Whether
+      # the runner image already ships it was not verifiable from this repository, so the dependency is
+      # declared rather than assumed: installing a package that is already present is a no-op, and the
+      # suite fails for a readable reason either way. `boot-probe.test.sh` needs only Node, since it
+      # mocks the X server, the session bus and `pkill` itself.
+      - run: sudo apt-get update && sudo apt-get install -y rpm
+      - run: |
+          bash scripts/boot-probe.test.sh
+          bash scripts/package-linux.test.sh
       - run: pnpm test
       # The perf harness is a separate vitest project, so `pnpm test` never
       # reached it — and it sat broken for two stages because nothing ran it.
