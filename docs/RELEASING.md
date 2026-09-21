@@ -1,6 +1,10 @@
-# 发布流程（1.0，Windows）
+# 发布流程（1.0）
 
-> 面向维护者：把当前工作区变成一次公开发布的清单。命令都在仓库根目录、用 Git Bash 执行。
+> 面向维护者：把当前工作区变成一次公开发布的清单。命令都在仓库根目录执行。
+>
+> **本文件的主线是 Linux（deb / rpm / AppImage / 便携二进制），那是 `AGENTS.md` 指定的目标平台，
+> 也是仓库里唯一被测试和 CI 覆盖的打包路径。** Windows 便携版是另一条线，历史上是主要交付物，
+> 现在没有 CI 覆盖，其流程保留在 §7 作为附录。
 
 ## 1. 版本号（4 个文件 + 变更日志）
 
@@ -8,81 +12,138 @@
 | --- | --- |
 | `package.json` | `version` |
 | `apps/desktop/package.json` | `version` |
-| `apps/desktop/src-tauri/tauri.conf.json` | `version`（**打包脚本用它决定产物文件名**） |
+| `apps/desktop/src-tauri/tauri.conf.json` | `version`（**打包脚本用它决定产物文件名**：`scripts/package-linux.sh:7`） |
 | `apps/desktop/src-tauri/Cargo.toml` | `[package] version`（改完构建一次，让 `Cargo.lock` 同步） |
 
-- `CHANGELOG.md`：把 `## [Unreleased]` 的内容整理成新版本条目。
-- 界面版本号不再是硬编码：`apps/desktop/src/ui/StatusBar.vue` 通过
+- `CHANGELOG.md`：`## [Unreleased]` 在第 5 行，`## [1.0.0] - 2026-08-29` 已存在（第 413 行）。
+  所以**不要**按旧流程把 `## [Unreleased]` 改名成 `## [1.0.0]`——那会撞上已经发布的条目。
+  1.0 之后的改动继续留在 `## [Unreleased]`，发布时改成下一个版本号；只有确实要修订 1.0.0 本身，
+  才去动那一条并在条目里写明修订了什么。
+- 界面版本号不是硬编码：`apps/desktop/src/ui/StatusBar.vue` 通过
   `apps/desktop/src/platform/app-version.ts` 读构建版本（打包版问 Tauri 的 `getVersion()`，
-  浏览器与单测回落到 vite 注入的 `__APP_VERSION__`）。该组件自己的注释记录了它曾写死 `v0.1.0`
-  的那段历史。
+  浏览器与单测回落到 vite 注入的 `__APP_VERSION__`）。
 
 ## 2. 门禁（全绿才打包）
 
-与 CI（`.github/workflows/ci.yml`）一致：
+一条命令就是全部门禁（`.github/workflows/ci.yml` 的两个 job 与它逐步对应）：
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm typecheck
-pnpm lint
-pnpm test
-pnpm --filter @nekowite/desktop build
-pnpm --filter @nekowite/desktop check:export-css
-pnpm --filter @nekowite/desktop exec playwright install chromium   # 首次需要
-pnpm test:e2e
-cd apps/desktop/src-tauri && cargo test --locked && cargo clippy --all-targets --locked && cargo build --locked
+bash scripts/gate.sh --with-e2e
 ```
 
-注意 `bash scripts/package-win.sh` 自己只跑 desktop 的 test / typecheck / lint；**Rust 的 test / clippy / build 不在脚本里**，需要先手动跑过。
+它依次跑 `verify`（`pnpm verify`：typecheck、lint、三个包的 vitest、perf、renderer 构建、
+`check:export-css`）、`cargo fmt --all --check`、`cargo clippy --all-targets --locked`（带告警上限）、
+三个 Python instrument、两个 shell 套件、WebKit harness 测试、`tauri build --no-bundle`、
+`NEKOWITE_REQUIRE_PROCESS_TESTS=1 cargo test`，最后是 Playwright。**任一步失败退出码为 1**，
+且每一步都会跑完再汇总。`--only <名字逗号分隔>` 只跑子集。
 
-## 3. 打包
+要手工照抄 CI 的话，`check` job 的顺序是：`pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm lint`、
+三个 instrument、`sudo apt-get install -y rpm`、两个 shell 套件、`pnpm --filter @nekowite/desktop test:webkit-harness`、
+`pnpm test`、`pnpm perf`、`pnpm --filter @nekowite/desktop build`、`… check:export-css`、
+`… exec playwright install --with-deps chromium`、`pnpm test:e2e`；`rust` job 是 `cargo test --locked`、
+`cargo build --locked`、`cargo clippy --all-targets --locked`、`cargo fmt --all --check`。
+两者合起来和 `scripts/gate.sh --with-e2e` 覆盖的范围相同，只有 e2e 的入口不同：root 的 `pnpm test:e2e`
+直接调 playwright（端口固定 1420），gate 里的 e2e 走 `pnpm e2e`，由 `scripts/run-e2e.mjs` 先要一个空闲端口。
+**打包脚本自己只跑 desktop 的 test / typecheck / lint**（`scripts/package-linux.sh:35-39`），Rust 侧、
+instrument 与 e2e 都不在其中，所以先跑 §2 的命令，再打包。
+
+## 3. 打包（Linux）
 
 ```bash
-# 便携版（默认；免安装，双击直接运行）
-bash scripts/package-win.sh
-#   产物：release/nekowite_<version>_x64.exe
-
-# 可选：NSIS 安装包
-PORTABLE=0 bash scripts/package-win.sh
-#   产物：release/nekowite_<version>_x64-setup.exe
+pnpm package:linux        # 即 bash scripts/package-linux.sh
 ```
 
-- 脚本先用 `node -p` 读 `tauri.conf.json` 的 version 拼出文件名，然后在构建前 `taskkill` 掉正在运行的旧版本进程（避免 exe 被占用）。
-- 便携版走 `tauri build --no-bundle`（不生成安装器）；`PORTABLE=0` 走 `tauri build --bundles nsis`。
-- `release/` 在 `.gitignore` 里，产物不入库。
+脚本自己会走七步，失败即停（`set -euo pipefail`，并用 flock 拒绝并发的第二次运行）：
 
-## 4. 签名现状与 SmartScreen
+1. `[1/7]` 校验待打入的引擎：`bash scripts/verify-opencode-linux.sh`。
+2. `[2/7]`–`[3/7]` desktop 的测试与 typecheck / lint。
+3. `[4/7]` `tauri build` 一次产出 deb、rpm、AppImage；AppImage 用缓存的 type2 runtime。
+4. `[5/7]` 把**本次构建的**产物暂存到 `release/.candidate.XXXXXX/`：便携二进制
+   `nekowite_<version>_x64`、引擎 `opencode`、以及三个包。
+5. `[6/7]` 校验引擎：暂存的 `opencode` 必须与
+   `apps/desktop/src-tauri/binaries/opencode-x86_64-unknown-linux-gnu` 逐字节相同，
+   且每个包解开后引擎同样通过 `verify-opencode-linux.sh --bundle`。
+6. `[7/7]` 校验第三方声明：每个包解开后的 `copyright`（deb / AppImage）或
+   `THIRD-PARTY-NOTICES.txt`（rpm）必须与 `src-tauri/THIRD-PARTY-NOTICES.txt` 逐字节相同，
+   且以 `END OF THIRD-PARTY NOTICES` 结尾。
+7. 发布（这一步没有编号）：逐个改名到 `release/`，**先前的同名产物先备份到
+   `release/superseded/build.XXXXXX/`**（任何一次改名失败都会把上一代恢复回来），
+   最后对每个发布的文件打印 `sha256sum`。
 
-- **当前二进制没有代码签名。** `tauri.conf.json` 的 `bundle` 里没有 `windows` 签名配置，CI 与 `scripts/package-win.sh` 都没有签名步骤。
-- 后果：首次运行未签名程序时 Windows SmartScreen 会拦截（「Windows 已保护你的电脑」），需要点「更多信息 → 仍要运行」；部分企业策略会直接阻止。发布说明里必须写清楚这一点。
-- 复核方式（拿到 exe 后）：在 PowerShell 里运行 `Get-AuthenticodeSignature release/nekowite_1.0.0_x64.exe`，未签名时 `Status` 为 `NotSigned`。
-- 代码签名证书（OV/EV、时间戳服务）属于待决事项；拿到证书后再在 `bundle.windows` 里配置证书指纹或自定义签名命令。
+产物（`release/`，已在 `.gitignore` 里，不入库）：
+
+| 文件 | 用途 |
+| --- | --- |
+| `nekowite_<version>_x64` | 便携二进制 |
+| `opencode` | 内置智能体引擎，**必须与便携二进制放在同一目录** |
+| `nekowite_<version>_amd64.deb` | Debian / Ubuntu 安装包 |
+| `nekowite-<version>-1.x86_64.rpm` | Fedora / RHEL 安装包 |
+| `nekowite_<version>_amd64.AppImage` | 免安装单体 |
+
+**为什么要强调引擎和便携二进制放在一起**：便携产物不是自包含的，应用启动智能体时会去找同目录的
+`opencode`。只复制 `nekowite_<version>_x64` 一个文件，装出来的应用其他功能都正常、只有智能体面板起不来
+——这是这个仓库最典型的「开发树是绿的、包是坏的」，而且**真的发生过**：
+`b14e2de fix(package): the portable executable shipped without its engine` 就是为它补的 37 行。
+`[6/7]` 的存在就是为了让这件事在发布前失败，而不是在用户机器上失败。
+
+## 4. 签名现状
+
+- **Linux 的三个包没有 GPG 签名。** 这是 Linux 侧真正的缺口：无论用哪种方式分发，用户都无法验证
+  包确实来自这里；仓库目前也没有发布公钥的位置。要补的话，需要先决定密钥托管与公钥分发方式。
+- **Windows 二进制没有 Authenticode 签名**（`tauri.conf.json` 的 `bundle` 里没有 `windows` 签名配置，
+  `scripts/package-win.sh` 也没有签名步骤）——见 §7。
+- 无论哪一侧，**发布说明里都要写清楚签名现状**，不要留给用户自己发现。
 
 ## 5. 记录 SHA-256
 
-- `scripts/package-win.sh` 最后会对产物执行 `sha256sum`，把输出抄下来。
-- 建议同时写进发布说明与 `CHANGELOG.md` 对应版本条目（仓库历史里有先例：`docs: pin the verified portable exe hash`）。
-- 分发时只发布 `release/` 里的产物；源码以 git tag（例如 `v1.0.0`）为准。
+- `scripts/package-linux.sh` 在最后对 `release/` 里每个产物执行 `sha256sum`，把输出抄下来。
+- 建议同时写进发布说明与 `CHANGELOG.md` 对应条目（仓库里有先例：`b4bb816 docs: pin the verified
+  portable exe hash`）。
+- 分发时只发布 `release/` 里的产物。
+- **源码以 git tag 为准——但今天仓库里一个 tag 都没有**（`git tag` 输出为空）。所以发布时要么创建
+  `v<version>` 这个 tag 并推上去，要么在发布说明里写明源码对应哪个 commit；不要引用一个不存在的 tag。
 
 ## 6. 人工验收（自动化覆盖不到）
 
-在一台干净机器上，双击便携版：
+在一台干净机器上，用 deb 或 AppImage 各装一次：
 
-1. 打开一个测试文件夹作为知识库；新建、编辑、`Ctrl+S` 保存，重启确认内容还在。
-2. 删除一篇笔记 → 回收站恢复；连续保存几次 → 历史版本可对比并恢复。
-3. 导出 HTML 与 PDF（PDF 走系统打印对话框）。
-4. 配置本地模型（默认 `http://localhost:1234/v1`），验证 Tab 续写、聊天、选区改写；关掉「启用 AI 功能」后确认不再发请求。
-5. 打开设置 → AI →「最近的 AI 活动」，确认有记录且不含正文。
-6. 确认知识库里出现 `.nekowite/`，删除笔记后出现 `.nekowite-trash/`；`%APPDATA%\dev.nekowite.app\.nekowite\stronghold.bin` 存在且非明文。
-7. 首次启动确认 SmartScreen 表现与发布说明一致。
+1. AppImage：`chmod +x nekowite_<version>_amd64.AppImage && ./nekowite_<version>_amd64.AppImage`；
+   deb：`sudo apt install ./nekowite_<version>_amd64.deb` 后从应用菜单启动。
+2. 打开一个测试文件夹作为知识库；新建、编辑、`Ctrl+S` 保存，重启确认内容还在。
+3. 删除一篇笔记 → 回收站恢复；连续保存几次 → 历史版本可对比并恢复。
+4. 导出 HTML 与 PDF（PDF 走系统打印对话框）。
+5. 打开智能体面板，确认内置引擎能起来（这一步验证的正是 §3 里那个「引擎必须在旁边」的条件）。
+6. 配置本地模型（默认 `http://localhost:1234/v1`），验证 Tab 续写、聊天、选区改写；
+   关掉「启用 AI 功能」后确认不再发请求；设置 → AI →「最近的 AI 活动」有记录且不含正文。
+7. 确认知识库里出现 `.nekowite/`，删除笔记后出现 `.nekowite-trash/`；
+   数据目录 `~/.local/share/dev.nekowite.app/.nekowite/stronghold.bin` 存在且非明文。
+8. 退出应用；确认没有残留的 `nekowite` 进程。
 
-## 7. 待决事项（不是工程工作）
+## 7. 附录：Windows 便携版（历史路径，当前不受 CI 覆盖）
 
-- **代码签名证书**：见第 4 节；没有它，每次发布都要在说明里解释 SmartScreen 提示。
-- **许可证**：工作区里已有一份 MIT 的 `LICENSE`（尚未提交），`package.json` 与 `apps/desktop/package.json` 也加了 `"license": "MIT"`；发布前需要最终确认这一选择并提交。
-- **自动更新端点**：当前没有更新检查（没有 updater 插件、没有端点）。若要发布后可自动升级，需要先决定托管位置与更新签名密钥。
-- **macOS 构建**：图标资源已包含 `.icns`，但仓库没有对应的打包脚本；需要单独的构建流水线。
-- **Linux 打包已经有了**：`pnpm package:linux`（即 `scripts/package-linux.sh`）一次构建出
-  `release/` 下的 `nekowite_<version>_x64`、`opencode`、deb、rpm 与 AppImage，并对每个包做引擎与
-  第三方声明的校验。**它是唯一受支持的发布路径**；本文件其余部分的 `package-win.sh` 流程不是。
-  Linux 侧真正的待决项是这三个包**没有 GPG 签名**，本文件没有覆盖。
+```bash
+bash scripts/package-win.sh                 # 便携版：release/nekowite_<version>_x64.exe
+PORTABLE=0 bash scripts/package-win.sh      # NSIS 安装包：release/nekowite_<version>_x64-setup.exe
+```
+
+- 脚本先用 `node -p` 读 `tauri.conf.json` 的 version 拼出文件名，构建前 `taskkill` 掉旧版本进程。
+- 未签名时 Windows SmartScreen 会拦截（「Windows 已保护你的电脑」），需要「更多信息 → 仍要运行」；
+  复核方式是在 PowerShell 里对**刚构建出来的那个 exe** 运行
+  `Get-AuthenticodeSignature <路径>`，未签名时 `Status` 为 `NotSigned`。
+- 这条路径产出的 `.exe` 不在 `release/` 里（本机只构建 Linux 产物），所以上面的命令必须用你自己
+  刚生成的路径，而不是抄一个示例文件名。
+- 引擎由 `tauri.conf.json` 的 `bundle.externalBin` 声明（`:35`），必须随应用一起分发；
+  `scripts/package-win.sh` 对此没有任何校验（它不出现 `opencode` 这个词），所以 Windows 侧的
+  这一条只能人工确认：产物旁边应当有 `opencode.exe`。
+
+## 8. 待决事项（不是工程工作）
+
+- **Linux 包的 GPG 签名**：见 §4；需要先决定密钥托管与公钥分发。
+- **Windows 代码签名证书**（OV/EV、时间戳服务）：见 §7；拿到证书后在 `bundle.windows` 里配置证书
+  指纹或自定义签名命令。
+- **源码 tag**：仓库目前没有任何 tag（§5）。
+- **自动更新端点**：当前没有更新检查（没有 updater 插件、没有端点）。若要发布后可自动升级，
+  需要先决定托管位置与更新签名密钥。
+- **macOS 构建**：图标资源已包含 `.icns`，但仓库没有对应的打包脚本，也没有 CI；需要单独的流水线。
+- **许可证**：MIT 的 `LICENSE` **已经提交**（`git ls-files LICENSE` 有它），两个 `package.json` 也写了
+  `"license": "MIT"`；这项工作只剩在发布说明里确认。
