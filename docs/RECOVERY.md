@@ -15,8 +15,17 @@ revolves around the on-disk file plus snapshots the gateway records around it.
 
 Every successful **save** makes the gateway record a snapshot of the **previous** file
 content before overwriting it. The gateway keeps the most recent `maxHistory`
-snapshots per file (default 10, from settings). Saving a **new** file does not create a
-snapshot (there is nothing to protect).
+snapshots per file (default 10, from settings). Three things are **not** snapshotted, and
+only the first is obvious:
+
+- a **new** file — there is nothing to protect (`storage/history_snapshot.rs` refuses an
+  empty relative path);
+- a save whose previous content was **empty** (`old_content.is_empty()` returns early) —
+  an empty file has no version worth keeping;
+- a save whose content is **unchanged** (`storage/save_store.rs`: the snapshot is taken only when
+  `!old_content.is_empty() && old_content != content`) — a no-op save does not grow the
+  history, which is what keeps a re-save or an autosave tick from pushing real versions out
+  of the ten-slot window.
 
 Closed loop:
 
@@ -28,8 +37,8 @@ Closed loop:
   `savedContent`, clears `dirty`, and notes the write as self-originated so the fs-watcher
   does not mistake it for an external change.
 
-Tests: `services/gateways/memory.test.ts` (snapshot + prune + readHistory + restoreHistory),
-`stores/tabs.test.ts` `restoreHistoryToActive`, `ui/HistoryPanel.test.ts`.
+Tests: `platform/gateways/memory.test.ts` (snapshot + prune + readHistory + restoreHistory),
+`stores/tab-recovery.test.ts` `restoreHistoryToActive`, `ui/HistoryPanel.test.ts`.
 
 ---
 
@@ -41,12 +50,13 @@ Closed loop:
 
 - `tabs.deleteTabFile` → `fsService.deleteFile(vault, path)`. The gateway stores the content
   under a trash key (path-encoded) and returns the trash path. The tab is closed.
-- `AppSidebar` lists trash entries and can `restoreFromTrash(vault, trashPath)` — which
+- `AppSidebar` (`features/sidebar/components/AppSidebar.vue`) lists trash entries and can
+  `restoreFromTrash(vault, trashPath)` — which
   restores the original content to its original path (and refuses if a file already exists
   there). `clearTrash` permanently deletes all entries and returns the count.
 
-Tests: `services/gateways/memory.test.ts` (deleteFile → trash, restoreFromTrash, clearTrash),
-`ui/AppSidebar.vue` (restore + clear wired to the gateway).
+Tests: `platform/gateways/memory.test.ts` (deleteFile → trash, restoreFromTrash, clearTrash),
+`features/sidebar/composables/use-sidebar-trash.test.ts` (restore + clear wired to the gateway).
 
 ---
 
@@ -66,18 +76,24 @@ Decision function (`services/errors.ts` `decideConflict`):
 
 The `ConflictDialog` offers:
 
-- **Use disk (discard local)** — `tabs.reloadFromDisk(tabId)` reads the disk content,
-  adopts it, clears `dirty`, and closes the dialog.
+- **Use disk (discard local)** — `tabs.reloadFromDisk(tabId)` reads the disk content and
+  adopts it, clearing `dirty`. **It does not close the dialog**: closing is the caller's
+  decision, and `components/ConflictDialog.vue`'s own comment records why ("Deliberately no close
+  here") — a component that both performs the reload and dismisses itself cannot be asked
+  to reload without dismissing.
 - **Keep local** — closes the dialog without touching the tab; the local (unsaved) content
   stays and the tab remains dirty.
 - **Later** — closes the dialog; the user can act later (the watcher keeps reporting).
 - **Escape** — same as "Later" (closes without action).
 
 The dialog uses `useFocusTrap` to keep keyboard focus inside it while open, restores focus
-on close, and is labelled (`role="dialog" aria-modal="true" aria-labelledby`).
+on close, and is labelled (`role="dialog" aria-modal="true" aria-labelledby`). Focus starts
+on the dialog itself rather than its first control, because that control is the destructive
+「以磁盘为准」 — see `docs/A11Y.md` §3.
 
 Tests: `services/errors.test.ts` (decideConflict), `components/ConflictDialog.test.ts`
-(focus trap, reloadDisk adopts disk content, keepLocal keeps local, Escape closes).
+(focus trap, the disk reload asked for rather than performed, keepLocal keeps local, Escape
+closes without asking for one).
 
 ---
 
@@ -97,10 +113,11 @@ makes the lost window **recoverable** (not silently dropped):
   last time… restore the latest version?"). Restoring calls
   `restoreHistoryToActive`; dismissing leaves the disk file as-is.
 - **Temp-asset reconciliation**: paste/drop images are staged in `.tmp` and moved into the
-  note's assets dir on first save (`relocatePendingAssets`). If a crash happens before the
-  first save, the `.tmp` asset is still on disk and the note body still references it, so a
-  later save relocates it. Failed/stranded `.tmp` assets do not block saving (best-effort).
-- **Orphaned `.tmp` scan + auto-GC** (`app/recoveryClosedLoop.ts`): on vault open the app
+  note's assets dir on first save (`relocate` in `stores/tab-assets.ts`). If a crash happens
+  before the first save, the `.tmp` asset is still on disk and the note body still references
+  it, so a later save relocates it. Failed/stranded `.tmp` assets do not block saving
+  (best-effort).
+- **Orphaned `.tmp` scan + auto-GC** (`app/recovery-closed-loop.ts`): on vault open the app
   scans `.tmp`, then partitions the files into *referenced* (still held by an open tab — a
   pending staged asset or a `.tmp` src in the live body) and *orphaned* (crash-litter nobody
   references). Referenced files are left for the normal relocation-on-save. Orphaned files
@@ -111,11 +128,10 @@ makes the lost window **recoverable** (not silently dropped):
   non-blocking (fire-and-forget from the bootstrap, never awaiting the vault open), and re-arm
   on each vault switch after cancelling the prior vault's in-flight run.
 
-Tests: `stores/tabs.test.ts` `checkCrashRecovery` (differs → prompt, identical → null,
-file newer → null), `stores/tabs.test.ts` crash-recovery prompt + restore,
-`stores/tabs.test.ts` `.tmp` relocation on first save,
-`app/recoveryClosedLoop.test.ts` (orphan scan → notice + restore-to-attachments, referenced
-excluded, GC age threshold, cancel mid-flight).
+Tests: `stores/tab-recovery.test.ts` `checkCrashRecovery` (differs → prompt, identical → null,
+file newer → null) and crash-recovery prompt + restore, `stores/tab-assets.test.ts` `.tmp`
+relocation on first save, `app/recovery-closed-loop.test.ts` (orphan scan → notice +
+restore-to-attachments, referenced excluded, GC age threshold, cancel mid-flight).
 
 ---
 
@@ -124,13 +140,23 @@ excluded, GC age threshold, cancel mid-flight).
 Closing the app (window close) or switching vaults must not silently drop unsaved edits:
 
 - `tabs.hasUnsavedWork()` returns true if any open tab is dirty.
-- On `beforeunload`, the app calls `event.preventDefault()` and sets `returnValue` when
-  there is unsaved work, so the webview surfaces a native "leave?" confirm. Then it captures
-  the session (so tabs are reopened) and flushes window geometry. Because it cannot await an
-  async save inside `beforeunload`, the confirm is the guard; the history snapshot from the
-  last autosave remains recoverable on reopen.
-- On **vault switch** (`appBootstrap.ts` `applyVault`), the app flushes all path'd dirty tabs
-  (`tabs.flushDirty()`) before `closeAll()`. If any save fails it aborts the switch (and
+- **Window close, two routes** (`app/app-lifecycle.ts`, whose header describes both):
+  - **Packaged Tauri app** — the window's `close-requested` listener. It **can** await an
+    async save, so this is where the placeholders are reconciled and the dirty/untitled
+    rescues run before the window is allowed to close. The session is captured and the
+    window geometry flushed as part of the same path.
+  - **Browser demo** (no Tauri runtime, hence no `close-requested`) — the `beforeunload`
+    fallback, which only prompts: `event.preventDefault()` with `returnValue` set when there
+    is unsaved work. Nothing async can be awaited there, so the last autosave's history
+    snapshot is what makes the work recoverable on reopen.
+- On **vault switch** (`app/app-bootstrap.ts` `applyVault`, which hands the work to
+  `app/vault-switch.ts`'s `apply`), the app flushes all path'd dirty tabs
+  (`tabs.flushDirty()`) before `tabs.removeAllTabs()`, which drops the tab set **without touching the
+  filesystem** (`stores/tab-lifecycle.ts`, whose comment states that contract: only for callers that
+  have already flushed the dirty tabs and prompted for the untitled ones). The tab-closing *command* the
+  user invokes — 「关闭全部」, `stores/tab-close.ts` `closeAll` — does its own flush and prompt first and
+  then calls the same `removeAllTabs`. If any save fails
+  it aborts the switch (and
   shows a toast) rather than losing the edits. Untitled tabs (no path) are skipped by
   `flushDirty` (they need a Save-As dialog, which a background flush must not open); a switch
   now checks `tabs.untitledDirtyTabs()` and, if any exist, surfaces a **keep-or-discard
@@ -138,9 +164,11 @@ Closing the app (window close) or switching vaults must not silently drop unsave
   "Restore" saves each via Save-As then proceeds, "Dismiss" discards them then proceeds — so
   unnamed dirty work is never silently dropped by a switch (P0.4).
 
-Tests: `stores/tabs.test.ts` `hasUnsavedWork`, `flushDirty` (saves path'd dirty tabs, skips
-untitled, returns false on save failure), `untitledDirtyTabs`, `referencedTmpPaths`;
-`app/recoveryClosedLoop.test.ts` `requestUntitledVaultSwitch` (restore → save, dismiss →
+Tests: `stores/tab-save.test.ts` `hasUnsavedWork` / `flushDirty` (saves path'd dirty tabs,
+skips untitled, returns false on save failure), `stores/tab-persistence.test.ts`
+`untitledDirtyTabs` / `referencedTmpPaths`; `app/app-lifecycle.test.ts` and
+`app/close-requested-unsaved-keystroke.test.ts` (the close-requested route);
+`app/recovery-closed-loop.test.ts` `requestUntitledVaultSwitch` (restore → save, dismiss →
 discard).
 
 ---
@@ -166,7 +194,8 @@ discard).
    orphaned `.tmp` scan on vault open → recoverable-versions notice + age GC
       │
       ▼
-   unsaved-work guard: beforeunload prompt + vault-switch flushDirty
+   unsaved-work guard: close-requested (Tauri, can await) /
+       beforeunload prompt (browser demo) + vault-switch flushDirty
        + unnamed dirty prompt (keep-or-discard, blocks the switch)
 ```
 
