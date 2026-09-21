@@ -967,6 +967,24 @@ previous round's gate needed three fixes before it would pass, all of them for t
 | full suite, `NEKOWITE_REQUIRE_PROCESS_TESTS=1` | **79 targets · 1408 passed · 0 failed · 5 ignored · 0 skip announcements** — two more than the previous round, which is exactly the pair of new IPC cases |
 | `pnpm --filter @nekowite/desktop e2e` | **293 passed**, no failures on the first run: the new panel sentence renders in a real browser and the console-clean walk over every settings control stays clean |
 
+**The bundles, rebuilt again** because this round carries a user-visible change (the panel sentence):
+`scripts/package-linux.sh` ran all seven steps, publishing
+
+| Artifact | sha256 |
+|---|---|
+| `release/nekowite_1.0.0_x64` | `5c549a8c492e3f7dc507a4e616a3b8dfa7ad99844a4d772eb49a3e42022714e2` |
+| `release/opencode` | `ca6c0e1f42be3120595bf6848937e7586ec862c87fa7aa111e89c7cc6e9a4650` (the pinned input, unchanged) |
+| `release/nekowite_1.0.0_amd64.deb` | `1721f6e9d8f623cbdb73bfdad10aee36f447569ba39bf2233e66f80851d6c534` |
+| `release/nekowite-1.0.0-1.x86_64.rpm` | `ecb52fed7fdd9303d035a285f725a46ee57e489a809db84d760e526eded0cce5` |
+| `release/nekowite_1.0.0_amd64.AppImage` | `c0536b4d1c2a3992d8bcb149d19ee4161c16dd51afb3a72a00e53b2b6cff8007` |
+
+The build these replaced is at `release/superseded/build.70ViJZ/`, verified by digest rather than by
+name: that file's sha256 is `ec7569ba…`, which is the last line of §8's second table. The AppImage's
+sidecar was driven in place again — version, empty environment, no credentials, and an ACP handshake
+inside a network namespace with only loopback — and the two things it still cannot show are the ones
+the script names itself: a machine with no system `opencode`, and the engine's notice file.
+
+
 
 
 
