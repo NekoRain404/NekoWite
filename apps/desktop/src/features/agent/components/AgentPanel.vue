@@ -130,6 +130,19 @@ const props = defineProps<{
   /** Whether the caller can put the rail back on the chat panel — the options menu's other door.
    *  Same shape as {@link settingsOpenable}: built, and explained, in `use-agent-panel-menu.ts`. */
   chatOpenable?: boolean
+  /**
+   * Whether the caller can take the engine down and bring it back up.
+   *
+   * Same shape again, and the reader it exists for is the one no other control serves: the rail's
+   * retry action has always been there and lives in the *refused* block, so a reader whose engine
+   * started and then wedged had no door at all — only quitting the app. Absent means no, so a
+   * panel mounted over a gateway with no rail behind it draws no row that would act on nothing.
+   *
+   * What it costs is stated where it is paid: a restart ends the session this panel is showing
+   * and opens a new one, so the transcript on screen is replaced. `use-agent-panel-menu.ts`'s
+   * `restartOpenable` says why the restart is the rail's to make.
+   */
+  restartOpenable?: boolean
   labels: AgentPanelLabels
 }>()
 
@@ -170,6 +183,16 @@ const emit = defineEmits<{
    * gestures that ask for the chat panel are one word rather than two.
    */
   'use-chat': []
+  /**
+   * The reader asked for the engine to be taken down and brought back up.
+   *
+   * An event for the reason `resume` is one, and the strongest case of it: a restart is the rail's
+   * `retry()` — it tears the runtime down and composes a new one with a new `runtimeEpoch`, so
+   * every handle minted by the old one is stale and every surface mounted on its session has to
+   * be re-pointed. A panel that did this itself would be a second place the rail's generation
+   * latch is not.
+   */
+  restart: []
 }>()
 
 const store = useAgentSessionStore()
@@ -352,7 +375,7 @@ const {
   onNewSession: () => emit('new-session'),
 })
 
-/** The options menu, whose two rows are both doors out of this component — see
+/** The options menu, whose rows are all doors out of this component — see
  *  `use-agent-panel-menu` for why each is gated on its own capability. */
 const {
   rows: menuRows,
@@ -364,11 +387,19 @@ const {
 } = useAgentPanelMenu({
   trigger: computed(() => barEl.value?.menuElement() ?? null),
   popup: menuEl,
+  restartOpenable: props.restartOpenable === true,
   settingsOpenable: props.settingsOpenable === true,
   chatOpenable: props.chatOpenable === true,
-  labels: { settings: props.labels.menu.settings, chat: props.labels.menu.chat },
+  labels: {
+    settings: props.labels.menu.settings,
+    chat: props.labels.menu.chat,
+    restart: props.labels.menu.restart,
+  },
   onSettings: () => emit('open-settings'),
   onChat: () => emit('use-chat'),
+  // An event rather than a call, for the reason `resume`'s own doc gives: the restart replaces
+  // the session this panel is mounted on and only the rail can re-point it.
+  onRestart: () => emit('restart'),
 })
 
 function onSend(text: string, attachments: readonly AgentPromptAttachment[]): void {

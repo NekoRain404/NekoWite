@@ -1,11 +1,12 @@
 /**
  * The options menu: the panel's one place from which the actions that live outside it are reached.
  *
- * Both of its rows are doors out of the panel — the settings dialog and the rail's switch back to
- * the chat — so neither action is this composable's: a row *leaves* as a callback, and what the
- * caller does with it belongs to the shell that owns the dialog and to
- * `stores/settings-agent.ts` that owns the switch. What is here is the shape: which rows exist,
- * where the popup goes, and what a press on a row means.
+ * Its rows are doors out of the panel — the settings dialog, the rail's switch back to the chat,
+ * and the rail restarting the engine — so none of the actions is this composable's: a row *leaves*
+ * as a callback, and what the caller does with it belongs to the shell that owns the dialog, to
+ * `stores/settings-agent.ts` that owns the switch, and to `app/agent-rail.ts` that owns the
+ * runtime. What is here is the shape: which rows exist, where the popup goes, and what a press on
+ * a row means.
  *
  * **The rows are derived rather than kept as a list of their own**, so a row cannot outlive the
  * ability behind it: the menu is drawn only while that list is non-empty, and an empty one is not
@@ -44,12 +45,29 @@ export interface UseAgentPanelMenuOptions {
    * the switch in the settings dialog, or close and reopen the rail on the other tab.
    */
   chatOpenable: boolean
-  /** The copy for the two rows, from the panel's own catalogue entry. */
-  labels: { settings: string; chat: string }
+  /**
+   * Whether the caller can take the engine down and bring it back up — the same rule again.
+   *
+   * **This one was reachable only from a state a working app is never in.** `AgentRailBody.vue`
+   * has drawn a retry action since the rail was built, and it is in the *refused* block: it exists
+   * for a reader whose engine would not start. The live panel — a reader whose engine started and
+   * then wedged, or whose session is a mess they want cleared — had no door at all, though the
+   * rail's `retry()` does exactly this and has done all along. A capability reachable from one
+   * state is a capability that does not exist from the others, which is the shape this repository
+   * keeps having to fix.
+   *
+   * The restart is the rail's, not the panel's: it replaces the session this panel is mounted on,
+   * and a panel cannot re-point itself (the same reason `resume` is an event).
+   */
+  restartOpenable: boolean
+  /** The copy for the rows, from the panel's own catalogue entry. */
+  labels: { settings: string; chat: string; restart: string }
   /** The reader asked for the agent settings. */
   onSettings: () => void
   /** The reader asked for the chat panel instead of this one. */
   onChat: () => void
+  /** The reader asked for the engine to be restarted. */
+  onRestart: () => void
 }
 
 export interface AgentPanelMenuState {
@@ -70,6 +88,9 @@ export interface AgentPanelMenuState {
 export function useAgentPanelMenu(options: UseAgentPanelMenuOptions): AgentPanelMenuState {
   const rows = computed<readonly AgentPanelMenuRow[]>(() => {
     const built: AgentPanelMenuRow[] = []
+    // Restart first: it is the only row that acts on the runtime the other two act *around*, and a
+    // reader who opens this menu with a wedged engine is looking for it rather than for a door.
+    if (options.restartOpenable) built.push({ id: 'restart', label: options.labels.restart })
     if (options.settingsOpenable) built.push({ id: 'settings', label: options.labels.settings })
     if (options.chatOpenable) built.push({ id: 'chat', label: options.labels.chat })
     return built
@@ -105,16 +126,20 @@ export function useAgentPanelMenu(options: UseAgentPanelMenuOptions): AgentPanel
   /**
    * Act on a row.
    *
-   * Both rows leave as a callback, because neither thing they ask for is this composable's: the
-   * dialog belongs to the window root, and the rail's switch to the shell that reads it. `id` is
-   * typed as a plain string because that is what crosses a component boundary in this codebase, and
-   * the two cases below are exhaustive against {@link rows} — the ids pushed there and the ids
-   * handled here are the same pair, and a row added to only one of them fails
-   * `AgentPanel.menu.test.ts`, which is the test that exists for exactly that.
+   * Every row leaves as a callback, because none of the things they ask for is this composable's:
+   * the dialog belongs to the window root, the rail's switch to the shell that reads it, and the
+   * restart to the rail that owns the runtime. `id` is typed as a plain string because that is
+   * what crosses a component boundary in this codebase, and the cases below are exhaustive
+   * against {@link rows} — the ids pushed there and the ids handled here are the same set, and a
+   * row added to only one of them fails `AgentPanel.menu.test.ts`, which is the test that exists
+   * for exactly that.
    */
   function choose(id: string): void {
     close()
     switch (id) {
+      case 'restart':
+        options.onRestart()
+        return
       case 'settings':
         options.onSettings()
         return

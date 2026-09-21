@@ -51,5 +51,13 @@ export interface AgentPanelLabels {
     settings: string
     /** Put the rail back on the chat panel — the way out the live panel had nowhere to offer. */
     chat: string
+    /**
+     * Take the engine down and bring it back up.
+     *
+     * The rail's retry action has said this from the refused state since the rail was built; the
+     * same words are reused here rather than a second spelling, because the two controls do the
+     * same thing and a reader who has seen one should recognise the other.
+     */
+    restart: string
   }
 }

@@ -117,6 +117,10 @@ export function agentPanelLabels(engineName: string): AgentPanelLabels {
       // The same sentence as the refused arm's 用对话面板 button, and deliberately the same key:
       // the two controls ask for one thing, and two strings would be two places for it to drift.
       chat: t('agent.rail.useChat'),
+      // The same again, with the rail's own retry button: the live panel's row and the refused
+      // block's button both run `agent-rail.ts`'s `retry()`, so they are one control in two
+      // places and they say one thing.
+      restart: t('agent.rail.retry'),
     },
   }
 }
@@ -136,6 +140,15 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  /**
+   * Take the engine down and bring it back up — `agent-rail.ts`'s `retry()`, which tears the
+   * runtime down and composes a fresh one with a new `runtimeEpoch`.
+   *
+   * One event for two controls, and that is the point rather than a shortcut: the refused block
+   * below has drawn a 重试 button since this rail was built, and the live panel's options menu now
+   * draws a row for the same call. A second event would be a second thing for the shell to keep
+   * in step with the first, and the two would drift the first time one of them grew an argument.
+   */
   (e: 'retry'): void
   (e: 'use-chat'): void
   /** A session the reader picked out of the engine's history. The reopen itself belongs to the
@@ -182,11 +195,13 @@ const labels = computed(() => agentPanelLabels(engineName.value))
     :openable="true"
     :settings-openable="true"
     :chat-openable="true"
+    :restart-openable="true"
     :labels="labels"
     @new-session="emit('new-session')"
     @resume="emit('resume', $event)"
     @open-settings="emit('open-settings')"
     @use-chat="emit('use-chat')"
+    @restart="emit('retry')"
   />
   <div
     v-else-if="state.kind === 'refused'"

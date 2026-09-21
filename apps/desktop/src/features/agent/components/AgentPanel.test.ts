@@ -125,6 +125,7 @@ const LABELS: AgentPanelLabels = {
     label: 'Agent options',
     settings: 'Agent settings',
     chat: 'Use the chat panel',
+    restart: 'Restart the engine',
   },
 }
 

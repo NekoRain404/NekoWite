@@ -113,6 +113,7 @@ const LABELS: AgentPanelLabels = {
     label: 'Agent options',
     settings: 'Agent settings',
     chat: 'Use the chat panel',
+    restart: 'Restart the engine',
   },
 }
 
@@ -161,7 +162,7 @@ afterEach(() => {
  * have: a page with no shell, which is where the `body` fallback applies.
  */
 async function mountPanel(
-  carries: { settings?: boolean; chat?: boolean; shell?: boolean },
+  carries: { settings?: boolean; chat?: boolean; restart?: boolean; shell?: boolean },
 ): Promise<Harness> {
   const shell = document.createElement('div')
   if (carries.shell === true) {
@@ -180,8 +181,10 @@ async function mountPanel(
     labels: LABELS,
     settingsOpenable: carries.settings === true,
     chatOpenable: carries.chat === true,
+    restartOpenable: carries.restart === true,
     onOpenSettings: () => emitted.push('open-settings'),
     onUseChat: () => emitted.push('use-chat'),
+    onRestart: () => emitted.push('restart'),
   })
   app.use(pinia)
   app.mount(host)
@@ -257,6 +260,24 @@ describe('AgentPanel — the options menu', () => {
     expect(harness.emitted).toEqual(['use-chat'])
   })
 
+  it('leaves the engine restart to the rail as its own event', async () => {
+    // The reader this row exists for is the one no other control serves: the rail's own 重试
+    // button has always been in the *refused* block, so an engine that started and then wedged
+    // had no door at all short of quitting the app.
+    const harness = await mountPanel({ restart: true })
+
+    await harness.click('[data-agent-menu]')
+
+    const restart = row('restart')
+    expect(restart).not.toBeNull()
+    restart?.click()
+    await flush()
+    await nextTick()
+    await flush()
+
+    expect(harness.emitted).toEqual(['restart'])
+  })
+
   it('draws no options control at all when the caller can carry neither row', async () => {
     // `AgentPanel.test.ts` mounts a panel over a gateway with no rail behind it. An options
     // control there would open a box of rows that emit to nobody — which is the defect every
@@ -282,12 +303,12 @@ describe('AgentPanel — the options menu', () => {
     // nothing. Written as a walk over whatever the menu draws rather than over the two ids known
     // today, so the next row is covered by this test the moment it is drawn — the assertion does
     // not need to know what it is called.
-    const harness = await mountPanel({ settings: true, chat: true })
+    const harness = await mountPanel({ settings: true, chat: true, restart: true })
     await harness.click('[data-agent-menu]')
     const ids = [...document.querySelectorAll<HTMLElement>('[data-agent-menu-row]')].map(
       (element) => element.dataset.agentMenuRow ?? '',
     )
-    expect(ids.sort()).toEqual(['chat', 'settings'])
+    expect(ids.sort()).toEqual(['chat', 'restart', 'settings'])
 
     for (const id of ids) {
       const before = harness.emitted.length
