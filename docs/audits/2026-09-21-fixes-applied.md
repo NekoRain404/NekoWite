@@ -1462,6 +1462,37 @@ unchanged across every run of this script so far; the reasoning turn billed 89 p
 27 of those reported as `reasoning_tokens` — inside the 20–31 band the script's own header records as
 moving with how long the model thinks. Both turns kept every count the provider sent, unchanged.
 
+**The round's own final gate run failed, and both reasons were in the reading.** It came back
+`FAIL rust (exit 101)` on a suite whose summary it printed as *"79 targets, 1408 passed, 0 failed"* — one
+test fewer than the green run two hours earlier, and no failure named. Two separate defects, and the first
+one hid the second:
+
+- **The summary could not report a failure.** It split each `test result:` line on `[ ;]` and added fields
+  4 and 6. A `; ` separator run makes an empty field, so the failure count landed in field 7 and **every**
+  run read `0 failed` — including the one whose cargo exit code was 101. It now matches
+  `[0-9]+ passed` / `[0-9]+ failed` inside the line and appends the number of targets whose own summary
+  says FAILED, because a target that aborts prints no totals at all. Proved against the round's real
+  failing log: old `1408 passed, 0 failed`, new `1408 passed, 1 failed, 1 target(s) reported FAILED`; and
+  against clean, empty and two-failure synthetic logs, where the empty one must still read as nothing
+  rather than as a pass.
+- **The failing case was `two_engines_on_one_profile_share_the_database_and_the_session`**, which answered
+  `the second engine answered without ever naming the shared session / engine B: frames 2, stderr: (none)`.
+  A rerun of the whole suite passed 79/79, so the question was flake or regression — and the test could
+  not answer it, because it printed a frame *count*. `Engine::diagnostics` now prints the last four
+  frames (each truncated on a character boundary) beside the stderr it already printed; proved by mutating
+  the assertion's needle to something impossible and reading the message, with the file restored
+  byte-identically (`md5 2033c82d6237665a8613f020b98543d7`). The frames answered it immediately: the
+  `session/load` result carries the resumed session's **config**, and the session id arrives one frame
+  later, in a `session/update` notification. The test looked at the frame list exactly once, right after
+  `answer()` returned; the failing run had read two frames and the third was still in flight. A race in
+  the test, not an engine that failed to read the shared database. Fixed by waiting for the frame
+  (`said_within(needle, PATIENCE)`), leaving the assertion itself unchanged — a frame that never arrives
+  still fails the case, now with the frames printed.
+
+This is the same lesson as the two shell suites earlier in the round, arriving from the other side: a
+suite that runs is not the same as a suite whose report can be believed, and a test that fails once in a
+hundred runs is a reading that cannot be trusted until it can say why.
+
 ### The gate
 
 | Step | Result |
@@ -1476,9 +1507,16 @@ moving with how long the model thinks. Both turns kept every count the provider 
 | `rust` | PASS — **79 targets, 1409 passed, 0 failed** |
 | `e2e` (`--with-e2e`) | PASS — **297 passed**, unchanged from §15; the round's e2e work is the step that runs it, not the specs in it |
 
-One run, all nine steps, exit 0 — after the first attempt of exactly that run came back `FAIL e2e — 1 passed`
-for the browser-cache reason recorded above, which is the round's best illustration of its own theme: the
-gate is a reading, and a reading has to be true.
+Four runs of this gate in one round, and the sequence is the round's own illustration of its theme — a
+reading has to be true before it can be trusted:
+
+1. `FAIL e2e — 1 passed`, 296 tests never run: this script's `XDG_CACHE_HOME` had moved Playwright's
+   browser cache out from under it (fixed above).
+2. All nine steps green (the run whose `rust` line reads **1409 passed**).
+3. `FAIL rust (exit 101)` — the flaky two-instances case, reported as *"1408 passed, 0 failed"* by a
+   summary that could not count a failure. Both fixed above; the numbers in the table are from the run
+   after those fixes, where the flaky case passes and is counted again.
+4. All nine steps green, exit 0, which is the reading the table records.
 
 **§1.5's release checklist is closed too.** The document's body described the Windows flow while the Linux
 path — the only one CI and the suites cover — appeared in a single bullet at the end, so a maintainer
