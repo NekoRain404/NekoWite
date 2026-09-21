@@ -143,8 +143,16 @@ pub enum ProfileError {
     /// This host does not write here: §8.1's reuse mode leaves the engine's own configuration and
     /// its own credentials alone, and the switch to that mode moves nothing.
     ReadOnly,
-    /// A credential whose name cannot reach a process.
-    Credential { name: String },
+    /// A credential whose name cannot reach a process, or one this host will not set.
+    ///
+    /// `reserved` carries *why*, when the name is one of the variables that decide something other
+    /// than who the engine is — see `credentials::reserved_name`. A refusal a user cannot act on is
+    /// a refusal they will retype, so the sentence in `commands/agent_settings.rs` quotes this
+    /// rather than saying only that the name was rejected.
+    Credential {
+        name: String,
+        reserved: Option<&'static str>,
+    },
     /// The document layer's refusal, unchanged: the exit from this module is not a second place to
     /// interpret a revision conflict.
     Document(ConfigError),

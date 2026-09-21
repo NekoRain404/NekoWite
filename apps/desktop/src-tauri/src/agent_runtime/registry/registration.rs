@@ -153,22 +153,34 @@ impl AgentRegistration {
     /// engine's authorization lives, and the caller has already established that this profile
     /// belongs to this agent ([`AgentRegistry::start`](super::AgentRegistry::start) is the caller, and it refuses the pair
     /// otherwise), which is what makes injecting them *this* engine's credentials rather than a
-    /// copy between engines. They go last, so the value the user set for this profile wins over a
-    /// variable the definition carries; the definition is shared by every profile of one agent,
-    /// and the profile is not.
+    /// copy between engines.
+    ///
+    /// **The order of the three groups is the guarantee, and it used to be wrong.** A credential
+    /// went last, so the value a user typed for this profile beat everything — including the roots
+    /// the host isolates the engine into. `environment.rs` records as *measured* that a mis-set
+    /// `OPENCODE_CONFIG_DIR` stops this app's shipped permission block from being applied: the
+    /// consent gate, turned off from a text field the renderer can write (finding S5 in
+    /// `docs/audits/2026-09-21-code-review.md`). The order is now:
+    ///
+    /// 1. the definition's own variables (`env_extra`),
+    /// 2. the profile's credentials — the intent the old order was for, and it still holds: the
+    ///    definition is shared by every profile of one agent, and the profile is not,
+    /// 3. the isolation roots, applied **last**, so nothing reachable from the credentials surface
+    ///    can move the engine's `HOME`, its `XDG_*` roots or the names in its own namespace.
+    ///
+    /// Step 3 is the half that does not depend on knowing every name; `credentials::reserved_name`
+    /// is the half that refuses the ones that are not about the engine's identity at all, and it is
+    /// where the user is told why.
     ///
     /// Also what a diagnostic prints — and now that is safe: every value is a [`Secret`], so this
     /// struct's derived `Debug` prints names and `<redacted>`, while a caller that has to show a
     /// variable's value does it through [`redacted_env`].
     pub fn launch(&self, managed_root: &Path, credentials: &Credentials) -> EngineLaunch {
-        let mut env: Vec<(String, Secret)> = match self.env {
-            EnvPolicy::ProfileIsolated => env_pairs(isolated_profile_env(managed_root)),
-            EnvPolicy::UserEnvironment => Vec::new(),
-        };
-        // The registration's own variables go next, so an explicit setting wins over the policy's
-        // default root.
-        env.extend(env_pairs(self.env_extra.iter().cloned()));
+        let mut env: Vec<(String, Secret)> = env_pairs(self.env_extra.iter().cloned());
         env.extend(credentials.launch_pairs());
+        if let EnvPolicy::ProfileIsolated = self.env {
+            env.extend(env_pairs(isolated_profile_env(managed_root)));
+        }
         EngineLaunch {
             program: self.program.clone(),
             args: self.args.clone(),

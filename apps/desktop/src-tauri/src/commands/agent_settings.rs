@@ -286,9 +286,10 @@ pub fn refusal_message(error: &ProfileError) -> String {
              here — not a document and not a credential"
                 .to_string()
         }
-        ProfileError::Credential { name } => {
-            format!("`{name}` cannot be an environment variable name")
-        }
+        ProfileError::Credential { name, reserved } => match reserved {
+            Some(why) => format!("`{name}` is reserved and cannot be set here: {why}"),
+            None => format!("`{name}` cannot be an environment variable name"),
+        },
         ProfileError::Document(error) => document_message(error),
     }
 }

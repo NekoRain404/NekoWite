@@ -165,6 +165,13 @@ impl Profile {
             if !is_variable_name(name) {
                 return Err(ProfileError::Credential {
                     name: name.to_string(),
+                    reserved: None,
+                });
+            }
+            if let Some(why) = reserved_name(name) {
+                return Err(ProfileError::Credential {
+                    name: name.to_string(),
+                    reserved: Some(why),
                 });
             }
         }
@@ -223,4 +230,84 @@ pub(super) fn read_credentials(path: &Path) -> Credentials {
 /// fail at `execve` — long after the settings page reported the credential as saved.
 fn is_variable_name(name: &str) -> bool {
     !name.is_empty() && !name.contains('=') && !name.chars().any(char::is_control)
+}
+
+/// The names a credential may not use, with the reason, or `None` when the name is the user's to choose.
+///
+/// **This surface is reachable from the window, and what it writes becomes the engine's own
+/// environment.** The names below are the ones that decide something other than *who the engine is*,
+/// which is the only thing a credential is for (finding S5 in
+/// `docs/audits/2026-09-21-code-review.md`):
+///
+/// - **What code runs.** `LD_*` and `DYLD_*` are read by the dynamic loader before the engine's
+///   first instruction, and `NODE_OPTIONS`/`NODE_PATH` by its runtime before its first line — so a
+///   value here is not a credential but code, executed as the user, chosen by a request the renderer
+///   can make. `PATH`, `SHELL`, `ENV` and `IFS` are the same family: they decide which program a
+///   bare command resolves to, or how a shell the engine starts reads its own words.
+/// - **Where the engine reads and writes.** `HOME`, `XDG_*`, `OPENCODE_*`, `TMPDIR` and `PWD` are
+///   the roots this host isolates the engine into. `environment.rs` records as *measured* that a
+///   mis-set `OPENCODE_CONFIG_DIR` stops this app's shipped permission block from being applied —
+///   i.e. this path can turn the consent gate off from a text field, which is the sharpest form of
+///   the defect.
+///
+/// The second half of the fix is in `AgentRegistration::launch`: the host's isolation roots are
+/// applied **last**, so a name that is not on this list still cannot move them. This list is the
+/// part that says *why* the user is refused; the ordering is the part that does not depend on the
+/// list being complete.
+fn reserved_name(name: &str) -> Option<&'static str> {
+    const EXACT: [(&str, &str); 9] = [
+        (
+            "PATH",
+            "it decides which program a bare command resolves to",
+        ),
+        ("HOME", "the engine's configuration and state live under it"),
+        ("PWD", "the engine resolves configuration against it"),
+        ("SHELL", "a shell the engine starts reads it"),
+        (
+            "TMPDIR",
+            "the engine's scratch files would land outside the profile",
+        ),
+        (
+            "NODE_OPTIONS",
+            "the engine's runtime reads it before its first line",
+        ),
+        (
+            "NODE_PATH",
+            "the engine's runtime resolves modules through it",
+        ),
+        (
+            "IFS",
+            "it changes how a shell the engine starts splits words",
+        ),
+        ("ENV", "a shell reads commands out of it at startup"),
+    ];
+    const PREFIXES: [(&str, &str); 4] = [
+        (
+            "LD_",
+            "the dynamic loader reads it before the engine's first instruction",
+        ),
+        (
+            "DYLD_",
+            "the dynamic loader reads it before the engine's first instruction",
+        ),
+        (
+            "XDG_",
+            "the host sets the engine's configuration roots there",
+        ),
+        (
+            "OPENCODE_",
+            "the engine's own configuration namespace is set there",
+        ),
+    ];
+    // Upper-cased first: the kernel treats `home` and `HOME` as one variable on this platform, and
+    // under-refusing is the dangerous direction — the same argument `is_credential_name` makes for
+    // redaction, one layer over.
+    let upper = name.to_ascii_uppercase();
+    if let Some((_, why)) = EXACT.iter().find(|(reserved, _)| *reserved == upper) {
+        return Some(why);
+    }
+    PREFIXES
+        .iter()
+        .find(|(prefix, _)| upper.starts_with(prefix))
+        .map(|(_, why)| *why)
 }

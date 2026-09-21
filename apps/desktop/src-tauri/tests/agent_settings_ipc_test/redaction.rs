@@ -55,6 +55,14 @@ fn a_credential_is_absent_from_every_readout_line_of_debug_and_refusal() {
         ProfileError::Field { field: "mode" },
         ProfileError::Credential {
             name: "A=B".to_string(),
+            reserved: None,
+        },
+        // Both arms of the message builder: a name the kernel cannot carry, and a reserved one,
+        // which quotes the reason it was refused (finding S5). Walking only one would leave the
+        // other free to print something it should not.
+        ProfileError::Credential {
+            name: "LD_PRELOAD".to_string(),
+            reserved: Some("the dynamic loader reads it before the engine's first instruction"),
         },
     ] {
         let message = refusal_message(&error);

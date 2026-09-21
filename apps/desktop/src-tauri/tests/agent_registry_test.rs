@@ -603,3 +603,65 @@ fn where_a_program_came_from_decides_who_may_replace_it_and_what_it_inherits() {
         "sk-ant-oat01-not-a-real-key"
     );
 }
+
+/// **A credential cannot move the roots this host isolated the engine into.**
+///
+/// Finding S5 in `docs/audits/2026-09-21-code-review.md`. `launch` applied the isolation roots
+/// first and the profile's credentials last, so a value typed into the credentials form — a
+/// surface a request from the window reaches — overwrote `HOME`, the `XDG_*` roots and
+/// `OPENCODE_CONFIG_DIR`. The last of those is the measured one: `environment.rs` records that a
+/// mis-set `OPENCODE_CONFIG_DIR` stops this app's shipped permission block from being applied, so
+/// the whole permission gate goes from `ask` to `allow` with the rest of the suite green.
+///
+/// What is asserted is the **effective** value — the last entry for a name, which is the one the
+/// child gets, since the environment is a list the host extends — because a credential naming one
+/// of these must still travel; what it must not do is win. The profile's own key is asserted in the
+/// same run, so a fix that simply dropped the credentials would fail here too.
+#[test]
+fn a_credential_cannot_move_the_roots_the_engine_was_isolated_into() {
+    let root = Path::new("/managed/agent-profiles/default");
+    let elsewhere = "/tmp/not-the-profile";
+    let credentials = Credentials::new([
+        ("HOME".to_string(), Secret::new(elsewhere)),
+        ("XDG_CONFIG_HOME".to_string(), Secret::new(elsewhere)),
+        ("OPENCODE_CONFIG_DIR".to_string(), Secret::new(elsewhere)),
+        (
+            "ANTHROPIC_API_KEY".to_string(),
+            Secret::new("sk-ant-oat01-not-a-real-key"),
+        ),
+    ]);
+    let env = adapters::opencode::bundled_registration("/opt/nekowite/opencode".into())
+        .launch(root, &credentials)
+        .env;
+    let effective = |name: &str| {
+        env.iter()
+            .rfind(|(variable, _)| variable == name)
+            .map(|(_, value)| value.expose().to_string())
+    };
+
+    assert_eq!(
+        effective("HOME").as_deref(),
+        Some(root.join("HOME").to_string_lossy().as_ref()),
+        "a credential moved the engine's HOME: {env:?}"
+    );
+    assert_eq!(
+        effective("XDG_CONFIG_HOME").as_deref(),
+        Some(root.join("XDG_CONFIG_HOME").to_string_lossy().as_ref()),
+        "a credential moved the engine's configuration root: {env:?}"
+    );
+    assert_eq!(
+        effective("OPENCODE_CONFIG_DIR").as_deref(),
+        Some(
+            root.join("XDG_CONFIG_HOME/opencode")
+                .to_string_lossy()
+                .as_ref()
+        ),
+        "a credential moved the directory the engine's permission document is read from, which is \
+         the one `environment.rs` measured the consent gate depending on: {env:?}"
+    );
+    assert_eq!(
+        effective("ANTHROPIC_API_KEY").as_deref(),
+        Some("sk-ant-oat01-not-a-real-key"),
+        "the profile's own credential must still reach the engine: {env:?}"
+    );
+}

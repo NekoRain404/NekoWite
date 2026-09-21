@@ -153,3 +153,61 @@ fn a_document_path_that_would_leave_the_profile_is_refused() {
         .unwrap()
         .starts_with(profile.root()));
 }
+
+/// **A name that would decide what the engine *runs* is refused, and the user is told why.**
+///
+/// Finding S5 in `docs/audits/2026-09-21-code-review.md`. This surface is reachable from the window
+/// and what it writes becomes the engine's environment: `LD_PRELOAD` is read by the dynamic loader
+/// before the engine's first instruction, and `OPENCODE_CONFIG_DIR` decides which document the
+/// engine's permission rules come from — `environment.rs` records that a mis-set one stops this
+/// app's shipped permission block from being applied.
+///
+/// What is pinned is the *reason*, not only the refusal. A user who typed `LD_PRELOAD` into a
+/// credentials form should learn that the name would run their code rather than authenticate them,
+/// and a bare "cannot be an environment variable name" would send them looking for a typo. The
+/// last case is the same name in another case, because the kernel treats `Path` and `PATH` as one
+/// variable and under-refusing is the dangerous direction.
+#[test]
+fn a_credential_name_that_would_decide_what_the_engine_runs_is_refused() {
+    let managed = scratch("reserved-credential");
+    let store = ProfileStore::new(&managed);
+    let mut profile = store.open("engine-alpha", "alpha").expect("alpha");
+
+    for (name, expected) in [
+        ("LD_PRELOAD", "dynamic loader"),
+        ("DYLD_INSERT_LIBRARIES", "dynamic loader"),
+        ("NODE_OPTIONS", "before its first line"),
+        ("OPENCODE_CONFIG_DIR", "configuration namespace"),
+        ("XDG_CONFIG_HOME", "configuration roots"),
+        ("HOME", "configuration and state"),
+        ("Path", "bare command"),
+    ] {
+        let refusal = profile
+            .apply_credentials(&[CredentialChange::Set {
+                name: name.to_string(),
+                value: Secret::new("/tmp/elsewhere"),
+            }])
+            .expect_err("a reserved name must be refused");
+        match refusal {
+            ProfileError::Credential {
+                name: refused,
+                reserved: Some(why),
+            } => {
+                assert_eq!(refused, name);
+                assert!(
+                    why.contains(expected),
+                    "`{name}` was refused without saying why ({why:?} does not mention {expected})"
+                );
+            }
+            other => panic!("`{name}` was refused for the wrong reason: {other:?}"),
+        }
+    }
+
+    // The same surface still takes a provider key, so what is refused is the name and not the call.
+    profile
+        .apply_credentials(&[CredentialChange::Set {
+            name: "ANTHROPIC_API_KEY".to_string(),
+            value: Secret::new("sk-alpha-0123456789abcdef"),
+        }])
+        .expect("a provider key is what this surface is for");
+}
