@@ -685,3 +685,35 @@ checklist in `AGENTS.md` does not run the suite that found it. Adding `pnpm e2e`
 maintainer's decision — it needs a browser, a dev server and three minutes — but it belongs in the
 same conversation as the review's `T3`, because "green" currently means four commands rather than the
 whole tree's evidence.
+
+---
+
+## 8. The Linux bundles, rebuilt from this tree
+
+The maintainer asked for the packaged executable to be kept current. `scripts/package-linux.sh` ran
+end to end (all seven steps) and published:
+
+| Artifact | sha256 |
+|---|---|
+| `release/nekowite_1.0.0_x64` | `7370ba73650cd0afc0da8ff2de96f128869e3d5247f73edb058144a3e2264226` |
+| `release/opencode` | `ca6c0e1f42be3120595bf6848937e7586ec862c87fa7aa111e89c7cc6e9a4650` (the pinned digest) |
+| `release/nekowite_1.0.0_amd64.deb` | `904f1df35386d307772d3960c525dd83700b1b653977fc454281e717c7c668ea` |
+| `release/nekowite-1.0.0-1.x86_64.rpm` | `775d46dd1c6611486dc8dd5fd04541770f12410afc770946d0e3346929b0a851` |
+| `release/nekowite_1.0.0_amd64.AppImage` | `736f315c00b8f84487fc85bd3bca8d873881e7637022ad92c5eefea8b6916186` |
+
+The files it replaced are kept at `release/superseded/build.6Pw20m/`, and the pipeline's own closing
+lines say what it does *not* claim: distribution compatibility and interactive workflows are not
+verified by it, and the citeproc notice obligation recorded in `THIRD-PARTY-NOTICES.txt` remains.
+
+**Two things had to be true first, and one of them was a defect this programme created.**
+
+- The engine verification had to read the pin where the pin now lives (`update/manifest.rs`); it
+  exited 1 in silence until that was fixed. That is the commit before this one, and the fourth
+  reader class a split can break.
+- pnpm needed writable XDG directories. `package-linux.sh` sets `XDG_CACHE_HOME` and `TMPDIR` of its
+  own but not `XDG_DATA_HOME`/`XDG_STATE_HOME`, so in an environment where `$HOME` is not writable
+  the second step dies with `[ERROR] unable to open database file`. Passing the two through the
+  environment is enough; it is recorded here because nothing in the failure says "pnpm's data
+  directory", and because the script is otherwise perfectly happy on a normal machine.
+- This machine has a system `opencode` on `PATH`, so `verify-opencode-linux.sh` reports the §11.2
+  clean-machine case as **not proven here** rather than claiming it.
