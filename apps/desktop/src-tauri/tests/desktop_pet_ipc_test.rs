@@ -26,8 +26,9 @@
 //! The cases are divided by behaviour domain rather than kept in one file (§13.1's rule for a test
 //! that outgrows a page) — `windows` for which windows exist and what they were asked for,
 //! `access` for who is allowed to ask and what a teardown may not reach, `capabilities` for §7.2,
-//! `commands` for the `#[tauri::command]` shims driven through Tauri's own IPC entry, and
-//! `support` for the window system that is not one. They are one target and one command:
+//! `commands` for the `#[tauri::command]` shims driven through Tauri's own IPC entry, `settings`
+//! for the one of them whose effect is a window that is already open, and `support` for the window
+//! system that is not one. They are one target and one command:
 //! `cargo test --test desktop_pet_ipc_test` runs every one of them, because a test in a file
 //! nobody runs is not evidence.
 
@@ -63,5 +64,11 @@ mod character_selection;
 mod event_boundary;
 #[path = "desktop_pet_ipc_test/navigation.rs"]
 mod navigation;
+// A settings *write* over the same entry, which is the one command in this target whose effect is a
+// window that already exists: `commands.rs` drives what a front end opens and closes, and an applied
+// `character.size` resizes `pet-1` in place (§5.2). Its own file for the reason `care.rs` has one —
+// the target's cases are divided by behaviour domain — and because `commands.rs` is at its budget.
+#[path = "desktop_pet_ipc_test/settings.rs"]
+mod settings;
 #[path = "desktop_pet_ipc_test/wiring.rs"]
 mod wiring;

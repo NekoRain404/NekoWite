@@ -42,8 +42,8 @@ use nekowite_lib::desktop_pet::care_ledger::{
     CareEvent, CareOrigin, CareOutcome, LocalDay, LocalTime,
 };
 use nekowite_lib::desktop_pet::{
-    Closed, HostAppearance, HostAppearanceWrite, HostRefusal, PetInstance, TeardownReport,
-    DESKTOP_PET_PAGE, MEAL_XP,
+    Closed, HostAppearance, HostAppearanceWrite, HostRefusal, PetInstance, PetSettingsUpdate,
+    PetSettingsWrite, TeardownReport, DESKTOP_PET_PAGE, MEAL_XP,
 };
 use nekowite_lib::state::DesktopPetState;
 use tauri::Manager;
@@ -54,7 +54,7 @@ use crate::support::{FakeSurfaces, MAIN_WINDOW};
 // The wire surface
 // ---------------------------------------------------------------------------
 //
-// These ten wrappers exist because `generate_handler!` resolves a command through the
+// These wrappers exist because `generate_handler!` resolves a command through the
 // `__cmd__<name>` macro `#[tauri::command]` emits next to it, and that macro is `pub(crate)` to
 // the library — a test in a separate crate cannot register the library's commands, however
 // public the functions are. So the registration happens here, with the same parameter names (the
@@ -165,14 +165,36 @@ fn desktop_pet_open_settings<R: tauri::Runtime>(
     pet_commands::desktop_pet_open_settings(app, page)
 }
 
-/// The app under test: the pet's command surface, over the same fake window system the host's
-/// own tests use.
-struct Pet {
-    app: tauri::App<tauri::test::MockRuntime>,
-    surfaces: FakeSurfaces,
+/// The settings write, driven from the one window that holds the grant for it.
+///
+/// `main` is the only window `capabilities/default.json` gives
+/// `allow-desktop-pet-update-settings` to, and `capabilities/desktop-pet.json` withholds it from
+/// `pet-*` deliberately: writing `general.characterWindow` or `general.ball` *is* the switch (§5.1),
+/// and the sizes the windows are built at ride the same write, so a decoration that could send one
+/// would be a second, unguarded way to drive the feature. That is also why the cases that go
+/// through this command are in `settings.rs` and not beside the window operations below: what is
+/// asked of it is that an applied record reaches a window that is already open.
+#[tauri::command]
+fn desktop_pet_update_settings<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, DesktopPetState>,
+    write: PetSettingsWrite,
+) -> Result<PetSettingsUpdate, String> {
+    pet_commands::desktop_pet_update_settings(app, state, write)
 }
 
-fn app() -> Pet {
+/// The app under test: the pet's command surface, over the same fake window system the host's own
+/// tests use.
+///
+/// `pub(crate)` with `app` and the two fields, so that `settings.rs` — the settings half of the
+/// same surface — builds this app rather than a second one; what it adds of its own is where the
+/// data directory a settings write resolves is pointed.
+pub(crate) struct Pet {
+    pub(crate) app: tauri::App<tauri::test::MockRuntime>,
+    pub(crate) surfaces: FakeSurfaces,
+}
+
+pub(crate) fn app() -> Pet {
     let surfaces = FakeSurfaces::new();
     let app = mock_builder()
         // The state the commands address, built with a substitute window system: `PetSurfaces`
@@ -190,6 +212,7 @@ fn app() -> Pet {
             desktop_pet_capabilities,
             desktop_pet_care_read,
             desktop_pet_open_settings,
+            desktop_pet_update_settings,
             desktop_pet_publish_host_appearance,
             desktop_pet_host_appearance,
         ])
@@ -199,7 +222,11 @@ fn app() -> Pet {
 }
 
 /// A window the IPC can arrive from, under the label the caller is identified by.
-fn window(pet: &Pet, label: &str) -> tauri::WebviewWindow<tauri::test::MockRuntime> {
+///
+/// `pub(crate)` with `Pet`, its `surfaces` and `ok` below, because `settings.rs` drives the same
+/// entry with the same fake: this target's cases import a harness rather than write a second copy of
+/// the request shape, which is the reason `care.rs` gives for importing `wiring.rs`'s.
+pub(crate) fn window(pet: &Pet, label: &str) -> tauri::WebviewWindow<tauri::test::MockRuntime> {
     tauri::WebviewWindowBuilder::new(&pet.app, label, tauri::WebviewUrl::default())
         .build()
         .expect("a window")
@@ -240,7 +267,12 @@ fn call(
     })
 }
 
-fn ok(window: &tauri::WebviewWindow<tauri::test::MockRuntime>, cmd: &str, body: Value) -> Value {
+/// One invoke that must not be refused, with the refusal as the panic message if it is.
+pub(crate) fn ok(
+    window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+    cmd: &str,
+    body: Value,
+) -> Value {
     call(window, cmd, body).unwrap_or_else(|error| panic!("{cmd} refused: {error}"))
 }
 
