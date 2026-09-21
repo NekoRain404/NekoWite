@@ -18,12 +18,30 @@
 
 1. 启动应用：`pnpm tauri dev`
 2. 点击界面上的“打开 folder / vault”按钮
-3. 选择本目录：`C:\Users\Lenovo\Documents\ChatGPT\NekoWrite\docs\mdx-demo`
+3. 选择本目录：`<仓库根>/docs/mdx-demo`
 4. 在文件树中打开 `demo.mdx`
 
 ### 方式二：浏览器 demo
 
-由于浏览器 demo 使用内存 vault，无法读取本地文件，建议使用方式一。
+`pnpm dev` 后在浏览器打开 `http://localhost:1420`。此时没有 `window.__TAURI_INTERNALS__`，
+`apps/desktop/src/platform/gateways/index.ts` 会自动选择内存适配器
+（`createMemoryFsGateway`），因此**读不到本目录的本地文件**，只能验证渲染与交互：
+建议使用方式一。
+
+### 方式三：自动化验证（不需要人工点界面）
+
+`apps/desktop/vite.config.ts` 的 vitest 项目已包含
+`docs/mdx-demo/__validation/**/*.test.ts`，它把本目录的七个文件逐个打开、往返保存并渲染一遍：
+
+```bash
+# 只跑本目录的验证（约 1.3s）
+pnpm --filter @nekowite/desktop exec vitest run __validation
+# 或随整个仓库的测试一起跑（pnpm verify / scripts/gate.sh / CI 都会跑）
+pnpm test
+```
+
+因此这里的“验证要点”里，凡是能被断言的部分（往返语法、公式渲染、组件渲染）都有回归
+测试兜底；界面交互（拖拽、缩放、旋转、视图切换）才需要方式一的人工确认。
 
 ## 验证要点
 
