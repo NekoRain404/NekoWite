@@ -57,21 +57,24 @@
 //! therefore ask for the *same* display, and the second finds the first's server already answering
 //! with the right geometry, so the two apps would share one server and one pointer and each would
 //! click into the other's window. A separate test target is a separate process and a separate number,
-//! which is the same guarantee `main_window_relaunch_test.rs` already relies on. What is duplicated
-//! with those two files is the launch scaffolding, and that duplication is this suite's existing
-//! convention rather than a new one.
+//! the guarantee `main_window_relaunch_test.rs` relied on before `e326a8b` deleted it, and the one
+//! this file and `agent_exit_teardown_test.rs` — the two left that drive a real launch — keep by
+//! being separate targets. What is duplicated between them is the launch scaffolding, and that
+//! duplication is this suite's existing convention rather than a new one.
 //!
-//! **One consequence of the arm, measured here and left for the arm's author.** With the arm in the
-//! tree, `main_window_relaunch_test.rs` does not fail — it **hangs**, which matters because it is one
-//! of the 76 targets `cargo test` runs. That case asserts the *first* process outlives its main window
-//! (`first.is_running()`, its `:552`), and then waits on the second launch with `Command::status()`.
-//! With the arm the first process leaves with its window, so the second launch claims the
-//! single-instance name and keeps running as an ordinary app, and that `status()` never returns.
-//! Measured: with the arm the case was still blocked after ten minutes with the second instance alive
-//! under the test binary; against a build of the same tree with the arm taken out, the same case is
-//! green in 7.63s. The state that file was written for — a process with no window to bring back — no
-//! longer occurs once the close ends the process, so it is that file's premise that has moved, not its
-//! assertions. Retiring or rewriting it is a decision about that file; nothing here touches it.
+//! **What the arm did to the case it replaced, measured here.** With the arm in the tree,
+//! `main_window_relaunch_test.rs` did not fail — it **hangs**, the worse of the two readings for a
+//! suite this size: a hung target costs a timeout and reads as neither red nor green. Its case
+//! asserted the *first* process outlives its main window (`first.is_running()`, its `:552`) and then
+//! waited on the second launch with `Command::status()`. With the arm the first process leaves with
+//! its window, so the second claims the single-instance name and keeps running as an ordinary app,
+//! and that `status()` never returns. Measured: with the arm the case was still blocked after ten
+//! minutes with the second instance alive under the test binary; against a build of the same tree
+//! with the arm taken out, the same case was green in 7.63s. The state it was written for — a
+//! process with no window to bring back — no longer occurs once the close ends the process, so
+//! `e326a8b` deleted it rather than repairing it; and this file reads the app's fate the other way,
+//! by polling `try_wait` inside a deadline (`PET_CLOSE_SETTLE`) instead of blocking on a process
+//! whose lifetime is the measurement.
 //!
 //! **What it does not cover.** No window manager, so "gone" is the X server's own reading of a
 //! destroyed window rather than a compositor's; and the close is a programmatic click at the point

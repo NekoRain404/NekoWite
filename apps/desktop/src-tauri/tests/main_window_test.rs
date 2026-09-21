@@ -9,11 +9,23 @@
 //!
 //! It is not the whole path, and it does not pretend to be: a mock runtime has no X server, no
 //! session bus and no second process, so the *handoff* — the plugin's D-Bus name, the second
-//! launch's exit, and whether a window really reaches the screen — is not here. That half is
-//! `main_window_relaunch_test.rs`, which drives two real processes and skips when this tree has no
-//! packaged build to drive. What runs everywhere is this file, so what has to be right here is the
+//! launch's exit, and whether a window really reaches the screen — is not here. That half was
+//! `main_window_relaunch_test.rs`, deleted in `e326a8b` together with the state it drove, which was
+//! a destroyed main window the process outlived; what drives a real binary now is
+//! `main_window_close_pet_test.rs`, and it skips when this tree has no packaged build to drive,
+//! exactly as that one did. What runs everywhere is this file, so what has to be right here is the
 //! rule itself: the label the config declares, the declaration a raise builds from, and the
 //! difference between "there is a window" and "there is not".
+//!
+//! **What the rebuilt window does not show.** `build`'s reason for existing is
+//! `enable_clipboard_access`, which has no key in `WindowConfig` and so lives only in that one
+//! builder call — and no state under `MockRuntime` reflects it: `WebviewBuilder`'s attributes are
+//! `pub(crate)` (`tauri-2.11.5/src/webview/mod.rs:984`), `WebviewWindowBuilder` exposes no getter
+//! for them (`:48-51`), and `MockRuntime::create_webview` drops the whole `PendingWebview` it is
+//! handed, keeping only its id, url and last evaluated script (`src/test/mock_runtime.rs:193-213`).
+//! A window is therefore proven here to come back with the declaration's *label*, and nothing about
+//! it beyond that; that the clipboard setting cannot drift between the first build and a later one
+//! rests on `build` being the one build site, not on a reading taken here.
 
 use tauri::utils::config::WindowConfig;
 use tauri::Manager;
@@ -81,6 +93,44 @@ fn a_declaration_list_without_the_main_window_answers_nothing() {
     let declared =
         main_window::declared(&unlabelled).expect("an entry with no label is the main window");
     assert_eq!(declared.label, main_window::LABEL);
+}
+
+/// The `None` above is refused in words — what `raise` does with it, rather than the lookup itself.
+///
+/// The two are different failures. A `None` that was quietly skipped would leave a launch that
+/// exits 0 with no window and no sentence anywhere, which is the defect `main_window.rs` was written
+/// to end; the `Err` is what puts the reason in the log of the instance that received the launch
+/// (`lib.rs`'s single-instance callback prints it). The state is one the app's own config cannot
+/// produce and a test can hand over directly, which is why the arm is a function of the declarations
+/// rather than a check on the running app.
+#[test]
+fn a_config_that_declares_no_window_makes_the_raise_refuse() {
+    // `mock_context` here and the real context everywhere else in this file, deliberately: what this
+    // case needs is the one input `raise` refuses on, and this is how a config declaring no window
+    // is handed to it.
+    let app = tauri::test::mock_builder()
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .expect("a context that declares no window still builds an app");
+    assert!(
+        app.config().app.windows.is_empty(),
+        "this case is only about a config with nothing to build from: {:?}",
+        app.config().app.windows
+    );
+
+    let error = main_window::raise(app.handle())
+        .expect_err("with no declaration there is nothing to build, so this cannot succeed");
+
+    // Pinned whole rather than in fragments: this sentence is what a user's log gets in place of a
+    // window, so it is an account to keep rather than an internal detail to reword.
+    assert_eq!(
+        error,
+        "tauri.conf.json declares no window labelled main, so there is no declaration to build \
+         one from"
+    );
+    assert!(
+        app.webview_windows().is_empty(),
+        "the refusal must not build anything on its way out"
+    );
 }
 
 /// A main window that is not there is built again — from its declaration, not from a copy of it.

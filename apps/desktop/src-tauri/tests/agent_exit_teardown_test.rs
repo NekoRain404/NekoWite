@@ -27,17 +27,22 @@
 //! error handler — `BadDrawable`, exit 1 — rather than through the event loop. `windowquit` is the
 //! graceful spelling, but it sends `_NET_CLOSE_WINDOW` to the *root* window, which is a message for
 //! a window manager to act on, and an Xvfb has none: on this tree it does nothing at all. What is
-//! left is the gesture the user makes, which is also the one `main_window_relaunch_test.rs` drives
-//! (with the same geometry assertion and the same retry, and for the same reason: a click that
-//! arrives before the page has mounted its close handler is a click nothing hears).
+//! left is the gesture the user makes, which is also the one `main_window_close_pet_test.rs` drives
+//! — the file `e326a8b` put in place of `main_window_relaunch_test.rs` when it deleted that one and
+//! the state it drove — with the same geometry assertion and the same retry, and for the same
+//! reason: a click that arrives before the page has mounted its close handler is a click nothing
+//! hears.
 //!
 //! **Why the pet is off for this run.** The pet's windows keep the wry runtime's window map
-//! non-empty, so with them up, closing the main window leaves the process running and reaches no
-//! exit at all — that is `main_window_relaunch_test.rs`'s subject, one file over, and its own case
-//! depends on it. Turning the pet off is not a test-only state: it is a stored record the app
-//! itself writes and reads (`desktop_pet/settings/store.rs`, one JSON file per domain), and both of
-//! its switches are fields of the settings page. With no pet window, the main window is the last
-//! one, and its close is the whole quit.
+//! non-empty, so with them up the main window's close is not the whole quit: `lib.rs`'s `Destroyed`
+//! arm closes the pet on the way out first. That the close still ends the process is
+//! `main_window_close_pet_test.rs`'s subject now; the state where it left the process running is the
+//! one `main_window_relaunch_test.rs` was deleted with, in `e326a8b`. Turning the pet off is not a
+//! test-only state: it is a stored record the app itself writes and reads
+//! (`desktop_pet/settings/store.rs`, one JSON file per domain), and both of its switches are fields
+//! of the settings page. With no pet window, the main window is the last one, and its close is the
+//! whole quit — one window, one close, one exit, with the engine's own teardown as the only thing on
+//! the path this case is measuring.
 //!
 //! **What it does not cover.** No window manager, so "closed" is the app's own close rather than a
 //! compositor's; no model and no credentials, so the engine is started and its session opened but

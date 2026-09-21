@@ -233,10 +233,11 @@ pub fn launch_app(
 /// @nekowite/desktop exec tauri build`). `None` is a skip that names that command.
 ///
 /// **A packaged build older than the source it would be driving is a skip, not a failure** — the
-/// same rule, for the same reason, that `main_window_relaunch_test.rs` states at length: the two
-/// are built by different commands at different moments, and a case that drove a stale artifact
-/// would report a red gate about a binary nobody asked it to test. An explicit `NEKOWITE_EXIT_APP`
-/// is taken as it is — naming a path is asking for that binary.
+/// rule `main_window_close_pet_test.rs` defers to this target for, and which
+/// `main_window_relaunch_test.rs` stated too before `e326a8b` deleted it: the two are built by
+/// different commands at different moments, and a case that drove a stale artifact would report a
+/// red gate about a binary nobody asked it to test. An explicit `NEKOWITE_EXIT_APP` is taken as it
+/// is — naming a path is asking for that binary.
 pub fn app_under_test() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("NEKOWITE_EXIT_APP") {
         return Some(PathBuf::from(path));

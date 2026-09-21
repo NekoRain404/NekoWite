@@ -109,9 +109,10 @@ pub const STILL_GONE_SETTLE: Duration = Duration::from_secs(2);
 
 /// The name the bundled engine carries (`agent_runtime::binary_registry::PROGRAM_NAME`).
 ///
-/// Written here rather than imported for the reason `main_window_relaunch_test.rs` writes the
-/// window label out: this file drives the *binary*, and a case that took the name from the code
-/// under test would follow that code anywhere it went.
+/// Written here rather than imported for the reason `MAIN_WINDOW` below is written out too: this
+/// file drives the *binary*, and a case that took the name from the code under test would follow
+/// that code anywhere it went — the reason `main_window_relaunch_test.rs` gave for writing its own
+/// window label out before `e326a8b` deleted it.
 pub const ENGINE_NAME: &str = "opencode";
 
 /// `tauri.conf.json`'s default window label — Tauri's own when an entry carries none.
