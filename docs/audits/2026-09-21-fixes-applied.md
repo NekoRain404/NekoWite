@@ -1501,11 +1501,34 @@ pattern, a gate script, a CI workflow, a Rust module comment, and four documents
 
 §1.2 (`docs/SECURITY.md`'s dormant gate), §1.3 (`docs/PLUGIN_SDK.md`), §1.4
 (`docs/PLUGIN_ISOLATION.md`), §1.8 (`docs/RECOVERY.md`), §1.9 (`docs/A11Y.md`), §1.10 (`docs/debug.md`,
-`docs/development-log.md`), and the §2, §3 and §5 tables. §1.5 and §1.6 are closed above; §1.1 and §1.7
-were closed in §15 and in this round respectively. Plus two gaps the rewritten test plan still names out
-loud — PDF export as an outcome (`use-note-export.ts` has no test file) and window geometry through the
-backend — and one the round found rather than inherited: CI never runs the process-level Rust cases,
-because it builds no package of this tree, so those cases are green there without executing.
+`docs/development-log.md`), and §3's remaining numbers. §1.5 and §1.6 are closed above; §1.1 and §1.7
+were closed in §15 and in this round respectively. §5's three architecture ledgers are reported and
+**not** fixable: `docs/architecture/` is read-only by the maintainer's instruction, which the audit
+itself respects. Plus two gaps the rewritten test plan still names out loud — PDF export as an outcome
+(`use-note-export.ts` has no test file) and window geometry through the backend — and one the round found
+rather than inherited: CI never runs the process-level Rust cases, because it builds no package of this
+tree, so those cases are green there without executing.
+
+**One question is deliberately still open, and it is a product decision rather than a defect.** The audit's
+§2 refused to correct `docs/PRIVACY.md`'s no-network promise in place, because doing so "would foreclose
+the first option" — either the application stops reaching `pets.thenightwatcher.online` and
+`cdn.agentclientprotocol.com` at all, or the document admits that it does. §15 of this ledger took the
+second road: the document now names all three of the application's own outbound requests and says which
+carry credentials. That is the honest description of today's code, and it does not settle the question
+the audit was protecting — whether a knowledge base should fetch a pet catalogue at all. A maintainer who
+decides it should not can now delete the fetch and rewrite one paragraph; nothing in the document prevents
+that, it just no longer lies in the meantime.
+
+**And one gap this round documented rather than closed, with the recipe in it.** CI's rust job runs
+`cargo test --locked` without `NEKOWITE_REQUIRE_PROCESS_TESTS=1`, so the process-level cases read as
+passing there without executing. Closing it means giving that job what `scripts/gate.sh` gives its own
+run: `pnpm --filter @nekowite/desktop exec tauri build --no-bundle`, then
+`cp apps/desktop/src-tauri/binaries/opencode-x86_64-unknown-linux-gnu apps/desktop/src-tauri/target/release/opencode`,
+then `NEKOWITE_REQUIRE_PROCESS_TESTS=1 cargo test --locked`. It is not done here because two of its
+preconditions cannot be checked from this machine: whether the runner image provides `xvfb-run` and
+`dbus-run-session` (the cases start a real window, and with the variable set a display that cannot start
+is a failure, not a skip) and what a second release build costs in that job. A red CI is a worse outcome
+than a documented gap, so the gap is documented — with the three commands — for whoever can verify them.
 
 
 
