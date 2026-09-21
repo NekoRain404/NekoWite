@@ -40,19 +40,39 @@ pub const WRONG_MASTER_PASSWORD: &str = "incorrect master password";
 /// Store an API key for a provider in the stronghold vault. If the provider
 /// already has a key, it is overwritten. The snapshot is committed after each
 /// write so the key survives restarts.
+///
+/// **`base_url` is the address the key is being saved for, and it is what makes the credential
+/// usable.** `providers::ai::config::credential_scope` attaches a stored key only to the endpoint it
+/// was saved against — without that binding a window could name any host it liked and have the
+/// user's key sent to it, which is the hole that function documents. `None` (or a blank string) means
+/// "the provider's own default endpoint", and it *clears* any recorded address rather than leaving
+/// the old one behind: a user who removes their proxy URL and saves again must not be left with a key
+/// bound to an address they are no longer using.
 #[tauri::command]
 pub async fn store_ai_key(
     app: tauri::AppHandle,
     provider: String,
     key: String,
+    base_url: Option<String>,
 ) -> Result<(), String> {
     // Never store the masked "a key is configured" indicator as a real key —
     // the settings UI shows it as a placeholder and must not persist it over a
     // previously-saved credential. Length is not capped: see
     // [`validate_stored_api_key`].
     validate_stored_api_key(&key)?;
+    // Derived from the provider before it is moved into its own record, and named here rather than
+    // inline so the read path (`key_store::load_ai_key_endpoint`) and this one cannot spell it
+    // differently.
+    let endpoint_record = key_store::ai_endpoint_record(&provider);
     let provider_bytes = provider.into_bytes();
     let key_bytes = key.into_bytes();
+    // Read once, and trimmed to nothing when the field is blank: an empty string is the settings
+    // page's way of saying "no override", and recording it would be recording an address that
+    // cannot be matched by anything.
+    let endpoint_bytes = base_url
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty())
+        .map(String::into_bytes);
     key_store::open_vault(
         &app,
         &mut key_store::init_with_default(&app),
@@ -62,6 +82,24 @@ pub async fn store_ai_key(
                 .store()
                 .insert(provider_bytes.clone(), key_bytes.clone(), None)
                 .map_err(|e| e.to_string())?;
+            // Both records move in one transaction, so the snapshot can never hold a key whose
+            // address says something other than what was just saved (`save_vault` commits them
+            // together). The statement form is deliberate: `insert` answers the value it replaced,
+            // which is not something this path has any use for.
+            match &endpoint_bytes {
+                Some(endpoint) => {
+                    client
+                        .store()
+                        .insert(endpoint_record.clone(), endpoint.clone(), None)
+                        .map_err(|e| e.to_string())?;
+                }
+                None => {
+                    client
+                        .store()
+                        .delete(&endpoint_record)
+                        .map_err(|e| e.to_string())?;
+                }
+            }
             key_store::save_vault(stronghold)
         },
     )?;

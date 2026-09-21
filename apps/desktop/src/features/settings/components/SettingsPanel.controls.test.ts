@@ -176,11 +176,15 @@ describe('SettingsPanel control bindings', () => {
   it('writes the AI section controls through to the settings store', async () => {
     await openSection('ai')
     const settings = useSettingsStore()
-    expect(settings.allowPrivate).toBe(true)
+    // The shipped default is the refusing one, and this case is about the *binding* rather than
+    // about which value is initial — so it starts from the default and moves the switch the other
+    // way. It used to start `true` and toggle to `false`, which pinned the default this change
+    // deliberately reversed (`settings-ai.ts`'s own note on `allowPrivate` states why).
+    expect(settings.allowPrivate).toBe(false)
 
     toggle(fieldControl<HTMLInputElement>(t('aiSettings.allowPrivate'), 'input'))
     await nextTick()
-    expect(settings.allowPrivate).toBe(false)
+    expect(settings.allowPrivate).toBe(true)
 
     toggle(fieldControl<HTMLInputElement>(t('aiSettings.systemPrompt'), 'input'))
     await nextTick()

@@ -86,7 +86,8 @@ export const tauriAiPort: AiPort = {
 }
 
 export const tauriKeyPort: KeyPort = {
-  storeAiKey: (provider, key) => invoke<void>('store_ai_key', { provider, key }),
+  storeAiKey: (provider, key, baseUrl) =>
+    invoke<void>('store_ai_key', { provider, key, baseUrl }),
   loadAiKey: (provider) => invoke<string | null>('load_ai_key', { provider }),
   vaultStatus: () => invoke<VaultKeyStatus>('key_vault_status'),
   // The two commands that take a password. Neither answers anything on success, and a refusal is

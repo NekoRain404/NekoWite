@@ -243,6 +243,43 @@ pub fn ai_key_presence(store_value: Option<String>) -> Option<String> {
     store_value.map(|_| AI_KEY_MASKED.to_string())
 }
 
+/// The vault record holding the endpoint a provider's key was saved for.
+///
+/// Derived from the provider rather than a second field in one record, because the vault is a
+/// `Bytes → Bytes` store and the key's own record is the key: changing it to a JSON wrapper would
+/// make every existing install's credential unreadable until it was re-saved. Two records keep the
+/// old one exactly as it is — which is what lets [`AI_ENDPOINT_SUFFIX`]'s rule distinguish a key
+/// saved before this existed (no endpoint record) from one saved with an address.
+///
+/// The `\u{0}` cannot appear in a provider id: those are chosen from a fixed list in the settings
+/// page (`openai`, `anthropic`, `gemini`, …) and a NUL is not something a form control can produce,
+/// so this name cannot collide with a provider's own record.
+pub fn ai_endpoint_record(provider: &str) -> Vec<u8> {
+    let mut record = provider.as_bytes().to_vec();
+    record.push(0);
+    record.extend_from_slice(b"endpoint");
+    record
+}
+
+/// The endpoint `provider`'s stored key was saved for, or `None` when nothing is recorded.
+///
+/// `None` is not an error and not "no endpoint": it is the fact that this install's key predates the
+/// binding rule, and `providers::ai::config::credential_scope` is where that fact is turned into a
+/// decision.
+pub fn load_ai_key_endpoint(
+    app: &tauri::AppHandle,
+    provider: &str,
+) -> Result<Option<String>, String> {
+    let record = ai_endpoint_record(provider);
+    open_vault(app, &mut init_with_default(app), |stronghold| {
+        let client = get_or_create_client(stronghold)?;
+        let value = client.store().get(&record).map_err(|e| e.to_string())?;
+        Ok(value
+            .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+            .filter(|endpoint| !endpoint.trim().is_empty()))
+    })
+}
+
 #[cfg(test)]
 mod stored_api_key_tests {
     use super::*;

@@ -226,8 +226,15 @@ describe('security invariant: IPC key overreach — load_ai_key returns only the
   it('storeAiKey crosses IPC exactly once (the key is never read back; Rust owns the real value)', async () => {
     invokeMock.mockResolvedValue(undefined)
     const { tauriKeyPort } = await import('../platform/gateways/tauri')
-    await tauriKeyPort.storeAiKey('openai', 'sk-never-leak')
-    expect(invokeMock).toHaveBeenCalledWith('store_ai_key', { provider: 'openai', key: 'sk-never-leak' })
+    await tauriKeyPort.storeAiKey('openai', 'sk-never-leak', '')
+    expect(invokeMock).toHaveBeenCalledWith('store_ai_key', {
+      provider: 'openai',
+      key: 'sk-never-leak',
+      // The endpoint the credential is bound to. Empty is "the provider's own default", and it is
+      // named here so a payload that dropped the field fails this test rather than silently storing
+      // a key the backend then refuses to attach to any address.
+      baseUrl: '',
+    })
     // The mask-as-presence discipline is verified in Rust:
     // apps/desktop/src-tauri/tests/keys_test.rs · ai_key_presence_never_discloses_the_key
   })

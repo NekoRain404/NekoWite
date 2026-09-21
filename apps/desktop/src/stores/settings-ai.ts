@@ -16,6 +16,7 @@
 
 import { ref, watch } from 'vue'
 import { getSharedGateways } from '../platform/runtime/gateway-runtime'
+import { aiDisabled, announceBlock } from '../features/ai/services/ai-gate'
 import { persistence } from '../services/persistence'
 import {
   readBaseUrls,
@@ -131,7 +132,24 @@ export function createAiSettings() {
   const maxTokens = ref<number>(readNumber(LS_MAX_TOKENS, 1024))
   const systemPrompt = ref(readLs(LS_SYSTEM_PROMPT, ''))
   const systemPromptOn = ref(persistence.get(LS_SYSTEM_PROMPT_ON) === 'true')
-  const allowPrivate = ref<boolean>(readBool(LS_ALLOW_PRIVATE, true))
+  /**
+   * Whether this app may send an AI request to a loopback or private address.
+   *
+   * **Off unless the user turned it on**, and it used to be on. The field is not a preference about
+   * convenience: it is carried in every request payload, and the Rust side reads it as the licence to
+   * skip the private-range check *and* to skip resolving the host at all (`providers/ai/url_policy.rs`
+   * — the second half was the defect: an opted-in name was never pinned, so reqwest resolved it a
+   * second time and a TTL-0 record could answer a public address to the check and a loopback one to
+   * the connection). Defaulting it on therefore shipped the app with its own guard off, for every
+   * install that never touched the switch.
+   *
+   * The cost is real and is stated rather than hidden: an existing install pointed at Ollama or LM
+   * Studio stops reaching it until this is switched on, and the refusal says so in the provider's own
+   * words ("请在设置中开启「允许本地/内网地址」后再试") rather than failing as a transport error. That
+   * is the trade this makes: a local model server is a deliberate setup, and the guard protects every
+   * user who has not made it.
+   */
+  const allowPrivate = ref<boolean>(readBool(LS_ALLOW_PRIVATE, false))
   // Empty by default: an existing install keeps sending exactly the request it
   // sent before, and only an explicit choice changes the payload.
   const reasoningEffort = ref<ReasoningEffort>(
@@ -167,7 +185,13 @@ export function createAiSettings() {
     // it is in flight.
     const askedFor = provider.value
     const key = apiKey.value
-    await getSharedGateways().keys.storeAiKey(askedFor, key)
+    // The address this key is being saved FOR, read from the same scoped view the request will use
+    // (`baseUrl` is `baseUrls[provider]`), and read here for the reason above: the binding the
+    // backend enforces is between this credential and this endpoint, so a provider switch mid-save
+    // must not move the address either. Empty means "the provider's own default", which clears any
+    // address recorded earlier.
+    const endpoint = baseUrl.value.trim()
+    await getSharedGateways().keys.storeAiKey(askedFor, key, endpoint)
     // The save settles the vault's answer for this provider, and it is the
     // answer the field states: what was just stored. An answer about the
     // provider the user has since left is not this provider's (the switch
@@ -236,7 +260,29 @@ export function createAiSettings() {
     return cfg
   }
 
+  /**
+   * Fetch the current provider's model list — unless the user switched AI off.
+   *
+   * The master switch is `ai-gate.ts`'s rule: with it off, no request may leave
+   * the app. This is the deepest point BOTH settings-page gestures pass through
+   * — `useAiSettings().refreshModels` backs the 刷新模型列表 button, and the
+   * watcher on the provider dropdown calls that same function — and it was the
+   * one request path that never asked the gate. The request was not harmless:
+   * the Rust command backfills a missing key from the vault for the provider it
+   * names, so it left carrying a real credential while the switch promised
+   * nothing would leave at all.
+   *
+   * `announceBlock` is the report `ai-ghost.ts` gives a blocked request — the
+   * house wording for "switched off", said once per switch change rather than
+   * per press. The alternative, a silent empty return, is the failure this path
+   * is already known for: the refresh finishes, nothing is fetched, and nothing
+   * says why.
+   */
   async function listModels(): Promise<void> {
+    if (aiDisabled()) {
+      announceBlock('disabled')
+      return
+    }
     modelsCache.value = await getSharedGateways().ai.listModels(config())
   }
 

@@ -229,6 +229,43 @@ fn allow_private_opts_out() {
 }
 
 #[test]
+fn the_opt_in_waives_the_range_rules_and_keeps_the_pin() {
+    // The opt-in exists to reach a local model server, and what it lifts is the *range* rule. It
+    // must not lift the pinning: the addresses this check vetted are the addresses the client is
+    // allowed to dial, which is what stops a name from answering a public address to the check and a
+    // loopback one to the second lookup inside reqwest (`VettedHost`'s own note).
+    //
+    // Measured on this machine: `localhost` resolves to `::1` and `127.0.0.1`. The assertion is "the
+    // addresses came back", not a fixed list, because a host that answers with one family only is
+    // still pinned to what it answered.
+    let cfg = AIConfig {
+        base_url: Some("http://localhost:11434".into()),
+        allow_private: true,
+        ..Default::default()
+    };
+    let vetted = validate_base_url(&cfg)
+        .expect("the opt-in keeps a local base usable")
+        .expect("a name that resolves has addresses to pin");
+    assert_eq!(vetted.host, "localhost");
+    assert!(
+        !vetted.addrs.is_empty(),
+        "the opt-in handed back nothing to pin, so the name is resolved twice"
+    );
+    assert!(vetted.addrs.iter().all(|addr| addr.ip().is_loopback()));
+}
+
+#[test]
+fn the_opt_in_still_refuses_a_name_that_resolves_to_nothing() {
+    // A name that does not resolve cannot be shown to be local, and the opt-in is an opt-in to
+    // *reaching a private address*, not to skipping the lookup: waved through, the request would be
+    // resolved for the first time inside reqwest, with nothing vetted at all. The refusal names the
+    // host, which is the only thing a user can act on.
+    let err = vet_url("http://not-a-real-host.invalid:11434", true, |_| Ok(vec![]))
+        .expect_err("an unresolvable host is not waved through");
+    assert!(err.contains("not-a-real-host.invalid"), "{err}");
+}
+
+#[test]
 fn default_bases_are_not_rejected() {
     let cfg = AIConfig {
         provider: "openai".into(),

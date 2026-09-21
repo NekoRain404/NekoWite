@@ -7,11 +7,24 @@
  * rejection rather than a silent success. The second is the one worth a file of its own: the same
  * client is what stops the form writing a provider block that points at a variable nothing set.
  */
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 
 import { createAgentProviderAuthoringClient } from './agent-provider-authoring'
 import { createAgentCredentialClient } from './agent-credential-ipc'
 import { REDACTED_CREDENTIAL, type AgentProfileReadout } from './agent-settings-policy'
+import { useAiPermissionStore } from '../../../stores/ai-permission'
+
+/**
+ * Every case here chooses whether an app exists, because the model fetch now reads the AI master
+ * switch through the store. Starting each case with none is what keeps a Pinia left behind by an
+ * earlier one from answering for a later one — the failure that would hide is a request that
+ * silently stops being made.
+ */
+beforeEach(() => {
+  localStorage.clear()
+  setActivePinia(undefined)
+})
 
 function readout(stored: readonly string[] = []): AgentProfileReadout {
   return {
@@ -182,5 +195,64 @@ describe('the credential write', () => {
     await expect(client.setCredential('NWK_IAPP_API_KEY', REDACTED_CREDENTIAL)).rejects.toThrow(
       /not a key/,
     )
+  })
+})
+
+/**
+ * 「获取模型」 is the third gesture that reaches `ai_list_models`, and the one that carries a key
+ * the user just typed — so it is the last place a switched-off AI may still send something. The
+ * settings page's two gestures go through the store (`settings-ai-list-models-gate.test.ts`); this
+ * client has a port of its own and answers the switch here.
+ */
+describe('the model fetch under the AI master switch', () => {
+  it('asks the endpoint for nothing when AI is switched off', async () => {
+    setActivePinia(createPinia())
+    useAiPermissionStore().setEnabled(false)
+    const made = wire()
+
+    const ids = await authoring(made).fetchModels({
+      baseUrl: 'https://ai.example.org/v1',
+      apiKey: 'sk-not-a-real-key',
+      allowPrivate: true,
+    })
+
+    // No request at all: the key in the field is a credential, and the command would backfill this
+    // app's own stored key on top of it. The empty answer is what the form's `ok` state can hold
+    // without inventing a failure the user cannot act on; the block itself is announced once for
+    // the whole app (`ai-gate.announceBlock`), so pressing the button twice does not repeat it.
+    expect(made.configs).toEqual([])
+    expect(ids).toEqual([])
+  })
+
+  it('still fetches for a switched-on AI', async () => {
+    // The paired half: the default state, and what an install predating the switch reads back.
+    setActivePinia(createPinia())
+    const made = wire()
+
+    const ids = await authoring(made).fetchModels({
+      baseUrl: 'https://ai.example.org/v1',
+      apiKey: 'sk-not-a-real-key',
+      allowPrivate: true,
+    })
+
+    expect(made.configs).toHaveLength(1)
+    expect(ids).toEqual(['deepseek-v4.1-flash'])
+  })
+
+  it('stays open with no app at all, as a bare unit test and the plugin host have', async () => {
+    // `ai-gate.permissionState()` is deliberately null outside an app and `aiDisabled()` false
+    // then: a state we cannot read is not evidence that the user switched AI off. A gate that
+    // closed here would also be a gate this suite could not tell apart from the bug — every case
+    // above would pass for the wrong reason.
+    setActivePinia(undefined)
+    const made = wire()
+
+    await authoring(made).fetchModels({
+      baseUrl: 'https://ai.example.org/v1',
+      apiKey: 'sk-not-a-real-key',
+      allowPrivate: true,
+    })
+
+    expect(made.configs).toHaveLength(1)
   })
 })

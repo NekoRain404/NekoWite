@@ -11,6 +11,7 @@ import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { useAiSettings, type AiSettingsModel } from './use-ai-settings'
 import { useSettingsStore } from '../../../stores/settings'
+import { useAiPermissionStore } from '../../../stores/ai-permission'
 import { onNotify } from '../../../services/errors'
 
 const mocks = vi.hoisted(() => ({ listModels: vi.fn() }))
@@ -240,6 +241,54 @@ describe('useAiSettings', () => {
     await second
 
     expect(mocks.listModels).toHaveBeenCalledTimes(1)
+  })
+
+  it('sends nothing when the refresh button is pressed with AI switched off', async () => {
+    // 刷新模型列表 is a user gesture that used to reach `ai_list_models`
+    // regardless of the master switch: the request would leave with the stored
+    // key attached (Rust backfills it) while the module that owns the switch
+    // promises that nothing leaves at all.
+    const m = mountModel()
+    useAiPermissionStore().setEnabled(false)
+
+    await m.refreshModels()
+
+    expect(mocks.listModels).not.toHaveBeenCalled()
+    // The button finishes rather than spinning over a request it never sent.
+    expect(m.modelLoading.value).toBe(false)
+  })
+
+  it('sends nothing when the provider changes with AI switched off', async () => {
+    // The watcher is the second way in, and it is not a button: choosing a
+    // provider with AI off must clear the stale list without asking the new
+    // endpoint for one.
+    const m = mountModel()
+    const settings = useSettingsStore()
+    settings.modelsCache = ['old-provider-model']
+    useAiPermissionStore().setEnabled(false)
+
+    settings.provider = 'openai'
+    await flush()
+
+    expect(mocks.listModels).not.toHaveBeenCalled()
+    expect(settings.modelsCache).toEqual([])
+    expect(m.modelLoading.value).toBe(false)
+  })
+
+  it('still refreshes and still follows a provider switch with AI switched on', async () => {
+    // The paired half of the two cases above: with the switch on — the
+    // default, and what a build predating it reads back — the button and the
+    // watcher behave exactly as they did.
+    const m = mountModel()
+    const settings = useSettingsStore()
+    mocks.listModels.mockResolvedValue(['gpt-4o'])
+
+    await m.refreshModels()
+    settings.provider = 'openai'
+    await flush()
+
+    expect(mocks.listModels).toHaveBeenCalledTimes(2)
+    expect(settings.modelsCache).toEqual(['gpt-4o'])
   })
 
   it('writes provider settings through to the store', () => {

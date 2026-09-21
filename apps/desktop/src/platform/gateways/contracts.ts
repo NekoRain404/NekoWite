@@ -235,7 +235,16 @@ export interface VaultCommandFailure {
  * API key back to the window, which is the property the whole vault exists for.
  */
 export interface KeyPort {
-  storeAiKey(provider: string, key: string): Promise<void>
+  /**
+   * Store a provider's key together with the endpoint it is being saved for.
+   *
+   * `baseUrl` is not decoration: the backend attaches a stored credential only to the address it was
+   * saved against (`providers::ai::config::credential_scope`), because `base_url` arrives over IPC
+   * from the window while the credential is looked up by provider alone — so without the binding, a
+   * window could name any host and have the user's key sent to it. An empty string is "the provider's
+   * own default endpoint", which clears any address previously recorded.
+   */
+  storeAiKey(provider: string, key: string, baseUrl: string): Promise<void>
   loadAiKey(provider: string): Promise<string | null>
   vaultStatus(): Promise<VaultKeyStatus>
   setMasterPassword(password: string): Promise<void>

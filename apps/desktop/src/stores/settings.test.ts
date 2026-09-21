@@ -29,6 +29,9 @@ function clearLs(): void {
   localStorage.removeItem('nekowite.settings.exportFrontmatter')
   localStorage.removeItem('nekowite.settings.exportPageSize')
   localStorage.removeItem('nekowite.settings.exportOrientation')
+  // The address opt-in is a setting like the others, and a case that turns it on would otherwise
+  // hand the next case a store that has already waived the guard (see that default's own case).
+  localStorage.removeItem('nekowite.ai.allowPrivate')
 }
 
 describe('useSettingsStore', () => {
@@ -154,12 +157,34 @@ describe('useSettingsStore', () => {
     expect(s.config().api_key).toBe('sk-realkey')
   })
 
-  it('saves the key for the current provider', async () => {
+  it('saves the key for the current provider, bound to the address it will be used from', async () => {
     invokeMock.mockResolvedValue(undefined)
     const s = useSettingsStore()
     s.apiKey = 'sk-1'
     await s.saveKey()
-    expect(invokeMock).toHaveBeenCalledWith('store_ai_key', { provider: 'local', key: 'sk-1' })
+    // The third field is the binding: the backend attaches a stored credential only to the endpoint
+    // it was saved against (`providers::ai::config::credential_scope`), because `base_url` arrives
+    // over IPC while the key is looked up by provider alone — so a payload without it is a credential
+    // that cannot be used at all, and one with the *wrong* address is the exploit.
+    expect(invokeMock).toHaveBeenCalledWith('store_ai_key', {
+      provider: 'local',
+      key: 'sk-1',
+      baseUrl: s.baseUrl,
+    })
+  })
+
+  it('sends the address the user typed as the address the key belongs to', async () => {
+    invokeMock.mockResolvedValue(undefined)
+    const s = useSettingsStore()
+    s.provider = 'custom'
+    s.baseUrl = 'https://proxy.example/v1'
+    s.apiKey = 'sk-proxy'
+    await s.saveKey()
+    expect(invokeMock).toHaveBeenCalledWith('store_ai_key', {
+      provider: 'custom',
+      key: 'sk-proxy',
+      baseUrl: 'https://proxy.example/v1',
+    })
   })
 
   it('saves a long provider key in full, without truncating', async () => {
@@ -168,7 +193,11 @@ describe('useSettingsStore', () => {
     const longKey = `sk-proj-${'a'.repeat(4096)}`
     s.apiKey = longKey
     await s.saveKey()
-    expect(invokeMock).toHaveBeenCalledWith('store_ai_key', { provider: 'local', key: longKey })
+    expect(invokeMock).toHaveBeenCalledWith('store_ai_key', {
+      provider: 'local',
+      key: longKey,
+      baseUrl: s.baseUrl,
+    })
     expect(s.config().api_key).toBe(longKey)
     expect(s.config().api_key?.length).toBe(longKey.length)
   })
@@ -366,6 +395,20 @@ describe('useSettingsStore', () => {
     s.modelsCache = ['a', 'b']
     s.clearModelsCache()
     expect(s.modelsCache).toEqual([])
+  })
+
+  it('does not waive the address guard unless the user turned it on', () => {
+    // The shipped default is the refusing one, and that is the whole assertion: a payload that set
+    // `allow_private` on its own would lift the private-range check for every install that never
+    // asked — and, before `url_policy.rs` was fixed, the pin with it, so a name could answer a
+    // public address to the check and a loopback one to the connection. Nothing in this store is
+    // allowed to hand that to a user who did not choose it.
+    const s = useSettingsStore()
+    expect(s.config().allow_private).toBe(false)
+
+    // And the choice still works, which is what keeps a local model server reachable at all.
+    s.allowPrivate = true
+    expect(s.config().allow_private).toBe(true)
   })
 
   it('defaults export params to include frontmatter on A4 portrait', () => {

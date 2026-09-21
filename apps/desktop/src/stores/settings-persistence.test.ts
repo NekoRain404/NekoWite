@@ -113,9 +113,14 @@ const CASES: PersistedCase[] = [
   {
     setting: 'allowPrivate',
     key: 'nekowite.ai.allowPrivate',
-    write: (s) => { s.allowPrivate = false },
-    stored: 'false',
-    readBack: false,
+    // The value that is **not** the default, because that is the only one a watcher sees: Vue does
+    // not fire a watcher for a write that does not change the value, so a case writing the default
+    // asserts nothing about persistence and fails the moment the default moves. This wrote `false`
+    // until the shipped default became `false` (`settings-ai.ts` — the guard is refused unless the
+    // user turns it on), which is exactly what this case caught.
+    write: (s) => { s.allowPrivate = true },
+    stored: 'true',
+    readBack: true,
   },
   {
     setting: 'reasoningEffort',

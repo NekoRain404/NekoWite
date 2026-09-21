@@ -27,25 +27,27 @@ use super::request::AIConfig;
 ///   * **A public Base URL must be HTTPS.** HTTP is only for local development
 ///     addresses — `localhost`, a loopback IP, or (under the opt-in) a private
 ///     LAN host — so the key can never cross the public internet in the clear.
-///   * **Without [`AIConfig::allow_private`]**, a host that is (or resolves to)
-///     a literal private, loopback, link-local, CGNAT or unspecified address is
-///     rejected, and the addresses that were vetted are returned so the client
-///     can be pinned to exactly those.
+///   * **A host that is (or resolves to) a literal private, loopback, link-local,
+///     CGNAT or unspecified address is rejected** — unless the opt-in names it.
 ///
-/// [`AIConfig::allow_private`] waives the SSRF guard for a local model server
-/// (Ollama / LM Studio). It does not waive the URL parse, the scheme rule or the
-/// host requirement: the flag is about REACHING a private address, not about
-/// dropping transport security on the public internet.
+/// The addresses that were vetted are returned so the client can be pinned to
+/// exactly those, **on both paths**. That was the defect this signature fixed:
+/// the opt-in used to return `Ok(None)`, which skipped the private-range check
+/// *and* the resolution — so an opted-in name was never pinned, and the second
+/// lookup happened inside reqwest. A TTL-0 record could answer a public address
+/// to a check that did not exist and a loopback one to the connection, which is
+/// the same bypass [`VettedHost`] exists to close.
+///
+/// [`AIConfig::allow_private`] therefore waives the *range* rule for a local
+/// model server (Ollama / LM Studio) and nothing else: not the URL parse, not
+/// the scheme rule, not the host requirement, and not the pin. The flag is about
+/// REACHING a private address, not about dropping transport security on the
+/// public internet or about resolving a name twice.
 pub fn validate_base_url(cfg: &AIConfig) -> Result<Option<VettedHost>, String> {
     let Some(base) = cfg.base_url.as_deref() else {
         return Ok(None);
     };
-    if cfg.allow_private {
-        let url = parse_base_url(base)?;
-        reject_plaintext_public_url(&url, base)?;
-        return Ok(None);
-    }
-    validate_public_url(base).map(Some)
+    vet_url(base, cfg.allow_private, resolve_host_addrs).map(Some)
 }
 
 /// The addresses that were vetted for a user-supplied Base URL.
@@ -63,8 +65,27 @@ pub struct VettedHost {
     pub addrs: Vec<SocketAddr>,
 }
 
+/// The strict path against the process's own resolver: the range rules apply,
+/// which is what a Base URL that was not opted in gets.
+///
+/// Test-only, and `#[cfg(test)]` says so rather than leaving a release build to
+/// warn about it: `validate_base_url` reaches the same rules through [`vet_url`]
+/// with the caller's own flag, so nothing in the library calls this. It stays
+/// as a *name* because a dozen cases are about the strict path specifically, and
+/// spelling that as `vet_url(base, false, resolve_host_addrs)` in each of them
+/// would bury the one thing each is about in a boolean.
+#[cfg(test)]
 fn validate_public_url(base: &str) -> Result<VettedHost, String> {
-    validate_public_url_with(base, resolve_host_addrs)
+    vet_url(base, false, resolve_host_addrs)
+}
+
+/// The same, with the resolver injected. Test-only for the reason above.
+#[cfg(test)]
+fn validate_public_url_with(
+    base: &str,
+    resolve: impl Fn(&str) -> Result<Vec<SocketAddr>, String>,
+) -> Result<VettedHost, String> {
+    vet_url(base, false, resolve)
 }
 
 /// Resolve `host` to the socket addresses a connection could go to.
@@ -128,8 +149,16 @@ fn reject_plaintext_public_url(url: &reqwest::Url, base: &str) -> Result<(), Str
     ))
 }
 
-fn validate_public_url_with(
+/// The one implementation: parse, refuse plaintext to a public host, check the
+/// range unless the caller opted in, then resolve and hand back what to pin.
+///
+/// `allow_private` gates **exactly two** decisions, and each is marked below. It
+/// is a parameter rather than a branch in `validate_base_url` because the
+/// resolution has to happen either way: skipping it under the opt-in is what let
+/// an opted-in name be resolved for the first time by reqwest.
+fn vet_url(
     base: &str,
+    allow_private: bool,
     resolve: impl Fn(&str) -> Result<Vec<SocketAddr>, String>,
 ) -> Result<VettedHost, String> {
     let url = parse_base_url(base)?;
@@ -138,7 +167,8 @@ fn validate_public_url_with(
     // terms rather than after a DNS lookup that a name-based bypass could steer.
     reject_plaintext_public_url(&url, base)?;
     let host = url.host_str().unwrap_or("");
-    if is_private_or_loopback_host(host) {
+    // The opt-in's first decision: a literal private/loopback *host*.
+    if !allow_private && is_private_or_loopback_host(host) {
         return Err(private_url_error(host));
     }
     // `host_str()` keeps the brackets around an IPv6 literal; they are neither
@@ -154,14 +184,20 @@ fn validate_public_url_with(
     }
     // A hostname must not be allowed to bypass the check by resolving to a
     // loopback or RFC1918 address — and a name that does not resolve at all
-    // must be refused rather than waved through.
+    // must be refused rather than waved through. Under the opt-in the *range*
+    // half is lifted and this half is not: an unresolvable name still cannot be
+    // shown to be local, and waving it through would leave the first lookup to
+    // reqwest.
     let addrs = resolve(bare)?;
     if addrs.is_empty() {
         return Err(format!(
             "AI Base URL 的主机名没有解析到任何地址：{bare}。请检查 DNS 设置或改用其他地址。"
         ));
     }
-    if addrs.iter().any(|a| is_private_or_loopback_ip(a.ip())) {
+    // The opt-in's second decision — and only this one. What is handed back is
+    // the same list either way, which is what pins the connection to the
+    // addresses this check saw.
+    if !allow_private && addrs.iter().any(|a| is_private_or_loopback_ip(a.ip())) {
         return Err(private_url_error(host));
     }
     Ok(VettedHost {

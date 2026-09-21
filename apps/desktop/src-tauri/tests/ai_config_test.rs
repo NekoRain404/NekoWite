@@ -14,7 +14,7 @@
 
 use std::cell::{Cell, RefCell};
 
-use nekowite_lib::providers::ai::config::{hydrate_stored_key_with, AIConfig};
+use nekowite_lib::providers::ai::config::{credential_scope, hydrate_stored_key_with, AIConfig};
 use nekowite_lib::providers::ai::request::with_completion_auth;
 use nekowite_lib::storage::key_store::AI_KEY_MASKED;
 
@@ -272,4 +272,83 @@ fn the_store_is_asked_for_this_configs_provider() {
 
     assert_eq!(asked.into_inner(), vec!["anthropic".to_string()]);
     assert_eq!(config.api_key.as_deref(), Some("sk-ant"));
+}
+
+// ---------------------------------------------------------------------------
+// `credential_scope`: which requests a stored key may be attached to at all
+// ---------------------------------------------------------------------------
+
+/// A stored credential may not be moved to an endpoint it was not saved for.
+///
+/// The exploit this is written against, in the repository's own threat model (`state/vault_confinement.rs`
+/// treats the main-window renderer as untrusted): a window sends `{ provider: "openai", base_url:
+/// "https://somewhere.else/v1", api_key: null }`. The key is never disclosed over IPC — `keys::load_ai_key`
+/// answers a mask — but before this rule the *request* carried it, backfilled by provider alone and sent
+/// to whatever host the caller named. The assertion names the outcome a user would see, which is a refused
+/// request and not a 401 from a host they did not choose.
+#[test]
+fn a_key_saved_for_one_endpoint_is_not_sent_to_another() {
+    let mut config = AIConfig {
+        provider: "openai".into(),
+        model: "gpt-4o".into(),
+        base_url: Some("https://somewhere.else/v1".into()),
+        ..Default::default()
+    };
+    let refusal = credential_scope(&config, Some("https://api.openai.com/v1"))
+        .expect_err("a key saved for one endpoint was offered to another");
+    assert!(refusal.contains("api.openai.com"), "{refusal}");
+    assert!(refusal.contains("somewhere.else"), "{refusal}");
+
+    // And the same endpoint is still the ordinary case: this is a binding, not a ban on proxies.
+    config.base_url = Some("https://api.openai.com/v1".into());
+    assert!(credential_scope(&config, Some("https://api.openai.com/v1")).is_ok());
+    // A trailing slash is the one spelling difference forgiven, because it is not a different host.
+    config.base_url = Some("https://api.openai.com/v1/".into());
+    assert!(credential_scope(&config, Some("https://api.openai.com/v1")).is_ok());
+}
+
+/// A key saved against a custom endpoint stays usable *there*, which is what keeps the proxy setups.
+#[test]
+fn a_proxy_endpoint_saved_with_the_key_is_the_one_it_serves() {
+    let config = AIConfig {
+        provider: "anthropic".into(),
+        model: "claude-sonnet-4".into(),
+        base_url: Some("https://proxy.example/v1".into()),
+        ..Default::default()
+    };
+    assert!(credential_scope(&config, Some("https://proxy.example/v1")).is_ok());
+    // The models URL is the other field a request may name, and it is the same comparison: a
+    // credential bound to this provider's address is not a licence for a different one.
+    let mut models = config.clone();
+    models.base_url = None;
+    models.models_url = Some("https://proxy.example/v1".into());
+    assert!(credential_scope(&models, Some("https://proxy.example/v1")).is_ok());
+    models.models_url = Some("https://elsewhere.example/v1".into());
+    assert!(credential_scope(&models, Some("https://proxy.example/v1")).is_err());
+}
+
+/// A key with no recorded endpoint is the pre-migration shape, and it keeps exactly one right.
+///
+/// An install from before the binding was recorded has a credential and no address. Used against the
+/// provider's own default endpoint that is the ordinary case and it keeps working — the same
+/// concession `AiPermissionState.enabled` makes for a field that did not exist. A caller-chosen
+/// endpoint is the other half, and it is the exploit's exact shape, so it is refused with a sentence
+/// that says which click fixes it.
+#[test]
+fn a_key_with_no_recorded_endpoint_serves_only_the_providers_own_address() {
+    let default_endpoint = AIConfig {
+        provider: "openai".into(),
+        model: "gpt-4o".into(),
+        ..Default::default()
+    };
+    assert!(credential_scope(&default_endpoint, None).is_ok());
+
+    let chosen = AIConfig {
+        base_url: Some("https://somewhere.else/v1".into()),
+        ..default_endpoint.clone()
+    };
+    let refusal = credential_scope(&chosen, None)
+        .expect_err("a key with no recorded endpoint was offered to a caller-chosen one");
+    assert!(refusal.contains("somewhere.else"), "{refusal}");
+    assert!(refusal.contains("设置 → AI"), "{refusal}");
 }

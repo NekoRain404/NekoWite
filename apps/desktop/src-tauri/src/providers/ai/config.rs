@@ -10,7 +10,7 @@
 
 use serde::Deserialize;
 
-use crate::storage::key_store::{load_ai_key_internal, AI_KEY_MASKED};
+use crate::storage::key_store::{load_ai_key_endpoint, load_ai_key_internal, AI_KEY_MASKED};
 
 #[derive(Deserialize, Clone, Default)]
 pub struct AIConfig {
@@ -112,6 +112,75 @@ fn is_real_api_key(value: &str) -> bool {
         .is_empty()
 }
 
+/// Whether the credential the vault holds for this provider may be attached to *this* request.
+///
+/// **The rule, and the hole it closes.** The endpoint in an AI request is chosen entirely by the
+/// caller — `AIConfig.base_url` (and `models_url`) arrive over IPC — while the credential is looked up
+/// by `provider` alone. So a window that asked for provider `openai` with
+/// `base_url: "https://somewhere.else/v1"` and no key of its own got the user's stored OpenAI key
+/// backfilled into it and sent to `somewhere.else` as `Authorization: Bearer …`
+/// (`request::with_completion_auth`). The value never crossed IPC, which is what `keys.rs` means by
+/// 「never exposed over IPC」, but it left through the socket — and this repository's own threat model
+/// treats the main-window renderer as untrusted (`state/vault_confinement.rs`).
+///
+/// So a stored key belongs to the endpoint it was **saved for**, and `store_ai_key` records that
+/// endpoint beside it. Three answers, and the asymmetry between the last two is deliberate:
+///
+///  * **An endpoint was recorded.** The request may name it (either field, ignoring a trailing
+///    slash) and nothing else. A different endpoint is refused rather than sent without the key:
+///    a request that quietly loses its credential fails later as a 401 from a host the user did not
+///    choose, which is the diagnosis nobody can act on.
+///  * **No endpoint was recorded, and the request names none.** A key saved by a build that did not
+///    record one, used against the provider's own default endpoint — the ordinary case, and it keeps
+///    working. This is the same concession `AiPermissionState.enabled` makes for a state written
+///    before the field existed.
+///  * **No endpoint was recorded, and the request names one.** Refused. A caller-chosen endpoint and
+///    a key with no recorded home is exactly the shape of the exploit, and the honest migration is
+///    one click: the user saves the key again, which records the endpoint they actually use.
+pub fn credential_scope(config: &AIConfig, recorded: Option<&str>) -> Result<(), String> {
+    let named: Vec<&str> = [config.base_url.as_deref(), config.models_url.as_deref()]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .filter(|endpoint| !endpoint.is_empty())
+        .collect();
+    match recorded {
+        Some(endpoint) => {
+            if named.iter().any(|url| same_endpoint(url, endpoint)) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "the stored key for {} was saved for {endpoint}, and this request names {}. \
+                     Save the key again in 设置 → AI to move it to the address you are using.",
+                    config.provider,
+                    if named.is_empty() {
+                        "no address (the provider's own default)".to_string()
+                    } else {
+                        named.join(", ")
+                    }
+                ))
+            }
+        }
+        None if named.is_empty() => Ok(()),
+        None => Err(format!(
+            "the stored key for {} has no address recorded (it predates this check), and this \
+             request names {}. Save the key again in 设置 → AI while that address is set, so the \
+             credential is bound to it.",
+            config.provider,
+            named.join(", ")
+        )),
+    }
+}
+
+/// Whether two endpoint spellings are the same address.
+///
+/// Only a trailing slash is forgiven, and that is the whole of the normalisation on purpose: a
+/// looser comparison (case, default ports, `www.`, a path prefix) is where a binding rule starts
+/// accepting addresses that are not the one it recorded — which is the bug, not the fix.
+fn same_endpoint(named: &str, recorded: &str) -> bool {
+    named.trim_end_matches('/') == recorded.trim_end_matches('/')
+}
+
 /// Resolve the API key for an AI request: the decision, with the credential
 /// store injected.
 ///
@@ -129,6 +198,11 @@ fn is_real_api_key(value: &str) -> bool {
 /// the decision is a pure function a test can drive from any store it likes
 /// (roadmap §13.10). [`hydrate_stored_key`] is the wrapper that supplies the
 /// real vault; nothing below this line knows there is a vault at all.
+///
+/// **It does not decide *which* requests may be backfilled** — that is
+/// [`credential_scope`], asked by the wrapper before this runs, because the
+/// answer depends on a fact (the endpoint the key was saved for) that the vault
+/// holds and this function deliberately cannot see.
 pub fn hydrate_stored_key_with(
     config: &mut AIConfig,
     load_stored: impl Fn(&str) -> Result<Option<String>, String>,
@@ -158,5 +232,12 @@ pub fn hydrate_stored_key_with(
 /// never sees an `AppHandle`, and `load_ai_key_internal` is still called on the
 /// one path that has one.
 pub fn hydrate_stored_key(app: &tauri::AppHandle, config: &mut AIConfig) -> Result<(), String> {
+    // **Asked before the key is read, and only here.** `credential_scope` needs the endpoint the
+    // credential was saved for, which lives in the vault beside the key — so the rule is stated in
+    // the pure function above (where a test can drive it with any endpoint it likes) and the *fact*
+    // is fetched here, on the one path that has an `AppHandle`. A request that fails this returns
+    // before the key is loaded, so nothing is attached and nothing is sent.
+    let recorded = load_ai_key_endpoint(app, &config.provider)?;
+    credential_scope(config, recorded.as_deref())?;
     hydrate_stored_key_with(config, |provider| load_ai_key_internal(app, provider))
 }

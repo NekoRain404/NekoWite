@@ -30,6 +30,10 @@
  *  - **A fetch that fails is not a save that is refused.** Nothing here writes: the models it returns
  *    are the form's to tick, and a form that could not fetch can still be submitted with ids typed by
  *    hand.
+ *  - **The AI master switch stops it as well.** Settings → AI off means no request leaves the app,
+ *    which this fetch is; `fetchModels` answers an empty list without calling the command and
+ *    `ai-gate.ts` announces the refusal once. Keeping the gate on this side of the port rather than in
+ *    the form is what makes a second caller of the client inherit it.
  *
  * ## Where the key goes
  *
@@ -44,6 +48,7 @@
 
 import type { AgentCredentialClient } from './agent-credential-ipc'
 import type { CredentialField } from './agent-settings-policy'
+import { aiDisabled, announceBlock } from '../../ai/services/ai-gate'
 
 /** What the form asks the endpoint for: the address, the key it typed, and the app's own opt-in. */
 export interface ProviderModelsRequest {
@@ -108,6 +113,21 @@ export function createAgentProviderAuthoringClient(deps: {
 }): AgentProviderAuthoringClient {
   return {
     async fetchModels(request: ProviderModelsRequest): Promise<string[]> {
+      // 「获取模型」 is a request this app makes to an address the form supplied, carrying the key the
+      // user typed — and it is the third gesture that reaches `ai_list_models`. The AI master switch
+      // is the `ai-gate.ts` rule that with it off NO request may leave the app, so it is asked here,
+      // in the call, rather than in the form that presses the button: the form is one of several
+      // ways to reach this client, and a guard on the other side of the port is one a new caller
+      // would not inherit. `permissionState()` is null outside an app and the gate deliberately open
+      // then (a bare unit test, the plugin host), which is why this cannot be a raw store read.
+      //
+      // The empty answer is the shape chosen deliberately: an empty list is what the form's `ok`
+      // state already means, and the refusal is not silent — `announceBlock` reports it once for the
+      // whole app, the same wording `ai-ghost.ts` uses, instead of a toast per press.
+      if (aiDisabled()) {
+        announceBlock('disabled')
+        return []
+      }
       return deps.models.listModels({
         provider: MODELS_PROVIDER,
         // Required by the command's DTO and unused on this path: the fetch names no model.
