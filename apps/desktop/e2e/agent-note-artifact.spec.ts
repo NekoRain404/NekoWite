@@ -106,7 +106,7 @@ async function mountArtifactSurface(page: Page): Promise<void> {
         /* @vite-ignore */ '/src/features/agent/components/AgentNoteProposals.vue'
       )
       const { createAgentComposition } = await import('/src/app/agent-composition.ts')
-      const { createMemoryAgentGateway } = await import('/src/platform/gateways/memory-agent.ts')
+      const { createMemoryAgentGateway } = await import('/src/platform/gateways/memory-agent/index.ts')
       const { useAgentSessionStore } = await import('/src/features/agent/stores/agent-session.ts')
       const { sessionKey } = await import('/src/features/agent/services/agent-session-view.ts')
       const { useTabsStore } = await import('/src/stores/tabs.ts')

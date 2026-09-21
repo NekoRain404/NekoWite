@@ -16,8 +16,9 @@ export type { AgentPanelLabels } from './agent-panel-labels'
  * The agent panel: one session, assembled.
  *
  * It is the feature's assembly point and the only component here that holds a session at all.
- * Everything it draws takes props and emits; this one owns the binding to the store, because
- * the three acceptance rules of §5.1 are about the *panel's* life rather than its parts:
+ * Everything it draws takes props and emits; what it *reads* from the session it is mounted on is
+ * `use-agent-panel-session`'s, because the three acceptance rules of §5.1 are about the *panel's*
+ * life rather than its parts:
  *
  *  - **the session outlives the panel** (§5.1 「任务可以在面板收起后继续」). Nothing here stops a
  *    run — there is no `stop` on unmount, and the only thing teardown does is release the
@@ -30,11 +31,12 @@ export type { AgentPanelLabels } from './agent-panel-labels'
  *    the session's record, and the one honest thing to offer is a resync rather than a
  *    silent partial answer.
  *
- * It is also where the engine's *other* sessions are reached: the bar carries the history control
- * and this file owns what it opens — the capability check that decides whether the control exists
- * at all, the `listSessions` read, and the rows the engine's own answer draws. Picking one leaves
- * as an event (`resume`): a load has to be made for the rail's vault and it replaces the session
- * this panel is mounted on, so the call belongs to whoever owns that lifecycle, not here.
+ * It is also where the engine's *other* sessions are reached, through the bar's history control:
+ * the capability check that decides whether the control exists, the `listSessions` read and the rows
+ * the engine's own answer draws are the popups' files (`use-agent-panel-popups`,
+ * `use-agent-session-history`). Picking one leaves as an event (`resume`): a load has to be made for
+ * the rail's vault and it replaces the session this panel is mounted on, so the call belongs to
+ * whoever owns that lifecycle, not here.
  *
  * It also *places* the three components the neighbouring tasks own, because putting them in the
  * session's life is the part that is this file's business: the permission prompt (T7) is
@@ -43,10 +45,11 @@ export type { AgentPanelLabels } from './agent-panel-labels'
  * empty. Both answers are the store's own actions — the prompt's answer, and the menu's
  * selection written back into the draft, because §4.1 sends a command as an ordinary prompt.
  *
- * The composer's control row is here too — the session's own config options, on the right of the
- * bar below the field (§5.3's 「模型菜单」, and Zed's arrangement of the same row). **The three
- * facts this file used to record as a backend gap have changed, and the note is rewritten rather
- * than dropped because one of them still holds in a narrower form.** The host vocabulary
+ * The composer's control row is the session's own config options, on the right of the bar below the
+ * field (§5.3's 「模型菜单」, and Zed's arrangement of the same row); its state is
+ * `use-agent-config-row`'s and `use-agent-panel-session` binds it. **The three facts this file used
+ * to record as a backend gap have changed, and the note is rewritten rather than dropped because one
+ * of them still holds in a narrower form.** The host vocabulary
  * (`src-tauri/src/agent_runtime/events.rs`) now carries `ConfigChanged` and `normalize_update`
  * maps `SessionUpdate::ConfigOptionUpdate` into the contract's payload; the live suite holds the
  * engine's own `config_option_update` to that shape
@@ -66,30 +69,27 @@ export type { AgentPanelLabels } from './agent-panel-labels'
  * composition site keys it (or remounts it) rather than re-pointing it at another session —
  * a store binding cannot be moved to a session the panel was not mounted for.
  *
- * **Four of this panel's concerns are not in this file**, and each is one subject with its own
- * rules rather than a slice of this one: the conversation's read-only facts
- * (`use-agent-conversation`), the engine's other sessions (`use-agent-session-history`), the
- * options menu (`use-agent-panel-menu`) and the `/` menu's wiring (`use-agent-command-menu`).
- * They were moved out when this file went past the size this project allows one component, and
- * they moved as *moves* — the template below still places every block, which is what this file's
- * job is, and the comments travelled with the code they explain.
+ * **Everything that is not this file's own wiring lives in a file named for its subject**, and each
+ * is one reason to change rather than a slice of this one: the panel's binding to its session, with
+ * the two store reads only that key can address (`use-agent-panel-session`), the conversation's
+ * read-only facts (`use-agent-conversation`), the `/` menu's wiring (`use-agent-command-menu`), the
+ * composer's control row (`use-agent-config-row`), the engine's other sessions
+ * (`use-agent-session-history`), the options menu (`use-agent-panel-menu`), the engine's own account
+ * of what it answers (`use-agent-capability-report`) and the two popups' hosting and events
+ * (`use-agent-panel-popups`). They were moved out when this file went past the size this project
+ * allows one component, and they moved as *moves* — the template below still places every block,
+ * which is what this file's job is, and the comments travelled with the code they explain.
  */
-import { computed, onMounted, ref } from 'vue'
+import { ref } from 'vue'
 import type {
-  AgentCapabilityReport,
   AgentGateway,
   AgentPromptAttachment,
   AgentSession,
 } from '../../../platform/gateways/agent-contracts'
-import { popupHostOf } from '../../../components/popup-host'
-import { useAgentSession } from '../composables/use-agent-session'
-import { useAgentCommandMenu } from '../composables/use-agent-command-menu'
-import { useAgentConfigRow } from '../composables/use-agent-config-row'
-import { useAgentConversation } from '../composables/use-agent-conversation'
-import { useAgentPanelMenu } from '../composables/use-agent-panel-menu'
-import { useAgentSessionHistory } from '../composables/use-agent-session-history'
+import { useAgentCapabilityReport } from '../composables/use-agent-capability-report'
+import { useAgentPanelPopups } from '../composables/use-agent-panel-popups'
+import { useAgentPanelSession } from '../composables/use-agent-panel-session'
 import type { AgentPanelLabels } from './agent-panel-labels'
-import { useAgentSessionStore } from '../stores/agent-session'
 import AgentComposer from './AgentComposer.vue'
 import AgentCommandMenu from './AgentCommandMenu.vue'
 import AgentPanelMenu from './AgentPanelMenu.vue'
@@ -195,8 +195,13 @@ const emit = defineEmits<{
   restart: []
 }>()
 
-const store = useAgentSessionStore()
-
+/**
+ * The session this panel is mounted on, and everything the panel reads from it: the binding to the
+ * store, the conversation's facts, the `/` menu over the draft and the composer's config row. See
+ * `use-agent-panel-session`, which binds the four together and is where the two store reads that
+ * only this panel's key can address — the opening position and the engine's refreshed option list —
+ * are made.
+ */
 const {
   key,
   view,
@@ -210,25 +215,6 @@ const {
   answer,
   resync,
   setScroll,
-  dropped,
-  lastDrop,
-} = useAgentSession({ gateway: props.gateway, session: props.session })
-
-/**
- * The conversation on screen: what this session is called, how long the turn has taken, and the
- * request it is waiting on. Read-only derivations of the view the binding above returns — the
- * rules behind them, and why each is written the way it is, are in `use-agent-conversation`.
- *
- * The one thing supplied from here is the timeline's opening position, for §5.1
- * 「每会话独立…滚动位置」: read from the store rather than taken as a prop, because the binding
- * above writes the position (`setScroll`) and has no reader for it. A session the panel has shown
- * before keeps its record across a collapse, and this is the only moment that record is of any
- * use. A record that does not exist yet means nobody has read this session — `undefined` opens it
- * at the end rather than at offset 0, which is what a first look wants. The one case the store
- * cannot tell apart is a record that exists but was never scrolled; that is a session whose
- * transcript the reader has not seen, and opening it at the end is the cheaper mistake.
- */
-const {
   title,
   initialPosition,
   droppedSentence,
@@ -237,69 +223,23 @@ const {
   pending,
   pendingToolStatus,
   expired,
-} = useAgentConversation({
-  session: props.session,
-  view,
-  dropped,
-  lastDrop,
-  initialScrollTop: store.recordFor(key)?.scrollTop,
-})
-
-/** The `/` menu (T8): the engine's published commands for this session, filtered by the token
- *  being typed. Both halves of it are the panel's — the draft is the store's and the keys are the
- *  composer's — which is why it is wired here and owned by `use-agent-command-menu`. */
-const { commands, choose: chooseCommand, composition: onComposition } = useAgentCommandMenu({
-  view,
-  text: draft,
-})
-
-/** The composer's control row: the session's own config options, and the one write the panel
- *  makes to the session's state. The call itself is `use-agent-config-row`'s. */
-const {
+  commands,
+  choose: chooseCommand,
+  composition: onComposition,
   controls: config,
   busy: configBusy,
   failure: configFailure,
   set: onConfigSet,
-} = useAgentConfigRow({
+} = useAgentPanelSession({ gateway: props.gateway, session: props.session })
+
+/** The engine's own account of what it answers, for this panel's runtime — read once, on mount, by
+ *  `use-agent-capability-report`, which is also where the `null` that is a state of its own, and the
+ *  sentence a `null` decides, are explained. Two surfaces read the ref: the composer takes the
+ *  *report* rather than two booleans, and the history list reads its own two gates off the same
+ *  value. */
+const capabilityReports = useAgentCapabilityReport({
   gateway: props.gateway,
   session: props.session,
-  view,
-  adopt: (options) => store.adoptOptions(key, options),
-})
-
-/**
- * The whole report, kept as it arrived, for the surfaces that need a fact this panel does not read
- * itself.
- *
- * The composer is handed the *report* rather than two more booleans, because a boolean cannot
- * carry the third state: `unavailable` and `unverified` are different facts about an engine, and a
- * surface that showed them alike would be telling a reader their engine refuses something nobody
- * ever asked it. The history surface reads its own two gates off the same report — an engine may
- * answer `session/close` without answering `session/list`, and each control is drawn on its own
- * answer rather than on the pair.
- *
- * `null` is a state of its own and not an empty report — a report this window cannot read is
- * rejected rather than shortened (`tauri-agent.ts`), so no surface may answer a reader with "names
- * no such feature" for a report nobody holds. The two part company in a *sentence* and in nothing
- * else: the controls either withholds are the session-history ones and no others — the composer's
- * are drawn on neither, as `AgentComposer.vue`'s `capabilities` prop now says — and what a `null`
- * decides about an attachment is what the reader is *told* (`attachmentStanding`). This paragraph
- * said "both leave every control un-drawn", which was the same overstatement in a third file.
- *
- * The report belongs to the runtime the session belongs to and is read once, on mount: a panel is
- * mounted per session, and a runtime the host has replaced has no answer left to give.
- */
-const capabilityReports = ref<readonly AgentCapabilityReport[] | null>(null)
-
-onMounted(async () => {
-  try {
-    capabilityReports.value = await props.gateway.capabilities(props.session)
-  } catch {
-    // Nothing arrived, so nothing is offered — and the ref stays `null` rather than being folded
-    // into an empty report. The two are different states: see the note above for the sentence they
-    // part company in.
-    capabilityReports.value = null
-  }
 })
 
 const barEl = ref<InstanceType<typeof AgentSessionBar> | null>(null)
@@ -308,38 +248,42 @@ const historyEl = ref<InstanceType<typeof AgentSessionHistoryMenu> | null>(null)
 const menuEl = ref<InstanceType<typeof AgentPanelMenu> | null>(null)
 
 /**
- * Where each of those two popups is teleported to: the `.shell` its own control is drawn inside,
- * or `body` when the page has none (`components/popup-host.ts`).
+ * The panel's two popups — the options menu and the engine's session list — together with the
+ * element their controls are, and the element each is teleported into. `use-agent-panel-popups` owns
+ * that placement and binds the two menus behind it to this panel's own events.
  *
- * A popup left on `body` resolves `palettes.css`'s `:root` block — the light palette, the default
- * accent, the default face — inside a window the user has told to draw a dark theme, because
- * `AppShell.vue:285` publishes the appearance on `.shell` and nowhere else. Each answer is walked
- * from the control its own popup hangs off; today the bar draws both, so they are one element.
- *
- * Resolved by `computed` rather than once in `onMounted`, and the history control is the reason:
- * the bar draws it on the engine's own `session/list` answer (`AgentSessionBar.vue:354`), which
- * arrives *after* this panel mounts — so a value taken at mount would be `body`, the fallback
- * standing in silently for a control that was merely late. Measured: the `onMounted` shape passes
- * for the options menu and fails for the session list.
- *
- * `body` is that fallback and not a second answer: a `Teleport` aimed at a selector that matched
- * nothing renders *nothing*, so a page without a shell must still get its popups — and the pet
- * window's page, which publishes the appearance on its document element, is that page.
+ * The two hosts and the two menus' state below are unpacked into top-level bindings rather than read
+ * as `popups.history.open`, and that is not a style choice. Vue unwraps a ref only when it is a
+ * binding of the setup scope; a ref reached *through* a plain object stays a `Ref` where the template
+ * reads it, and a `Ref` is truthy — so `v-if="popups.history.open"` would draw the list after it was
+ * closed, and `:left="popups.history.placement.left"` would read a property off the ref instead of
+ * the box. The names below are the ones the template has always used.
  */
-const menuHost = computed(() => popupHostOf(barEl.value?.menuElement()))
-const historyHost = computed(() => popupHostOf(barEl.value?.triggerElement()))
+const popups = useAgentPanelPopups({
+  bar: barEl,
+  optionsMenu: menuEl,
+  historyMenu: historyEl,
+  gateway: props.gateway,
+  session: props.session,
+  cwd: props.cwd,
+  capabilities: capabilityReports,
+  menuLabels: props.labels.menu,
+  settingsOpenable: props.settingsOpenable === true,
+  chatOpenable: props.chatOpenable === true,
+  restartOpenable: props.restartOpenable === true,
+  onResume: (sessionId) => emit('resume', sessionId),
+  onNewSession: () => emit('new-session'),
+  onOpenSettings: () => emit('open-settings'),
+  onUseChat: () => emit('use-chat'),
+  onRestart: () => emit('restart'),
+})
+
+const { menuHost, historyHost } = popups
 
 /**
- * The engine's *other* sessions (§5.3's history control): whether the control may be drawn at all,
- * the list it opens, and the free action's two calls. The control itself is the bar's; everything
- * behind it is `use-agent-session-history`'s, which is also where each gate and each of the four
- * states is explained.
- *
- * The three things this file supplies are the ones only it has: the element the list hangs from
- * and the element the list *is* — both of which the template below owns — and the two events a
- * pick or a new-session leaves through. Both leave the component rather than being carried out
- * here, because a load has to be made for the rail's vault and it replaces the session this panel
- * is mounted on.
+ * The two menus' own state, unpacked for the template — see the note above the popups call for why
+ * these cannot be read as `popups.history.*`. What each value is, and which gate draws which
+ * control, is `use-agent-session-history`'s and `use-agent-panel-menu`'s.
  */
 const {
   offered: historyOffered,
@@ -364,19 +308,8 @@ const {
   confirm: confirmFree,
   pick: onHistoryPick,
   openNew: onHistoryNew,
-} = useAgentSessionHistory({
-  gateway: props.gateway,
-  sessionId: props.session.sessionId,
-  cwd: props.cwd,
-  capabilities: capabilityReports,
-  trigger: computed(() => barEl.value?.triggerElement() ?? null),
-  popup: historyEl,
-  onResume: (sessionId) => emit('resume', sessionId),
-  onNewSession: () => emit('new-session'),
-})
+} = popups.history
 
-/** The options menu, whose rows are all doors out of this component — see
- *  `use-agent-panel-menu` for why each is gated on its own capability. */
 const {
   rows: menuRows,
   open: menuOpenState,
@@ -384,23 +317,7 @@ const {
   toggle: toggleMenu,
   close: closeMenu,
   choose: chooseMenuRow,
-} = useAgentPanelMenu({
-  trigger: computed(() => barEl.value?.menuElement() ?? null),
-  popup: menuEl,
-  restartOpenable: props.restartOpenable === true,
-  settingsOpenable: props.settingsOpenable === true,
-  chatOpenable: props.chatOpenable === true,
-  labels: {
-    settings: props.labels.menu.settings,
-    chat: props.labels.menu.chat,
-    restart: props.labels.menu.restart,
-  },
-  onSettings: () => emit('open-settings'),
-  onChat: () => emit('use-chat'),
-  // An event rather than a call, for the reason `resume`'s own doc gives: the restart replaces
-  // the session this panel is mounted on and only the rail can re-point it.
-  onRestart: () => emit('restart'),
-})
+} = popups.menu
 
 function onSend(text: string, attachments: readonly AgentPromptAttachment[]): void {
   // A refusal is the store's to report and it keeps the text itself (§5.1: an error does not

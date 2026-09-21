@@ -3,7 +3,7 @@
  * replay behind it, the subscribers resuming from it, its unanswered permission
  * requests, and the turn in flight.
  *
- * It is apart from `memory-agent.ts` because that file is about the calls the app
+ * It is apart from `memory-agent/index.ts` because that file is about the calls the app
  * makes — is the runtime up, does this handle still belong to it, which failure
  * does each call get — while this one is about what a session *is* once it exists.
  * The rules that make the snapshot→subscribe window closable live here: a sequence

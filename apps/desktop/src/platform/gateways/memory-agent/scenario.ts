@@ -3,7 +3,7 @@
  * and which frames it injects by hand.
  *
  * Kept apart from the machinery that carries these out (`session.ts`) and from
- * the gateway that exposes them (`memory-agent.ts`) because this file is the part
+ * the gateway that exposes them (`memory-agent/index.ts`) because this file is the part
  * a test author reads first, and the part that has to stay complete: an event a
  * test cannot inject is an event no reducer can be written against.
  */

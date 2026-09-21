@@ -80,7 +80,7 @@ async function mountPanelInRail(page: Page): Promise<void> {
     const vue = (await import(/* @vite-ignore */ urls.vue)) as typeof import('vue')
     const pinia = (await import(/* @vite-ignore */ urls.pinia)) as typeof import('pinia')
     const { AgentPanel } = await import('/src/features/agent/index.ts')
-    const { createMemoryAgentGateway } = await import('/src/platform/gateways/memory-agent.ts')
+    const { createMemoryAgentGateway } = await import('/src/platform/gateways/memory-agent/index.ts')
     const { useAgentSessionStore } = await import('/src/features/agent/stores/agent-session.ts')
     const { agentPanelLabels } = await import('/src/app/AgentRailBody.vue')
 

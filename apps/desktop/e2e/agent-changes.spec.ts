@@ -145,7 +145,7 @@ async function open(page: Page): Promise<void> {
         default: Component
       }
       const review = await import(/* @vite-ignore */ serviceUrl)
-      const { createMemoryAgentGateway } = await import('/src/platform/gateways/memory-agent.ts')
+      const { createMemoryAgentGateway } = await import('/src/platform/gateways/memory-agent/index.ts')
 
       window.__agentChanges?.unmount?.()
 
