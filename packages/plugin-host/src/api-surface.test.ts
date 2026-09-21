@@ -61,6 +61,35 @@ const REQUIRED_RUNTIME_EXPORTS = [
   'unrevokePlugin',
   'isPluginRevoked',
   'getRevokedPlugins',
+  // The eleven below were missing from this list until 2026-09-22, and the gap was
+  // invisible because both sides agreed with the document rather than with the
+  // barrel: `docs/PLUGIN_SDK.md` §1 names them as part of the surface, the barrel
+  // exports them, and nothing required them — so any of them could have been
+  // deleted with this snapshot still green, which is the one thing it exists to
+  // prevent. (`docs/DOC-AUDIT.md` §1.3 counted 17 of 62; those counts are wrong,
+  // the finding is not. Measured: the barrel exports 101 names, 46 were required
+  // here, and 11 names the document calls public were in neither.)
+  //
+  // They stay because the document says they are public: the signature family a
+  // publisher needs, the hook-timeout budget, the audit-log file sink, and the
+  // governance serialize/load pair — the embedder's only supported way into the
+  // singletons. Removing one is now a deliberate change to this list.
+  //
+  // signatures / trust
+  'createPluginSignature',
+  'verifyPluginSignature',
+  'buildPluginSignaturePayload',
+  'encodePluginKeyMaterial',
+  'publisherIdOf',
+  // lifecycle
+  'setLifecycleHookTimeout',
+  'getLifecycleHookTimeout',
+  // audit log
+  'setAuditLogFileSink',
+  'getPluginAuditEvents',
+  // governance state
+  'serializeGovernance',
+  'loadGovernance',
 ] as const
 
 describe('plugin-host public API surface', () => {

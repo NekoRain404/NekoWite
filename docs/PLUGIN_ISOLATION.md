@@ -1,6 +1,9 @@
 # 插件隔离方案（发布版为何不加载插件）
 
-> 状态：**未实现**。本文是 1.0 的决策文档 + 1.1 的施工蓝图。它回答两个问题：
+> 状态（2026-09-22 校正）：**A 路线已选定并已落地** —— 1.0 不执行 vault 插件，发布版里那两个
+> 闸门（Tauri 下的 CSP 守卫、浏览器 demo 下的显式拒绝）就是 A 的落地，README、用户指南与设置里的
+> 说明也都是按 A 写的。本文其余部分是 **C 路线（iframe + RPC 沙箱）的 1.1 施工蓝图**，不再是
+> 「三条路都没选」。它回答两个问题：
 > 为什么发布版现在**不加载**插件，以及要让插件真正可用需要做什么。
 
 ## 1. 现状（一句话）
@@ -10,13 +13,16 @@
 - 治理（已实现、已有测试）：清单解析、摘要（digest）比对、签名校验、信任源、撤销/版本策略/回滚、
   激活前逐项同意、崩溃隔离与配额、`.nekowite/vault-plugin-audit.log` 审计、`ai` 权限、以及
   写入策略（`pluginEditorGuard`：插件往文档里写要过用户权限）。
-- 执行（发布版跳过）：`apps/desktop/src/services/plugins.ts` 的 `isPluginImportAllowedByCsp()`
-  在检测到 Tauri 运行时后返回 `false`，`loadVaultPlugins` 直接返回，只弹一次「插件功能因安全策略不可用」。
+- 执行（发布版跳过）：实现位于 `apps/desktop/src/features/plugins/services/discovery.ts` 的
+  `isPluginImportAllowedByCsp()`（`apps/desktop/src/services/plugins.ts` 现在只是 21 行的兼容
+  re-export，不再是实现）；它在检测到 Tauri 运行时后返回 `false`，`loadVaultPlugins` 直接返回，
+  只弹一次「插件功能因安全策略不可用」。浏览器 demo 里则由同一文件的显式拒绝兜住
+  （`browser-demo: plugin execution disabled`）。
 
 ## 2. 为什么跳过：插件代码与主程序同权限
 
-宿主用 `import(/* @vite-ignore */ specifier)`（`packages/plugin-host/src/loader.ts:112`）把插件模块
-加载进**主窗口**，并在同一上下文里调用插件回调。于是插件代码可以：
+宿主用 `import(/* @vite-ignore */ specifier)`（`packages/plugin-host/src/loader.ts` 的 `loadPlugin`）
+把插件模块加载进**主窗口**，并在同一上下文里调用插件回调。于是插件代码可以：
 
 1. 读写应用能读写的任何文件（vault 里的全部笔记，包括用户没打开的）；
 2. 访问 DOM，读取屏幕上的一切（含正在编辑的正文）；
@@ -83,8 +89,9 @@
 
 ## 4. 决策所需
 
-1. 选 A、B 还是 C（这不是工程判断，是产品/风险偏好）。
+1. ~~选 A、B 还是 C~~：**已选 A**（2026-09-22 核对：A 的两个闸门就是当前实现，README、用户指南与
+   设置说明都按 A 描述）。下面两条是选择 C 时要接受的产品代价，留着给 1.1 的动工决定。
 2. 若选 B：接受「插件 = 完全信任的代码」，并同意在同意对话框与文档里把这句话写清楚。
 3. 若选 C：接受「1.0 没有插件」，并接受隔离版**不支持插件自定义 UI 组件**。
 
-未选 C 之前，本文列出的执行闸门保持不变：**发布版不加载插件代码**。
+在 C 落地之前，本文列出的执行闸门保持不变：**发布版不加载插件代码**——这正是 A。

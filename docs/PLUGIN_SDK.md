@@ -4,8 +4,10 @@ This document is the **stable public contract** for third-party NekoWite plugins
 covers the public API surface, the lifecycle, the permission/capability model, how a
 plugin is loaded, and how the API is versioned.
 
-A runnable reference plugin lives at [`examples/plugins/hello`](../examples/plugins/hello).
-Read it alongside this document.
+A reference plugin lives at [`examples/plugins/hello`](../examples/plugins/hello):
+`index.js` plus its manifest, kept correct for a host that can execute one. **Nothing loads it
+today** — the application refuses vault plugins in both builds (§ 4) and no test uses it as a
+fixture (they stub the import boundary with their own). Read it alongside this document.
 
 ---
 
@@ -15,9 +17,17 @@ The plugin SDK is the curated barrel `packages/plugin-host/src/index.ts`. It re-
 **only** the stable names below; plugin authors and the app host must import from the
 package root (`@nekowite/plugin-host`), **never** a deep path (`@nekowite/plugin-host/src/loader`).
 
-The surface is frozen by a snapshot test (`packages/plugin-host/src/api-surface.test.ts`)
-that fails if any stable export is removed. Types-only exports are part of the contract
-too (they are erased at runtime, but still carry the API).
+The surface is frozen by a list of required names (`packages/plugin-host/src/api-surface.test.ts`,
+57 names as of 2026-09-22) that fails if **a name on the list** stops being exported. Types-only
+exports are part of the contract too (they are erased at runtime, but still carry the API).
+
+> **What that test does and does not prove (2026-09-22).** It is a list, not a snapshot: adding
+> an export does not fail it, and an export that is *not* on the list can be deleted with the
+> test still green. That gap was real — the barrel exports 101 names, the list required 46, and
+> **11 names the table below calls public were on neither**, including the whole signature
+> family and the governance serialize/load pair. They are on the list now, so the sentence
+> above is true of every name this document promises; keeping it true means adding a name here
+> when this document adds one there.
 
 ### Runtime exports
 
@@ -359,8 +369,12 @@ strict (`script-src 'self' 'wasm-unsafe-eval'` — no `blob:`, no `'unsafe-eval'
 therefore **blocks blob-import plugins**. The host detects the Tauri runtime and refuses
 to attempt the import, surfacing **one** per-session notice that vault plugins are
 disabled until the plugin host is moved behind real isolation. Built-in plugins
-(bundled first-party code) are unaffected. So today: **vault plugins are effectively
-disabled in a production Tauri build**; they load in a plain-browser demo build.
+(bundled first-party code) are unaffected. So today **vault plugins are disabled in both
+builds**, and for two different reasons — the production Tauri build by the CSP above, the
+plain-browser demo build by an explicit refusal (`features/plugins/services/discovery.ts`:
+`browser-demo: plugin execution disabled`), because a browser demo has no isolation at all and
+"it runs in the demo" would mean "it runs unsandboxed". This paragraph previously said vault
+plugins load in a plain-browser demo build, which was never true of this code.
 
 ---
 
@@ -379,22 +393,46 @@ The public surface is versioned by the `version` export in `packages/plugin-host
   - **Semantics** of hooks/args are part of the contract: changing `(ctx, editor)` to
     `(editor)` is breaking even if the export name stays.
 
-Plugins should declare a peer range on `@nekowite/plugin-host` (e.g. `^0.1.0`) and the
-host refuses a plugin whose declared range excludes the running version. That contract is
-enforced by the host's loader at activation.
+**What a plugin cannot do today: declare its own compatibility.** There is no peer-range
+handling anywhere in `packages/plugin-host` or `features/plugins` — the loader reads `name`,
+`version` and `main` from the manifest and nothing else, and `examples/plugins/hello`'s
+`package.json` has no such field. What exists is the other direction: the **host** records a
+version range per plugin id (`setPluginVersionRange`, checked by `versionSatisfies` in
+`version-policy.ts`), so an administrator can refuse a plugin version, and the two are not
+substitutes — a plugin that required `^0.1.0` of the host would be refused by its own
+declaration, which is exactly what an unisolated loader must not let a plugin do.
+
+> A previous version of this paragraph said plugins "should declare a peer range" and that
+> "the host refuses a plugin whose declared range excludes the running version", enforced "by
+> the host's loader at activation". None of that was implemented.
 
 ---
 
-## 6. Loading an example locally (demo build)
+## 6. Loading an example locally
 
-In a plain-browser demo build (`pnpm --filter @nekowite/desktop dev`, no Tauri, so the CSP
-does not block blob imports):
+**This walkthrough cannot be performed today, in either build**, and the section is kept
+because the example is still the fixture the tests load:
+
+- **In a plain-browser demo build** (`pnpm --filter @nekowite/desktop dev`, no Tauri) the
+  loader refuses before it reads anything: `features/plugins/services/discovery.ts` rejects
+  with `browser-demo: plugin execution disabled`, and the code's own comment says why — the
+  browser demo has no isolation at all, so "runs in the demo" would mean "runs unsandboxed".
+- **In a production Tauri build** the CSP blocks the blob import — see § 4.
+
+So the consent → trust → integrity → import sequence runs **only where a test stubs its
+import boundary**: `services/plugins.test.ts` passes `loadPlugin`, and
+`services/plugins-declared-permissions.test.ts` passes `importSource`. Those tests do not
+load `examples/plugins/hello` — nothing does. It is referenced by no test and no code path,
+only by this document: it is a reference implementation for a host that can execute one, and
+it is kept correct for the day that host exists (57 lines of `index.js`, a real manifest, a
+real `main`, a real `registerLifecycleHook` call).
+
+The steps below describe what the sequence does once a host can reach it, not something you
+can do to a running app:
 
 1. Drop `examples/plugins/hello` (renamed, e.g. as `hello` with its `package.json`) into
    `<vault>/plugins/hello/`.
-2. Open the vault. The host scans `plugins/`, fingerprints, and activates the plugin.
+2. Open the vault. The host scans `plugins/`, fingerprints, and — with every gate passing —
+   activates the plugin.
 3. The "Insert greeting" toolbar item appears; clicking it calls
    `getActiveEditor().insertMarkdownAtCursor(...)`.
-
-In a production Tauri build the plugin will not load (blob imports are CSP-blocked) — see
-§ 2. That is intentional until the host is moved behind real isolation.
