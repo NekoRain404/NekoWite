@@ -1525,10 +1525,13 @@ passing there without executing. Closing it means giving that job what `scripts/
 run: `pnpm --filter @nekowite/desktop exec tauri build --no-bundle`, then
 `cp apps/desktop/src-tauri/binaries/opencode-x86_64-unknown-linux-gnu apps/desktop/src-tauri/target/release/opencode`,
 then `NEKOWITE_REQUIRE_PROCESS_TESTS=1 cargo test --locked`. It is not done here because two of its
-preconditions cannot be checked from this machine: whether the runner image provides `xvfb-run` and
-`dbus-run-session` (the cases start a real window, and with the variable set a display that cannot start
-is a failure, not a skip) and what a second release build costs in that job. A red CI is a worse outcome
-than a documented gap, so the gap is documented — with the three commands — for whoever can verify them.
+preconditions cannot be checked from this machine: whether the runner image provides the three executables
+the cases look for by name — `Xvfb`, `dbus-daemon` and `xdotool`
+(`tests/agent_exit_teardown_test.rs:134`, `:140`; the launch starts a display and a private session bus of
+its own and drives windows with `xdotool`) — and what a second release build costs in that job. With the
+variable set, a missing tool is a failure rather than a skip, so guessing wrong turns the job red. A red CI
+is a worse outcome than a documented gap, so the gap is documented — with the three commands and the three
+tools — for whoever can verify them.
 
 
 
