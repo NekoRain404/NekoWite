@@ -16,6 +16,7 @@
     "lint": "pnpm -r lint",
     "test:e2e": "pnpm --filter @nekowite/desktop exec playwright test",
     "perf": "pnpm --filter @nekowite/desktop perf",
+    "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm perf && pnpm build && pnpm --filter @nekowite/desktop check:export-css",
     "tauri": "pnpm --filter @nekowite/desktop tauri",
     "package:linux": "bash scripts/package-linux.sh",
     "package:win": "bash scripts/package-win.sh"

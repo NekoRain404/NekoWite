@@ -1,3 +1,15 @@
+// The renderer's warning budget, and why it is a number in a flag rather than a clean baseline.
+//
+// `apps/desktop/package.json` runs `eslint . --max-warnings 462`. All 462 are real and all of them
+// predate this file's ratchet — the review that measured them (`docs/audits/2026-09-21-code-review.md`
+// §6, T3) found that lint could not fail at all, so the count only ever moved in one direction and
+// nobody had to decide about it. This is the ceiling that makes the next one a decision: a change
+// that adds a warning fails, a change that removes them passes and lowers what the next ceiling can
+// be. It is a ceiling and not an exact count on purpose — `--max-warnings` compares with `>`, so
+// fixing warnings never needs this number touched, and only a genuine regression does.
+//
+// The two packages are absent from the budget because they have nothing to budget: `pnpm -r lint`
+// reports 0 warnings for both `editor-core` and `plugin-host`.
 'use strict'
 
 const js = require('@eslint/js')
