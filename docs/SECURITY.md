@@ -1,19 +1,37 @@
 # NekoWite Security Posture — M1 invariant audit
 
-What NekoWite's security model **actually enforces** today (each item is verified by
-an automated test or a Rust integration test), and what it **does not**. Read this
-before assuming a capability is protected.
+What NekoWite's security model **actually enforces** today, and what it **does not**.
+Read this before assuming a capability is protected.
+
+> **How to read the "Verified" notes (2026-09-22).** An automated test that asserts a
+> rule proves the rule's implementation, not that the code path runs in the shipped app.
+> The distinction matters for exactly one subsystem here, and it is the one this audit
+> was written about: **the vault-plugin gates in §1 and the governance layer in §6 are
+> implemented and unit-tested, and unreachable in the packaged application**, because
+> §2's CSP makes the loader refuse the import before any of them is reached
+> (`vault-plugin-load.ts:142-146` returns above every gate). Sections that are
+> unreachable in production say so; the rest are enforced by code that runs.
 
 ## Enforced
 
 ### 1. Plugin execution is gated behind change-detection + consent
+
+> **Reachability first (2026-09-22):** in the shipped Tauri build none of the gates in
+> this section is reached. The loader checks the CSP rule before them and returns
+> (`vault-plugin-load.ts:142-146`), and the tests that cover the gates stub the import
+> boundary (`plugins.test.ts` passes `loadPlugin`; `plugins-declared-permissions.test.ts`
+> passes `importSource`). So this section describes the plugin host's contract as
+> implemented and tested, and §2 is what actually protects the packaged app today.
 
 Vault plugins are **not executed** until two gates pass, both in phase 2 (the frontend
 never imports a module in phase 1):
 
 1. **Consent** — the loader asks the user before activating any plugin declaring
    dangerous capabilities (`fs`/`network`/`ai`). A denial skips the plugin's import
-   entirely, so its code is never executed.
+   entirely, so its code is never executed. The permission dialog **is wired into the
+   production shell** (`App.vue:129` → `app-dialogs.ts:75` → `permissions.ts:90`), not
+   only into tests. The *trust* decider is the one with no production caller
+   (`trust-policy.ts:79`: no decider means DENY), which is the safe direction.
 2. **Integrity / change detection** — the exact bytes the host would execute (the
    manifest text plus the loaded code) are fingerprinted in phase 1 *with no import*,
    then compared to the last-approved fingerprint. A mismatch prompts a re-approve /
@@ -49,14 +67,26 @@ fires exactly once per session.)*
 ### 3. IPC is bound to the vault the user actually opened
 
 Path-confined Rust commands (`read_file`, `write_file`, `stat_file`, `list_dir`,
-history/trash/attachment commands, `rename_entry`, `watch_folder`, …)
-call `require_opened_vault` and reject any `vault_root` that was **not registered this
-session**. The only way to authorize a root is `register_vault` (or a fresh native
-folder pick, which auto-registers). Every vault-open path in the app — native folder
-dialog, `localStorage` restore, and the settings panel (typed or browsed) — routes
-through `applyVault` → `register_vault`, so a root is never served before the user
-opened it. *(Verified: `VaultRegistry` + `app: vault_auth_test.rs` covers unregistered
-reject, registered-authorize, symlink canonicalization, and relative-path reject.)*
+history/trash/attachment commands, `rename_entry`, `watch_folder`, …) call
+`require_opened_vault` and reject any `vault_root` that was not vouched for. It is
+vouched for in exactly two ways, and the second is deliberate:
+
+1. the user picked the folder in the native dialog **this session** (`approve_pick`
+   records it in `chosen`);
+2. or it is the root the backend itself remembers as the last vault
+   (`vault_confinement.rs:84-85`: `recalled` is accepted, and
+   `vault_auth_test.rs` names that behaviour intentional).
+
+Two details this section used to get wrong: a folder pick **registers nothing**
+(`commands/fs/dialogs.rs:36` records the pick, and its own comment says registration
+deliberately does not happen there — `approve_pick` writes `chosen`, not `opened`), and
+the settings panel's path field is **read-only** on purpose (`GeneralSettings.vue:64`),
+so "typed" was never one of the vault-open routes. Every vault-open path in the app —
+native folder dialog, `localStorage` restore, settings panel — routes through
+`applyVault` → `register_vault`, so a root is never served before the user opened it.
+*(Verified: `VaultRegistry` + `app: vault_auth_test.rs` covers unregistered reject,
+registered-authorize, the remembered-root acceptance, symlink canonicalization, and
+relative-path reject.)*
 
 ### 4. The API key never leaves the vault as plaintext
 
@@ -65,9 +95,16 @@ reject, registered-authorize, symlink canonicalization, and relative-path reject
 (`load_ai_key_internal`) for AI requests. The frontend treats the mask strictly as a
 presence indicator — `settings.ts` feeds an empty value into live state so `config()`
 never sends the mask as a real key — and `store_ai_key` refuses to store the mask as if
-it were a key. The key crosses IPC once, when the user saves a new key, and is never
-read back. *(Verified: `settings.test.ts` mask-as-presence tests assert the live state
+it were a key. *(Verified: `settings.test.ts` mask-as-presence tests assert the live state
 becomes `''` and `config().api_key` is `undefined` for both the mask and `null`.)*
+
+> **One direction, not both (2026-09-22).** "The key crosses IPC once" is true for
+> Rust→window, which is the direction the mask describes. It is **not** true for
+> window→Rust: while the key field is non-empty, `config()` attaches the **plaintext**
+> key to every request it builds (`stores/settings-ai.ts:252`), which is how a request
+> reaches the provider at all. So the key is read back out of the window's own state on
+> each request — never from Rust, and never displayed — but the sentence above would
+> read as "one crossing per save", and that is not what happens.
 
 ### 5. Vault key protection uses Argon2id
 
@@ -82,6 +119,14 @@ Beyond the trust/integrity gates, the host enforces a governance layer
 (`packages/plugin-host/src/` — the `governance-*.ts` modules plus `audit-log.ts`,
 `version-policy.ts`, `revocation.ts` and `mac-envelope.ts`, re-exported by `index.ts`,
 plus the quota/unstable logic in `runtime.ts`):
+
+> **Scope (2026-09-22):** these modules are implemented and unit-tested, and in the
+> packaged app they are **not reached** — every gate below sits after the CSP return in
+> §2, so the only governance machinery that actually runs in production is the
+> once-per-session "plugins are disabled" notice and the audit-file setup that happens
+> *before* that return (`vault-plugin-load.ts:107-114`, `:143-144`). Treat this section
+> as the host's contract, ready for the day the host moves behind isolation — not as
+> protection you have today.
 
 - **Audit log** — every load/activate/deactivate/timeout/crash/revoke/signature-invalid
   decision is recorded to a structured, **non-secret** in-memory ring
@@ -120,9 +165,17 @@ plus the quota/unstable logic in `runtime.ts`):
 - **Resource quota + unstable reset (P0.1, honest scope)** — a per-plugin per-session
   wall-clock budget and a max-concurrent-activation cap. A plugin exceeding the quota is
   **marked unstable and quarantined** (crash-restart-on-unstable): it is refused on the
-  next automatic activation and only runs again after an explicit
-  `resetUnstablePlugin(pluginId)` (user-mediated re-approval, which also grants a fresh
-  budget). *(Verified: `runtime.test.ts` — quota quarantine, in-flight cap, reset.)*
+  next automatic activation. *(Verified: `runtime.test.ts` — quota quarantine, in-flight
+  cap, reset.)*
+  > ⚠️ **Corrected 2026-09-22:** "only runs again after an explicit
+  > `resetUnstablePlugin(pluginId)`" was false. `vault-plugin-load.ts:174-176` calls
+  > `resetUnstablePlugin` **unconditionally** for every preloaded plugin with a manifest,
+  > on every vault load — and that call sits after the consent/trust/integrity gates, so
+  > re-opening or switching a vault clears the quarantine. The code's own comment says
+  > why ("loading a vault IS the re-approval the refusal message asks for"), which
+  > contradicts the host's stated contract in `packages/plugin-host/src/runtime.ts:114`
+  > ("a plugin never auto-restarts after being marked unstable"). One of the two is
+  > wrong; today the caller wins. Do not read the quarantine as surviving a vault switch.
 
 > ⚠️ **This is NOT OS-process/Worker isolation.** The quota bounds wall-clock and
 > concurrency; it does not bound a plugin's **memory, globals, or synchronous CPU**. A
@@ -136,9 +189,27 @@ plus the quota/unstable logic in `runtime.ts`):
   access from the app. `assertPermission` is a consent gate, **not** a capability
   boundary; a plugin declaring `fs`/`network`/`ai` runs "trusted-but-unsandboxed".
   The resource quota is a *bound*, not a sandbox (see § 6 caveat).
-- **Signed plugin provenance.** No publisher signature / trust anchor. The digest is
-  change detection only (see the caveat above). The HMAC signature is a shared-secret
-  MAC, not public-key authentication.
+- **Asymmetric publisher provenance.** There is **no public-key** publisher signature and
+  no trust anchor of that kind. What exists is the change-detection digest and the
+  **HMAC-SHA256** envelope above — a shared-secret MAC, which
+  `trust-policy.ts:22-23` itself calls "the trust anchor" in the sense that the signature
+  is what is checked, not the digest. It proves the file was written by an installation
+  that holds the per-install key; it cannot prove who published a plugin, and it is not
+  public-key authentication. (This paragraph previously read "No publisher signature /
+  trust anchor", contradicting the sentence after it.)
+- **The agent engine, which this document did not mention at all until 2026-09-22.** The
+  bundled `opencode` engine is a separate process that works inside the vault the user
+  opened, and it has its own network access to whatever provider it is configured with.
+  Two consequences a reader of a security document needs:
+  - **Refusing it a capability does not stop it writing.**
+    `agent_runtime/fs_capability.rs:27-28` says it outright — the capability "is an
+    opportunity the engine may take, not a gate every write must pass" — and
+    `tests/agent_fs_write_refusal_test.rs:38-40` records the measurement: after the host
+    refused the write, the engine wrote the file itself.
+  - **The engine is outside the app's AI controls.** The AI master switch and the
+    write-permission tiers govern the app's own AI paths; the engine's provider
+    connections and its own file writes are not those paths. See `docs/PRIVACY.md` for
+    which requests leave the machine and which carry credentials.
 - **Automatic rollback.** `rollbackPoint` surfaces the last-known-good version and
   requires the same digest/trust gate before running. The host never executes old code
   automatically, because there is no isolated context to run it in.
