@@ -204,14 +204,26 @@ pub fn run() {
 
             // The desktop pet's backend, built here because it is the first moment an
             // `AppHandle` exists (its window system holds one) and because `manage` sets a
-            // type's state once. What it does *not* do is build a window: §7.1 makes the pet
-            // window 按需创建, so this installs the thing that can open one and nothing is on
-            // screen until a settings page asks. That is also why `desktop-pet.html` is not in
-            // `app.windows` — the loop below builds every entry in that list unconditionally, so
-            // a config entry would be the pet existing while the feature is off. `tauri.conf.json`
+            // type's state once. It does not *declare* a window: §7.1 makes the pet window
+            // 按需创建, so `desktop-pet.html` is deliberately not in `app.windows` — the loop
+            // below builds every entry in that list unconditionally, so a config entry would
+            // be the pet existing while the feature is off. `tauri.conf.json`
             // needs no entry for the pet at all: the page is served out of `frontendDist` like
             // the editor's, and the pet window's permissions live in `capabilities/`, which
             // `tauri-build` picks up by directory.
+            //
+            // **What it does do is open one, on a fresh install as much as on any other.** This
+            // comment used to end "nothing is on screen until a settings page asks", and that
+            // was false: `DesktopPetState::new` ends in `restore_switch`, which applies the
+            // stored switches through `feature_switch`'s `open_selected` and `ensure_ball`, and
+            // both window switches default on (`desktop_pet/settings/fields.rs`'s `ball` and
+            // `characterWindow`). So the first launch of a clean profile puts a character window
+            // and the floating ball on screen before the editor exists, with no user action —
+            // which is finding F5 in `docs/audits/2026-09-21-code-review.md`, and a claim this
+            // file made about itself that its own defaults contradicted. Whether a first launch
+            // *should* show the pet is a product question rather than a code one (the review's
+            // §9.6 raises it); what is written here is what happens, because a comment that
+            // describes a later settings page instead is how the next reader loses an hour.
             app.manage(state::DesktopPetState::new(app.handle()));
 
             // The windows `run` above took over from Tauri's own pass, built
