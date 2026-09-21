@@ -78,6 +78,16 @@ const ENGINE: &str = "binaries/opencode-x86_64-unknown-linux-gnu";
 /// Long enough for a cold `session/new`, which resolves the model catalog.
 const PATIENCE: Duration = Duration::from_secs(120);
 
+/// How much of the frame stream a failure prints: the last few frames, each cut to this many
+/// characters.
+///
+/// A frame is protocol text (`initialize` results, session ids, paths), which is what a reader needs
+/// and not a secret; the cut is there because one `session/update` frame can carry a whole document.
+/// The count alone was what this file printed, and it cost a diagnosis: see
+/// `Engine::diagnostics`.
+const FRAMES_IN_DIAGNOSTICS: usize = 4;
+const FRAME_CHARS_IN_DIAGNOSTICS: usize = 300;
+
 /// One profile root, inside the repository, built the way the app builds it.
 ///
 /// The root is per-pid for the same reason the isolation test's is: two runs of this file must
@@ -260,6 +270,28 @@ impl Engine {
             .any(|l| l.contains(needle))
     }
 
+    /// Whether a frame naming `needle` arrives within `patience`.
+    ///
+    /// `said` is a snapshot, and a snapshot is what made this file flake: the engine answers
+    /// `session/load` with a result that carries the resumed session's **config**, and names the
+    /// session itself in the `session/update` notification that follows — so between the answer frame
+    /// and that notification there is a window in which the id has not been read yet. Under a full
+    /// parallel suite the window was wide enough to lose, and the case failed with `frames 2, stderr:
+    /// (none)`. Waiting is the same patience `answer` already uses for the reply; the assertion is
+    /// unchanged, because a frame that never arrives still fails it.
+    async fn said_within(&self, needle: &str, patience: Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + patience;
+        loop {
+            if self.said(needle) {
+                return true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
     /// The session id in a frame, for the caller that has just been told one.
     fn session_id(line: &str) -> Option<String> {
         let marker = "\"sessionId\":\"";
@@ -269,14 +301,50 @@ impl Engine {
         Some(rest[..end].to_string())
     }
 
+    /// Everything a failing case needs: how many frames arrived, the last few of them, and the
+    /// engine's stderr.
+    ///
+    /// This printed a frame **count** until the case that reads it flaked once in a full parallel
+    /// suite: engine B answered `session/load` and the answer did not name the session the first
+    /// engine had created — reported as `frames 2, stderr: (none)`. That is either a result which
+    /// omits the id or an engine that did not read the shared database, and a count cannot tell those
+    /// apart; the run left nothing to read. The frames are what makes the next occurrence a
+    /// diagnosis instead of a second guess, so they are printed, truncated per
+    /// `FRAME_CHARS_IN_DIAGNOSTICS` — on a character boundary, because the protocol text is UTF-8
+    /// and a byte slice would panic inside the panic message.
     fn diagnostics(&self) -> String {
+        let frames = self.frames.lock().unwrap();
+        let first = frames.len().saturating_sub(FRAMES_IN_DIAGNOSTICS);
+        let shown: Vec<String> = frames[first..]
+            .iter()
+            .map(|frame| {
+                if frame.chars().count() > FRAME_CHARS_IN_DIAGNOSTICS {
+                    format!(
+                        "{}… ({} chars)",
+                        frame
+                            .chars()
+                            .take(FRAME_CHARS_IN_DIAGNOSTICS)
+                            .collect::<String>(),
+                        frame.chars().count()
+                    )
+                } else {
+                    frame.clone()
+                }
+            })
+            .collect();
         let stderr = self.stderr.lock().unwrap();
         let tail: Vec<&str> = stderr.lines().filter(|l| !l.trim().is_empty()).collect();
         let start = tail.len().saturating_sub(6);
         format!(
-            "engine {}: frames {}, stderr:\n    {}",
+            "engine {}: frames {}, last {}:\n    {}\n    stderr:\n    {}",
             self.label,
-            self.frames.lock().unwrap().len(),
+            frames.len(),
+            shown.len(),
+            if shown.is_empty() {
+                "(none)".to_string()
+            } else {
+                shown.join("\n    ")
+            },
             if tail.is_empty() {
                 "(none)".to_string()
             } else {
@@ -386,10 +454,11 @@ async fn two_engines_on_one_profile_share_the_database_and_the_session() {
         "the second engine was refused the first engine's session: {answer}\n    {}",
         b.diagnostics()
     );
-    // The load result carries the session's own id back; the engine that answers with a
-    // session it did not create is the engine reading the other instance's rows.
+    // The engine that names the session it did not create is the engine reading the other
+    // instance's rows. The id comes in the `session/update` notification that follows the load
+    // result, so this waits for it rather than looking once — see `said_within`.
     assert!(
-        b.said(&first_session),
+        b.said_within(&first_session, PATIENCE).await,
         "the second engine answered without ever naming the shared session\n    {}",
         b.diagnostics()
     );
