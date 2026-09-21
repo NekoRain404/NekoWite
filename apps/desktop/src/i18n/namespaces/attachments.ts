@@ -10,7 +10,16 @@ export const attachments = {
       // folder, not the `attachments/` tree this panel lists
       // (`services/rename-asset.ts::assetsDirForNote`). Saying otherwise sent
       // the reader looking in the wrong directory for the file they just made.
-      emptyHint: 'Paste or drop an image into a note and it is saved beside that note, in a <notename>_assets folder; a note with no path yet stages it in .tmp until the note is saved. This list shows the vault attachments folder, where the images the app inserts for you land (attachments/<YYYY-MM>).',
+      //
+      // **Written without angle brackets on purpose.** The first version spelled
+      // the folder `<notename>_assets`, and Vue I18n reads that as an HTML
+      // message: it logs "Detected HTML in … message. Recommend not using HTML
+      // messages to avoid XSS" on every render, which `e2e/console-clean.spec.ts`
+      // fails on — the panel is not an XSS risk, but a console warning that every
+      // other surface is held to zero of is a real defect, and the brackets were
+      // decoration around a name that reads fine without them.
+      emptyHint:
+        'Paste or drop an image into a note and it is saved beside that note, in a folder named "notename_assets" (the note\'s file name plus _assets); a note with no path yet stages it in .tmp until the note is saved. This list shows the vault attachments folder, where the images the app inserts for you land (attachments/YYYY-MM/).',
       insertImage: 'Insert image {name}',
       insert: 'Insert into document',
       copyPath: 'Copy relative path',
@@ -31,7 +40,8 @@ export const attachments = {
       refresh: '刷新',
       loading: '正在加载附件…',
       emptyTitle: '附件库为空',
-      emptyHint: '在笔记中粘贴或拖入的图片会保存在该笔记旁边的 <笔记名>_assets 目录；笔记还没有路径时先暂存于 .tmp，保存后移入该目录。此列表显示 vault 的 attachments 目录，即应用为你插入的图片所在位置（attachments/<YYYY-MM>）。',
+      emptyHint:
+        '在笔记中粘贴或拖入的图片会保存在该笔记旁边、以该笔记文件名命名的「笔记名_assets」目录；笔记还没有路径时先暂存于 .tmp，保存后移入该目录。此列表显示 vault 的 attachments 目录，即应用为你插入的图片所在位置（attachments/年月/）。',
       insertImage: '插入图片 {name}',
       insert: '插入到文档',
       copyPath: '复制相对路径',
