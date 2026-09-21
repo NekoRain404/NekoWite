@@ -21,7 +21,7 @@ use tauri_plugin_stronghold::stronghold::Stronghold;
 
 use crate::agent_runtime::binary_registry::{self, BinaryRegistry};
 use crate::agent_runtime::driver::{self, Session};
-use crate::agent_runtime::events::AgentEventEnvelope;
+use crate::agent_runtime::events::{AgentEventEnvelope, AgentIdentity};
 use crate::agent_runtime::profile::{ProfileError, ProfileStore};
 use crate::agent_runtime::registry::{
     AgentInstance, AgentRegistry, RegistryError, DEFAULT_PROFILE,
@@ -222,6 +222,60 @@ pub struct AgentRuntimeState {
     pub live_notes: Mutex<Option<crate::agent_runtime::LiveNotes>>,
 }
 
+impl AgentRuntimeState {
+    /// Lets go of an instance whose engine is no longer there, answering which one it was.
+    ///
+    /// **The failure this is about.** §3.4 refuses a second engine on one (agent, profile, vault),
+    /// and the claim behind that refusal is taken before the engine is spawned and released only when
+    /// the instance is dropped. Nothing runs on an engine's way out, so an engine that exits on its
+    /// own leaves this app refusing every later start with 「an engine for opencode is already running
+    /// in this vault」 — for a process that is not running. Restarting the engine from the UI clears
+    /// that by accident (a restart tears the old instance down before it composes a new one), which is
+    /// what keeps the wedged state hard to see: the sentence names an engine, and the only engine in
+    /// front of the user is the one the app just started. Nothing else clears it, so it lasts until
+    /// the app is quit.
+    ///
+    /// **Why the drop, and not a call into the registry.** [`AgentInstance::shutdown`] — and its
+    /// `Drop` — releases the epoch *and* tears the connection down, in that order, and the two are one
+    /// act: a release on its own would free the (agent, profile, vault) while an engine could still be
+    /// running, which is the second engine §3.4 forbids the instant a start takes the freed slot. So a
+    /// stale instance is taken out of the slot and dropped, exactly as `agent_stop` lets one go, and
+    /// the registry is told nothing the instance did not tell it itself.
+    ///
+    /// **The reading can say "running".** [`AgentInstance::engine_is_running`] is the kernel's answer
+    /// about the process this host spawned, so a live engine — however wedged, however silent — comes
+    /// back `true`, the claim stays held, and the next start is refused. That refusal is the honest
+    /// one: §3.4's rule is about two engines writing one profile, and a reading eager enough to free a
+    /// live engine's claim is a reading that puts two on one profile.
+    ///
+    /// **What the caller still owes.** The instance's end restates nothing on its own: in the app, the
+    /// desktop pet's task list and the window's session both still name this incarnation, and both are
+    /// settled by the start that follows (`start_session` retires the pet's tasks and installs the
+    /// session). This is why it answers the identity it let go of rather than a bare `()`.
+    pub fn release_a_stale_instance(&self) -> Result<Option<AgentIdentity>, String> {
+        let stale = {
+            let mut slot = self
+                .instance
+                .lock()
+                .map_err(|_| "the agent runtime state was poisoned by a panic".to_string())?;
+            match slot.as_ref() {
+                Some(instance) if !instance.engine_is_running() => slot.take(),
+                // Either there is no instance, or the one in the slot is running an engine. Both are
+                // states this method has nothing to do.
+                _ => None,
+            }
+        };
+        // Dropped outside the lock: this is a connection teardown, and it has no business running
+        // under the slot every agent command in the app reaches through.
+        let Some(instance) = stale else {
+            return Ok(None);
+        };
+        let identity = instance.identity().clone();
+        drop(instance);
+        Ok(Some(identity))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Starting the agent subsystem
 // ---------------------------------------------------------------------------
@@ -281,6 +335,31 @@ pub async fn start_session(
     let managed = data_dir(app)?;
     let registry = registry_for(state, &managed)?;
     let agent_id = registry.default_agent_id().to_string();
+    // Before anything is composed, the slot is emptied of an engine that is no longer there: the
+    // registry refuses a second engine per (agent, profile, vault) §3.4, and that refusal must be
+    // about a process rather than about a claim the host never let go of. An engine that exited on
+    // its own leaves exactly such a claim — see [`AgentRuntimeState::release_a_stale_instance`] — and
+    // the drop it performs here is what frees it, through the instance's own teardown, before the
+    // start below can be refused on its behalf.
+    if let Some(gone) = state.release_a_stale_instance()? {
+        // The pet's list, while the old incarnation's identity is still in hand: an instance the host
+        // has let go of cannot still be running anything, and a row that says otherwise outlives the
+        // process it names. The same restatement `stop_running_engine` performs on the stop path, and
+        // for the same reason — a successful start below reaches it a second time through `install`,
+        // and a start that *fails* is the case this is here for: a `working` row must not outlive the
+        // engine it belongs to just because the replacement could not be started.
+        if let Some(pet) = app.try_state::<DesktopPetState>() {
+            match pet.tasks.retire(&gone) {
+                Ok(Some(tasks)) => crate::desktop_pet::publish_tasks(app, &tasks),
+                Ok(None) => {}
+                Err(detail) => {
+                    eprintln!(
+                        "nekowite: the pet's task list did not follow a dead engine: {detail}"
+                    )
+                }
+            }
+        }
+    }
     // §8.1: opening the profile is what creates and binds it on first use, and
     // its root is the engine's `HOME` and its XDG roots.
     let profile = ProfileStore::new(&managed)

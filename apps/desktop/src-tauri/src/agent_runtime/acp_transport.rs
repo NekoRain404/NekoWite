@@ -40,8 +40,8 @@ use tokio::sync::{mpsc, oneshot};
 use super::events::{classify, TransportError};
 use super::fs_capability::FsRequest;
 use super::process::{
-    secrets_of, signal_group, BoundedFrameReader, EngineLaunch, EngineStderr, MAX_FRAME_BYTES,
-    SHUTDOWN_GRACE,
+    secrets_of, signal_group, BoundedFrameReader, EngineLaunch, EngineProcess, EngineStderr,
+    MAX_FRAME_BYTES, SHUTDOWN_GRACE,
 };
 
 // Declared by path rather than by name, for the reason `agent_runtime/skills.rs` gives about its
@@ -74,6 +74,12 @@ pub struct EngineConnection {
     /// applies §6.2's sequence: a bounded wait for the engine to exit on its
     /// own, then `SIGTERM` to the group, then `SIGKILL`.
     stop: Mutex<Option<(oneshot::Sender<()>, oneshot::Sender<()>)>>,
+    /// The engine process this connection started, as the kernel names it — the reading a start
+    /// makes when a claim has to be judged against a process rather than against the host's memory.
+    ///
+    /// `None` when the kernel would not name it at spawn time (see [`EngineProcess::of`]), which
+    /// [`Self::engine_is_running`] answers as *running*: unknown is not gone.
+    engine: Option<EngineProcess>,
     /// Why the bounded reader stopped reading, when it was the bound.
     trip: std::sync::Arc<Mutex<Option<String>>>,
     /// The engine's stderr, drained and redacted by the pump task — the same log, not
@@ -148,11 +154,29 @@ impl EngineConnection {
         // The child's own supervisor. It owns the child, so nothing here has to
         // name the SDK's stream types, and it is what makes teardown §6.2's
         // sequence rather than an immediate kill.
+        //
+        // **It ends two ways, and it used to end only one of them.** Either the
+        // runtime asks — a stop, a restart, the app closing — or the engine
+        // leaves on its own, which is the case this had nothing to say about: a
+        // wait parked on the stop signal alone meant an engine that exited by
+        // itself was never collected (`<defunct>` for as long as the app ran) and
+        // no part of the host ever learned it was gone. The reap is not a
+        // side-effect of the stop path; it is what makes "is the engine still
+        // there?" a question with an answer for the reading the connection
+        // carries ([`EngineConnection::engine_is_running`]).
         let pgid = child.id() as i32;
+        let engine = EngineProcess::of(pgid);
         tokio::spawn(async move {
-            // A dropped sender means "shut down" either way: the runtime asks,
-            // or the runtime is gone.
-            let _ = child_stop_rx.await;
+            tokio::select! {
+                // A dropped sender means "shut down" either way: the runtime asks,
+                // or the runtime is gone.
+                _ = child_stop_rx => {}
+                // The engine exited by itself. `status` waits for that exit and
+                // collects it — this arm is the reap — and there is nothing to
+                // signal: the sequence below is for an engine that is still
+                // running, and it is deliberately not reached here.
+                _ = child.status() => return,
+            }
             // Bounded wait for a normal exit first — the engine has just seen
             // stdin EOF and may be finishing a write it started.
             if tokio::time::timeout(SHUTDOWN_GRACE, child.status())
@@ -269,6 +293,7 @@ impl EngineConnection {
             EngineConnection {
                 connection,
                 stop: Mutex::new(Some((stop, child_stop))),
+                engine,
                 trip,
                 stderr,
             },
@@ -278,6 +303,28 @@ impl EngineConnection {
                 fs,
             },
         ))
+    }
+
+    /// Whether the engine this connection started is still there.
+    ///
+    /// **What it is for.** A connection whose engine died on its own is a connection nobody can use,
+    /// and the registry's refusal to start a second engine for one (agent, profile, vault) is the
+    /// right answer only while the first engine is *running*. This is the fact that separates the two:
+    /// [`Self::shutdown`] ends the engine, and the engine can also end itself, in which case the
+    /// caller that holds the claim needs to be able to tell.
+    ///
+    /// **What it is not.** Not a health check, not a handshake probe: an engine that has answered
+    /// nothing for an hour is running. Not a reading of the host's own bookkeeping either — the answer
+    /// comes from the kernel, about the exact process this connection spawned, every time it is asked
+    /// (see [`EngineProcess`] for what that rules out and why).
+    pub fn engine_is_running(&self) -> bool {
+        match &self.engine {
+            Some(engine) => engine.is_running(),
+            // The kernel would not name the process at spawn time. Unknown, and unknown is not gone:
+            // the claim this protects is §3.4's one-engine rule, and a wrong "gone" is what puts two
+            // engines on one profile.
+            None => true,
+        }
     }
 
     /// Ends the connection, and with it the engine and its process group.

@@ -892,6 +892,18 @@ impl AgentRuntime {
         self.connection.shutdown();
     }
 
+    /// Whether the engine this runtime started is still running.
+    ///
+    /// The other half of [`Self::shutdown`], and the reason it is asked at all: this runtime holds the
+    /// (agent, profile, vault) claim, and the registry refuses a second engine for that triple while
+    /// the claim is held. An engine that exited on its own has released nothing — nothing runs on its
+    /// way out — so a start has to be able to ask whether what it is about to replace is still there.
+    /// Answered by the connection, which owns the process; see
+    /// [`EngineConnection::engine_is_running`].
+    pub fn engine_is_running(&self) -> bool {
+        self.connection.engine_is_running()
+    }
+
     /// Fails unless this host opened `session_id`.
     ///
     /// Public because the command boundary is where §6.1's guard is applied: a call that reaches

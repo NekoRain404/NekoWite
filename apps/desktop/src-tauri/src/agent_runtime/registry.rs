@@ -881,6 +881,23 @@ impl AgentInstance {
         self.adapter.declared_capability(feature)
     }
 
+    /// Whether the engine this instance started is still running.
+    ///
+    /// **The one fact about an instance that can outlive its usefulness.** The claim this instance
+    /// holds on its (agent, profile, vault) is taken before the engine is spawned and released only
+    /// when the instance is dropped, and nothing runs on an engine's way out — so an engine that
+    /// exited on its own leaves the registry refusing every later start with `AlreadyRunning`, for a
+    /// process that is not there. A caller that holds the instance (the slot in
+    /// [`AgentRuntimeState`](crate::state::AgentRuntimeState), in the app) is the only one that can
+    /// both ask this and act on the answer.
+    ///
+    /// Read through the runtime, from the kernel, at the moment it is asked — not from a flag this
+    /// host set and not from the process group, whose surviving members are the engine's subprocesses
+    /// rather than the engine. [`AgentRuntime::engine_is_running`] carries what that rules out.
+    pub fn engine_is_running(&self) -> bool {
+        self.runtime.engine_is_running()
+    }
+
     /// Stops this instance: the registration is free again, and the engine is asked to exit before
     /// it is signalled (§6.2's sequence, in `EngineConnection::shutdown`).
     pub fn shutdown(&self) {
