@@ -1499,10 +1499,9 @@ pattern, a gate script, a CI workflow, a Rust module comment, and four documents
 
 ### What the audit lists that is still open
 
-§1.2 (`docs/SECURITY.md`'s dormant gate), §1.3 (`docs/PLUGIN_SDK.md`), §1.4
-(`docs/PLUGIN_ISOLATION.md`), §1.8 (`docs/RECOVERY.md`), §1.9 (`docs/A11Y.md`), §1.10 (`docs/debug.md`,
-`docs/development-log.md`), and §3's remaining numbers. §1.5 and §1.6 are closed above; §1.1 and §1.7
-were closed in §15 and in this round respectively. §5's three architecture ledgers are reported and
+§1.3 (`docs/PLUGIN_SDK.md`), §1.4 (`docs/PLUGIN_ISOLATION.md`), §1.8 (`docs/RECOVERY.md`), §1.9
+(`docs/A11Y.md`), and §3's remaining numbers. §1.1, §1.2, §1.5, §1.6, §1.7 and §1.10 are closed — §1.1 and
+§1.7 in §15, the rest in this round. §5's three architecture ledgers are reported and
 **not** fixable: `docs/architecture/` is read-only by the maintainer's instruction, which the audit
 itself respects. Plus two gaps the rewritten test plan still names out loud — PDF export as an outcome
 (`use-note-export.ts` has no test file) and window geometry through the backend — and one the round found
@@ -1519,6 +1518,32 @@ the audit was protecting — whether a knowledge base should fetch a pet catalog
 decides it should not can now delete the fetch and rewrite one paragraph; nothing in the document prevents
 that, it just no longer lies in the meantime.
 
+**§1.2's security posture is closed, and it left one code question behind.** Eight of its nine rows were
+still wrong and are fixed; one was wrong in the other direction — the audit said no consent dialog exists,
+and `App.vue:129` → `app-dialogs.ts:75` wires `setPluginPermissionDecider` into the production shell (only
+the *trust* decider is test-only, and its default is DENY). The section's substance changed in one way that
+matters: §1 and §6's plugin gates are implemented and unit-tested and **unreachable in the packaged app**,
+because §2's CSP return sits above every one of them, and the tests covering them stub the import boundary.
+That is now said in both sections and in the preface. The largest omission is closed too: the document
+never mentioned the agent engine, and now says the two things a security reader needs about it.
+
+The question it left behind is a code decision rather than a document one, and it is **not** taken here:
+`vault-plugin-load.ts:174-176` clears the unstable-plugin quarantine **unconditionally** on every vault
+load, while the host's own contract (`packages/plugin-host/src/runtime.ts:114`) says a plugin never
+auto-restarts after being marked unstable, and the refusal message tells the user an explicit reset is
+what it takes. Today the caller wins, so the promise in the message is not kept. Two fixes are available
+and they are not equivalent: make the reset conditional (a behaviour change that makes the quarantine
+survive a vault switch) or change the message to say the quarantine clears when the vault is reopened
+(text only). Both are defensible, the user-visible impact today is nil because no vault plugin loads at
+all, and the document now states today's behaviour either way — so the choice is recorded rather than
+made by whoever happened to write the paragraph.
+
+**And the documentation programme ends here, with the audit's §1 effectively complete.** §1.1 (PRIVACY),
+§1.5 (RELEASING), §1.6 (USER-GUIDE), §1.7 (test-plan), §1.10 (debug, development-log) and now §1.2
+(SECURITY) are closed; §1.3 (`PLUGIN_SDK.md`), §1.4 (`PLUGIN_ISOLATION.md`), §1.8 (`RECOVERY.md`) and §1.9
+(`A11Y.md`) remain, as does §3's file-size-budget row, which cannot be fixed: five numbers are in
+circulation and the three files that hold the wrong ones are read-only by instruction. The next round's
+work is one of those four sections, or the two test gaps this round named out loud.
 **And one gap this round documented rather than closed, with the recipe in it.** CI's rust job runs
 `cargo test --locked` without `NEKOWITE_REQUIRE_PROCESS_TESTS=1`, so the process-level cases read as
 passing there without executing. Closing it means giving that job what `scripts/gate.sh` gives its own
