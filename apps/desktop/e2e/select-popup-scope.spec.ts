@@ -49,6 +49,7 @@
  */
 import { expect, test, type Page } from '@playwright/test'
 import { openNote } from './support/editorHarness'
+import { settled } from './support/settled'
 
 /** The eight properties `AppShell.vue:271-292` publishes, in the order it writes them. */
 const SHELL_PROPERTIES = [
@@ -175,10 +176,12 @@ test('the select popup resolves the appearance the shell carries, value for valu
   await openAppearanceWithOwnValues(page)
 
   // Reopen the list and let the arrival settle before anything is measured: the popup travels on a
-  // transform, and a rect read mid-flight is a reading of the animation.
+  // transform, and a rect read mid-flight is a reading of the animation. `settled` rather than a
+  // sleep — a fixed wait bounds the *page*, not the arrival, and this case failed under load by
+  // **0.05px** of gap (3.9495 against 4) with the arrival still in its last frame.
   await page.locator('#settings-ui-font').click()
   await page.locator('.select-popup').waitFor({ state: 'visible', timeout: 5000 })
-  await page.waitForTimeout(400)
+  await settled(page, ['.select-popup'])
 
   const read = await page.evaluate(
     ({ properties }: { properties: readonly string[] }): PopupReading => {

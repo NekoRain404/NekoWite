@@ -38,6 +38,7 @@
  */
 import { expect, test, type Page } from '@playwright/test'
 import { openNote } from './support/editorHarness'
+import { settled } from './support/settled'
 
 /** The dialog rail's `ai` row, in `SettingsNavigation.vue`'s order. Named rather than indexed so a
  *  row inserted above it cannot silently move this file onto another page. */
@@ -65,43 +66,6 @@ interface Widths {
   contentWidth: number
 }
 
-/**
- * The field's own width, as the popup's rule will read it when it opens.
- *
- * `-1` while the field is not in the document yet, which is a state and not a width: the caller
- * below waits for it to become one.
- */
-async function fieldWidth(page: Page): Promise<number> {
-  return page.evaluate(() => {
-    const field = document.querySelector('#settings-ai-model') as HTMLElement | null
-    return field ? Math.round(field.getBoundingClientRect().width * 100) / 100 : -1
-  })
-}
-
-/**
- * Wait until the field has stopped changing width, and answer what it settled at.
- *
- * The list's `min-width` is written from the field's width **at the moment the list opens**, so a
- * list opened on a field that is still growing is narrower than the field it belongs to. That is
- * what one run at load ~17 measured: `446.18` against `454.28`, eight pixels rather than the
- * sub-pixel `SUBPIXEL` exists for — and it passed twelve times out of twelve when run alone, which
- * is the signature of a race rather than of a wrong rule.
- *
- * Two consecutive equal readings is the cheapest honest way to say "the layout has arrived". A
- * fixed sleep says "probably", and is what this replaces; it bounded the *page* rather than the
- * quantity the assertion is about.
- */
-async function settledField(page: Page): Promise<number> {
-  let previous = await fieldWidth(page)
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    await page.waitForTimeout(50)
-    const current = await fieldWidth(page)
-    if (current > 0 && current === previous) return current
-    previous = current
-  }
-  throw new Error(`the model field never settled (last width ${previous})`)
-}
-
 /** Open the settings dialog at the window this programme's numbers are taken at. */
 async function openDialog(page: Page, width = 1280, height = 800): Promise<void> {
   await openNote(page)
@@ -111,9 +75,6 @@ async function openDialog(page: Page, width = 1280, height = 800): Promise<void>
   await page.waitForFunction((w) => window.innerWidth === w, width, { timeout: 5000 })
   await page.locator('.dialog-nav .nav-row').nth(AI_ROW).click()
   await page.waitForTimeout(400)
-  // And then the thing a fixed sleep cannot promise: that the field the list measures itself
-  // against has stopped moving. See `settledField`.
-  await settledField(page)
 }
 
 /** Open the model list and read both boxes, then close it again. */
@@ -121,8 +82,12 @@ async function widths(page: Page): Promise<Widths> {
   await page.locator('#settings-ai-model').click()
   await page.locator('.combo-popup').waitFor({ state: 'visible', timeout: 5000 })
   // The arrival is a translate and a scale (`ComboBoxList`'s own rungs), and a rectangle read
-  // through a transform is not the box the engine laid out.
-  await page.waitForTimeout(300)
+  // through a transform is not the box the engine laid out — `support/settled.ts` exists for
+  // exactly this and says so at length. A fixed sleep here was the bug: under load the case read
+  // `446.18` against a field of `454.28` (a `0.98` scale mid-flight), and the *same two numbers*
+  // in a second run — which is what falsified the first guess at this failure, that the field was
+  // still growing. It was not: the list was still arriving.
+  await settled(page, ['#settings-ai-model', '.combo-popup'])
   const read = await page.evaluate(() => {
     const field = document.querySelector('#settings-ai-model') as HTMLElement
     const popup = document.querySelector('.combo-popup') as HTMLElement
