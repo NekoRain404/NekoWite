@@ -17,6 +17,12 @@
     生效——800x600、1280x836、1600x1000 都回显，而 `innerWidth x innerHeight` 始终是 1024x732
     （MiniBrowser 默认窗口）。此时它会在这里停下并报错，这是正确的结果：否则整轮数字都是在没人选过的
     视口上量的。要真跑，请在会响应 resize 的会话里跑（维护者自己的桌面），或在 Xvfb 里装一个窗口管理器。
+    另有一个**不需要窗口管理器**的真实引擎探针：`node apps/desktop/e2e/webkit/probe-csp-blob.mjs`
+    （同样放在 `xvfb-run` 下）。它测的是本应用 CSP 之下 `import('blob:…')` 是否真的被拒，并自带两个对照：
+    同一页的内联脚本必须被拦下（证明这份策略在这里确实生效），以及同一个模块在**没有** CSP 的页面里
+    必须能导入（证明拒绝是 CSP 做的，不是 MiniBrowser 不会导入 blob）。2026-09-22 的读数：内联脚本没跑、
+    blob 导入被拒且违规事件指向 `script-src-elem<-blob`、无 CSP 的同一页面导入成功。
+    `docs/SECURITY.md` §2 的结论以这次测量为依据，而不是以 Chromium 的端到端用例为依据。
   - **测试面全景**（哪些测试真的会跑、每个功能域由哪些文件守着、哪里还没有证据）见
     `docs/test-plan.md`。
 

@@ -62,7 +62,15 @@ refuses to attempt the in-window import, surfacing **one** user-visible notice p
 session that vault plugins are disabled until the plugin host is moved behind real
 isolation. No CSP is lowered to accommodate plugin loading. *(Verified: the CSP-gate
 test asserts the whole scan is skipped, no fs read / no import happens, and the notice
-fires exactly once per session.)*
+fires exactly once per session; and on 2026-09-22 the CSP's own refusal was **measured on
+WebKitGTK** — the engine the app embeds — by `apps/desktop/e2e/webkit/probe-csp-blob.mjs`.
+The three readings: an inline script under this policy did not run (`inline-did-not-run`, so
+the policy in the experiment is enforced and the rest is attributable to it); the blob module
+import was refused with a CSP violation naming the directive and the URI
+(`violations=script-src-elem<-blob`); and the identical page with **no** policy imported the
+same blob successfully (`blob=allowed:blob-ran`) — which is what makes this the CSP's doing
+rather than MiniBrowser's. Until that run the sentence above rested on a Chromium test, and
+Chromium is not WebKitGTK.)*
 
 ### 3. IPC is bound to the vault the user actually opened
 
