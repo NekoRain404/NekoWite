@@ -14,11 +14,18 @@
 //! is where the state a frame is about already lives. `agent_events` reads it from
 //! `super::agent::AGENT_EVENT_CHANNEL`, which is the path it has always used.
 
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use crate::agent_runtime::driver::Session;
 
 use super::failure::AgentFailure;
+
+/// The one sentence a poisoned slot is refused with, wherever it is refused.
+///
+/// One constant and not two spellings: a reader and a writer must not be able to describe the same
+/// condition differently, which is the same rule `AgentFailure`'s docblock gives about a code and
+/// its sentence.
+const POISONED: &str = "the agent session state was poisoned by a panic";
 
 /// The channel the runtime's events are published on.
 ///
@@ -49,6 +56,22 @@ impl Default for AgentIpcState {
 }
 
 impl AgentIpcState {
+    /// The slot itself, or the refusal every caller but one shares.
+    ///
+    /// **Why the writers go through this too.** `install` and `clear` used to swallow the poison
+    /// (`if let Ok(..)`, `.ok()`), so after a panic while the slot was held, `agent_start` answered
+    /// a handle and an epoch for a session nothing had installed, and a later `clear` returned
+    /// `None` — which is also how `stop_running_engine` decides whether to revoke the permission
+    /// table and retire the pet's tasks. Five readers refused loudly and the two writers failed
+    /// soft; the asymmetry was the defect. A caller that must not proceed answers the sentence, and
+    /// a caller that can still do its work is written so that it does (see
+    /// [`stop_running_engine`](super::lifecycle::stop_running_engine)).
+    fn locked(&self) -> Result<MutexGuard<'_, Option<Session>>, AgentFailure> {
+        self.session
+            .lock()
+            .map_err(|_| AgentFailure::unavailable(POISONED))
+    }
+
     /// The running session, or the sentence that says there is none.
     ///
     /// `runtime-unavailable` for both arms, and for the same reason: neither is a fact about a
@@ -56,29 +79,29 @@ impl AgentIpcState {
     /// is that nothing here can be asked. A window that branches on it is branching on "start an
     /// engine", which is exactly what the sentence tells the user to do.
     pub fn session(&self) -> Result<Session, AgentFailure> {
-        self.session
-            .lock()
-            .map_err(|_| {
-                AgentFailure::unavailable("the agent session state was poisoned by a panic")
-            })?
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| {
-                AgentFailure::unavailable("no agent session is running: start one first")
-            })
+        self.locked()?.as_ref().cloned().ok_or_else(|| {
+            AgentFailure::unavailable("no agent session is running: start one first")
+        })
     }
 
     /// Installs the session a start produced, replacing whatever was there.
-    pub fn install(&self, session: Session) {
-        if let Ok(mut slot) = self.session.lock() {
-            *slot = Some(session);
-        }
+    ///
+    /// It reports the poison rather than dropping the session on the floor, and
+    /// [`agent_start`](super::lifecycle::agent_start) answers that refusal by taking the engine down
+    /// again: an engine that is running while nothing can address it is worse than a start that
+    /// failed.
+    pub fn install(&self, session: Session) -> Result<(), AgentFailure> {
+        *self.locked()? = Some(session);
+        Ok(())
     }
 
     /// Takes the session out, answering it to the caller: the caller is the one that has to end
     /// its turns and answer its prompts, and it must do that before the runtime goes.
-    pub fn clear(&self) -> Option<Session> {
-        self.session.lock().ok().and_then(|mut slot| slot.take())
+    ///
+    /// `Ok(None)` is "there was nothing installed", which is a fact; `Err` is "this slot cannot be
+    /// read", which is a different one and is why the two are not collapsed.
+    pub fn clear(&self) -> Result<Option<Session>, AgentFailure> {
+        Ok(self.locked()?.take())
     }
 
     /// The same slot, read as a *state* rather than as a refusal.
@@ -92,3 +115,6 @@ impl AgentIpcState {
         self.session.lock().ok().and_then(|slot| slot.clone())
     }
 }
+
+#[cfg(test)]
+mod tests;

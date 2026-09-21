@@ -88,7 +88,15 @@ pub async fn agent_start(
             .await
             .map_err(AgentFailure::unavailable)?;
         let handle = AgentRuntimeHandle::of(&session.identity);
-        ipc.install(session);
+        if let Err(failure) = ipc.install(session) {
+            // The engine is up and nothing can address it — the slot that every other command reads
+            // is poisoned. Taking it down again before refusing is the difference between a start
+            // that failed and a process the app can never stop: `stop_running_engine` below reaches
+            // the runtime's own slot even when the session slot refuses (see its docblock), and the
+            // instance's `Drop` is what ends the engine.
+            let _ = stop_running_engine(&app, &runtime_state, &ipc);
+            return Err(failure);
+        }
         handle
     };
     Ok(handle)
@@ -142,7 +150,17 @@ pub fn stop_running_engine<R: tauri::Runtime>(
     // The prompts first, then the engine: a pending request belongs to a turn that is about to
     // end, and the engine is blocking on it — so it is answered `cancelled` while there is still
     // a connection to answer on (§6.2's 旧授权按钮失效, on the process-exit route).
-    let session = ipc.clear();
+    //
+    // **A poisoned slot does not stop the teardown.** `clear` refusing means *the session cannot be
+    // read*, not that there is no engine: the runtime's own slot is a different mutex, and the steps
+    // below — revoking the prompts, retiring the pet's tasks, taking the instance out to stop it —
+    // are exactly what a teardown is for. Returning here would leave an engine running that nothing
+    // can address, which is worse than the thing the refusal was about. The refusal is carried to
+    // the end and answered after every step has run.
+    let (session, refused) = match ipc.clear() {
+        Ok(session) => (session, None),
+        Err(failure) => (None, Some(failure)),
+    };
     if let Some(session) = &session {
         session.permissions.revoke_all();
     }
@@ -168,5 +186,8 @@ pub fn stop_running_engine<R: tauri::Runtime>(
         .map_err(|_| AgentFailure::unavailable("the agent runtime state was poisoned by a panic"))?
         .take();
     drop(instance);
-    Ok(())
+    match refused {
+        Some(failure) => Err(failure),
+        None => Ok(()),
+    }
 }
