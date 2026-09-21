@@ -204,6 +204,16 @@ async function main() {
     // MiniBrowser's default 1024x768, and the run measures a 1024x732 viewport
     // believing it is 1280x800. Nothing downstream can see that: every rect is
     // still internally consistent. (Cost: one run.)
+    //
+    // The same guard covers a second environment, measured 2026-09-22: under a
+    // bare Xvfb with **no window manager**, `setWindowRect` is echoed back and
+    // never applied — 800x600, 1280x836 and 1600x1000 all report the number they
+    // were given while `innerWidth`/`innerHeight` stay 1024x732, on a 1600x1000
+    // display. The driver's rect is the request, not the state. So this run needs
+    // a session that honours a resize (the maintainer's own desktop), or an Xvfb
+    // with a window manager in it; on a bare one it stops here, which is the
+    // correct outcome — the alternative is every number below taken at a viewport
+    // nobody chose.
     stage('set viewport')
     await wd.setWindowRect({
       width: VIEWPORT.width,

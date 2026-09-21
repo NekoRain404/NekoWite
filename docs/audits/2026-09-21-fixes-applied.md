@@ -1596,18 +1596,78 @@ variable set, a missing tool is a failure rather than a skip, so guessing wrong 
 is a worse outcome than a documented gap, so the gap is documented — with the three commands and the three
 tools — for whoever can verify them.
 
+## 17. The round after that: the two gaps the test plan named out loud
 
+**`use-note-export.ts` had no test file, and PDF export was covered only through the print frame's
+lifecycle.** §16 wrote both down as the plan's own §3, and this round closes them — the first by testing
+the composable, the second by testing what actually reaches the printer.
 
+The composable is the boundary where "export" stops meaning the active tab, so the eight cases are one per
+decision it makes: the save dialog comes first, and a cancelled save therefore reads nothing, writes
+nothing and says nothing; a destination outside the vault is refused **before** the read, because the
+backend's vault-confined write would otherwise refuse it with a message that dies behind the closed
+dialog; the target's own path, text and citation library are what reach the pipeline; a rejected read and
+a rejected write are both reported rather than looking like a menu item that did nothing; PDF asks for no
+destination and prints the target; and with no vault open the dialog is offered without a directory and
+the vault check is skipped — that last one is pinned deliberately, because `isPathWithinVault(anything,
+'')` is false, so "guard on the vault here" would refuse every export instead of allowing one.
 
+The PDF half is three cases in `services/export.test.ts`, which already owned the `@page` rules, the body
+reset and the frame's attach/remove: the print document is the **rendered note** (a heading and body text,
+not CSS wrapped around an empty page), the frontmatter setting applies on paper exactly as it does in
+HTML, and attachments resolve against the exported note's `notePath` in the one caller that has no vault
+parameter. What no test can reach is the system print dialog and the file it writes, and the plan's §3 now
+says that instead of saying "PDF has no evidence at all" — which was true when it was written and is not
+any more.
 
+**All eleven cases are characterisation tests**, and that is worth stating plainly: the export code was
+already correct, and what was missing was the evidence. So instead of trusting a green run, each decision
+was mutated and the failure attributed. `use-note-export.ts`: the dialog no longer stops the export (the
+cancelled-save case fails), the outside-vault refusal removed (its own case fails), `notePath` no longer
+the target path (three cases fail). `export.ts`'s print path: the frontmatter setting ignored (the
+paper-frontmatter case fails), the render options stripped of the target note (the attachment case fails),
+the rendered document emptied (four cases fail). Both files were restored byte-identically after every
+run (`md5 2d37238766e7f60a6df11ca73e1e9df5` and `ae3c005b8bf203ac32beefb14aa82557`).
 
+**One detail a future test-writer will hit, recorded here rather than rediscovered.** The mocks need
+`vi.fn<(a: A, b: B) => R>()` with an implementation that declares **no** parameters. `tseslint`'s
+flat/recommended config reports every unused parameter when there is no later used one — `args:
+'after-used'` is why the `_vault, _path, content` idiom elsewhere in this suite is legal and
+`_source, _vault, _savePath, _opts` is not. The signature is what keeps the call sites checked; the empty
+implementation keeps the lint quiet.
 
+### The real-engine attempt, and what it measured about its own instrument
 
+The round also tried to take a reading on the engine that ships — `node e2e/webkit/measure.mjs --only
+inspect` under `xvfb-run` — and it did drive WebKitGTK: the session opened, MiniBrowser launched, the
+harness page navigated. It then stopped at the harness's own viewport check.
 
+The cause is the environment, and the measurement is worth recording because it is this programme's usual
+defect class found in an instrument rather than in the code: **with no window manager, `Set Window Rect` is
+echoed back and never applied.** Asked for 800x600, 1280x836 and 1600x1000 on a 1600x1000 display, the
+driver reported each number back verbatim while `innerWidth x innerHeight` stayed **1024x732** — the
+driver's rect is the request, not the state.
 
+The harness is already built for exactly that: `measure.mjs` sets the window *after* the navigation and
+then verifies the content area instead of trusting the rect it just sent, so on a machine that cannot
+honour the resize it stops rather than measuring a viewport nobody chose. That guard is the difference
+between a documented limitation and a run whose every number is quietly wrong, and it is why this round's
+real-engine evidence is the guard firing rather than a number. Both places that describe how to run it —
+`measure.mjs`'s own comment at that check, and `docs/debug.md` — now state the precondition: a session
+that honours a resize (the maintainer's own desktop), or an Xvfb with a window manager installed.
 
+### The gate
 
+| Step | Result |
+|---|---|
+| `verify` | PASS — **5947 tests across 3 package runs**: §16's 5936 plus the **11** new export cases |
+| `fmt` | PASS |
+| `clippy` | PASS — 97 warning lines, under the 110 ceiling |
+| `instruments` | PASS |
+| `scripts` | PASS — 89 checks, 0 failed |
+| `harness` | PASS — 5 passed, 0 failed |
+| `build` | PASS |
+| `rust` | PASS — 79 targets, **1409 passed, 0 failed**; the flaky case fixed in §16 passes and is counted |
+| `e2e` (`--with-e2e`) | PASS — 297 passed |
 
-
-
-
+One run, all nine steps, exit 0.

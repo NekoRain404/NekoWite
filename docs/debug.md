@@ -12,6 +12,11 @@
     CDP」只适用于 `pnpm dev` 的浏览器模式；真实引擎要用仓库自己的 harness：
     `node apps/desktop/e2e/webkit/measure.mjs --only <探针>`（需要 WebKitWebDriver 与 MiniBrowser）；
     它自己的两个 `node:test` 文件已进入门禁。启动路径另有一个探针：`bash scripts/boot-probe.sh`。
+    运行这个 harness 有个环境前提（2026-09-22 实测）：它把窗口设成 1280x836、再**校验**内容区为
+    1280x800。在**没有窗口管理器**的裸 Xvfb 里，`Set Window Rect` 会把你给的数字原样回显、却不真正
+    生效——800x600、1280x836、1600x1000 都回显，而 `innerWidth x innerHeight` 始终是 1024x732
+    （MiniBrowser 默认窗口）。此时它会在这里停下并报错，这是正确的结果：否则整轮数字都是在没人选过的
+    视口上量的。要真跑，请在会响应 resize 的会话里跑（维护者自己的桌面），或在 Xvfb 里装一个窗口管理器。
   - **测试面全景**（哪些测试真的会跑、每个功能域由哪些文件守着、哪里还没有证据）见
     `docs/test-plan.md`。
 
