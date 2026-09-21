@@ -1705,14 +1705,15 @@ One run, all nine steps, exit 0.
 
 ### What remains, after §1.9 closed
 
-The audit's §1 now has four open sections — §1.3 (`docs/PLUGIN_SDK.md`), §1.4
-(`docs/PLUGIN_ISOLATION.md`), §1.8 (`docs/RECOVERY.md`) — plus §3's file-size row, which cannot be
+The audit's §1 now has three open sections — §1.3 (`docs/PLUGIN_SDK.md`), §1.4
+(`docs/PLUGIN_ISOLATION.md`) and §1.8 (`docs/RECOVERY.md`) — plus §3's file-size row, which cannot be
 fixed because the three files holding the wrong numbers are read-only by instruction, and §5's three
 architecture ledgers, which are read-only by the same instruction and were reported rather than edited.
 §1.1, §1.2, §1.5, §1.6, §1.7, §1.9 and §1.10 are closed, in §15, §16 and this round.
 
-The rewritten test plan's §3 is down to two entries, both of which are claims about the *window manager*
-rather than about this repository: the system print dialog PDF hands off to, and whether a resize request
-is honoured at all — the second one measured here, in the harness rather than in the app. And two code
+The rewritten test plan's §3 is down to three entries, and two of them are claims about the *operating
+system* rather than about this repository: the system print dialog PDF hands off to, and whether a resize
+request is honoured at all — the second one measured here, in the harness rather than in the app. The
+third is the `pnpm test:e2e` trap, which is a repository fact and stays. And two code
 questions are recorded without being decided: the unstable-plugin quarantine that a vault switch clears
 (§16), and whether the application should fetch the pet catalogue at all (§16).
