@@ -984,6 +984,50 @@ sidecar was driven in place again — version, empty environment, no credentials
 inside a network namespace with only loopback — and the two things it still cannot show are the ones
 the script names itself: a machine with no system `opencode`, and the engine's notice file.
 
+---
+
+## 11. The round after that: the last inch of a chain, and two instruments that said the wrong thing
+
+This round found no new bug in the product. It found the last inch of the previous round's
+reachability work unpinned, one plan-shaped record that had been overtaken, and **two tools whose
+readings were wrong about the thing they exist to measure** — which is the class T1 opened and the
+one this programme keeps finding at the meta level.
+
+| # | What | Change | Evidence |
+|---|---|---|---|
+| **The review surface's last inch** | `ui/EditorPane.vue` mounts `AgentChangedFiles` — the change review — and **nothing held it there**: the component's own spec mounts the component, the e2e spec mounts the component, and `EditorPane`'s four specs cover the editor, the intake, scroll sync and tail space. Deleting that one element would have removed the surface from the running application with every test green. | `src/ui/EditorPane.agentSurfaces.test.ts`: the real pane, with the session record seeded the way the component's spec seeds it, asserts the surface and its row are on screen — and that it is absent for a pane serving no session, one handed none, and one with no note in front | 4 cases · **mutation check**: removing the element fails exactly the positive case (1 failed / 3 passed) and the file restored byte-identically is green · six neighbouring specs / 51 tests unchanged |
+| **A plan that had been overtaken** | `app/agent-composition.ts` still asked for T10's composition step ("Add them as further `connect*` functions on this object"). T11 has had its function for as long as the next bullet in that file has said so; T10 never got one and does not need one — the surface is hosted in the pane and reaches the editor and the vault through the note's own save transaction, which a `connect*` would have had to hand it anyway. | The bullet records where the wiring actually went, with the test that holds it | `pnpm typecheck` and eslint clean; docblock only |
+| **Two Xvfb spawns that crashed the display** | `scripts/boot-probe.sh` reported a **boot failure**, and the truth was that the display never came up: plain `Xvfb` here segfaults initialising GLX, so GTK cannot start and the app exits 1. `e2e/native-beta-smoke.mjs` spawned Xvfb the same way. This is finding T1 one layer out — in the tools rather than in the test targets T1 fixed. | `-extension GLX` on both, with the measurement cited where each is passed | **Read both ways**: the probe said `FAIL … (exit=1)` with the GTK panic before, `PASS: process stayed alive until the deadline` after; the native smoke went from the same display failure to **`{"status": "PASS", "applicationRestart": true}`** — a real GTK window typing a marker into a note, saving it, and restarting · `boot-probe.test.sh` 12 readings still pass |
+| **A sweep that libelled a wrapper** | `check-channels.py` closed with "listened for, but no Rust side emits it: **1 of 8**", and the entry was `tauri-event-adapter.ts`'s own parameter — `listen<T>(event, cb)` — resolved as a channel named `event`. Nothing was wrong with either side; the heading was. | A listener whose argument is neither a literal nor a known `const` goes to its own section, labelled as what it is | After: **0 of 21** emitted-but-unnamed, **0 of 6** listened-but-unemitted, and two wrappers listed separately (`pet-navigation-listener.ts`'s would have been the second false positive) |
+
+**One correction to §10, because this round read the reachability properly.** §10 said the change list
+"still has no production reader — T10's surface is unbuilt". Two things were wrong with that. The
+surface is **built and hosted** (the table above is what now holds it), and the Rust table is **read
+in production**: `SessionRuntime::change_for` → `FsCapability::change_for` → the `agent_recover_change`
+command the frontend calls at `platform/gateways/tauri-agent/ipc.ts:261`. What is test-only is the
+*list* accessor `SessionRuntime::changes`, which is how `agent_fs_capability_test` and
+`agent_change_recovery_test` read back what a delegated write recorded — a legitimate read path for a
+suite that has no IPC command to ask. So the honest statement is narrower: §7.2's record is reached one
+row at a time by the recovery command, the whole-list read exists for tests, and nothing is missing.
+
+**No bundles this round**, and the reason is a fact rather than a schedule: the only frontend changes
+are a test file and two docblocks, so the executables published in §10 still carry every shipped
+behaviour. The e2e suite was not re-run for the same reason — the application's behaviour is
+unchanged — and the gate below is the frontend and Rust half.
+
+### The gate
+
+| Reading | Result |
+|---|---|
+| `pnpm verify` | **exit 0** — typecheck; lint 0 errors / 462 warnings (at the ceiling); tests **441 files / 4828 passed** (one more file and four more tests than the previous round, which is `EditorPane.agentSurfaces.test.ts`); perf 2 files / 10 passed; renderer build 17.89 s; `check-katex` OK |
+| `cargo fmt --all --check` | exit 0 |
+| `cargo clippy --all-targets --locked` | exit 0, **97** warning lines — unchanged for a third round |
+| `tauri build --no-bundle` | exit 0; the staged engine removed again afterwards |
+| full suite, `NEKOWITE_REQUIRE_PROCESS_TESTS=1` | **79 targets · 1408 passed · 0 failed · 5 ignored · 0 skip announcements** — the same counts as the previous round, which is what a round that changed no Rust source should produce |
+| e2e | not re-run, and the reason is in the section above: no shipped behaviour changed |
+
+
+
 
 
 
