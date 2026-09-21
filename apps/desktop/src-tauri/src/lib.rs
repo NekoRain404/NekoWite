@@ -398,7 +398,46 @@ pub fn run() {
             commands::desktop_pet::desktop_pet_read_settings,
             commands::desktop_pet::desktop_pet_update_settings,
             commands::desktop_pet::desktop_pet_open_settings,
+            commands::desktop_pet_navigation::desktop_pet_take_settings_requests,
+            commands::desktop_pet_navigation::desktop_pet_take_task_requests,
         ])
-        .run(context)
-        .expect("error while running tauri application");
+        .build(context)
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // **The engine is stopped here, and nowhere else on this path.**
+            //
+            // `App::run` finishes by calling `std::process::exit` — Tauri's own documentation for
+            // it says so, and the call is at `tauri-2.11.5/src/app.rs:1346`. `process::exit` does
+            // not run destructors, so the managed `AgentRuntimeState` is never dropped and
+            // `AgentInstance`'s `Drop` — which releases the registration and signals the engine's
+            // process group (§6.2) — never runs. Every quit left an `opencode` behind.
+            //
+            // `RunEvent::Exit` is the last moment that is still inside the event loop: Tauri calls
+            // this callback first, then `cleanup_before_exit`, and only then exits the process
+            // (`app.rs:1430-1437`). The teardown below is synchronous and bounded — the connection
+            // asks the engine to leave, waits `SHUTDOWN_GRACE`, then signals the group — so it has
+            // the time it needs and the process leaves afterwards.
+            //
+            // The work is `agent_stop`'s, called through the same function for the reason that
+            // function's own doc gives: two callers that spell the teardown separately are two
+            // teardowns that come apart. Nothing here is reported to a window — at this point
+            // there is no window to report to — so a refusal is written where the next reader of
+            // a log will find it and the process still leaves.
+            if let tauri::RunEvent::Exit = event {
+                let Some(runtime_state) = app.try_state::<state::AgentRuntimeState>() else {
+                    return;
+                };
+                let Some(ipc) = app.try_state::<commands::agent::AgentIpcState>() else {
+                    return;
+                };
+                if let Err(failure) =
+                    commands::agent::stop_running_engine(app, &runtime_state, &ipc)
+                {
+                    eprintln!(
+                        "nekowite: the engine was not stopped on the way out: {}",
+                        failure.message
+                    );
+                }
+            }
+        });
 }

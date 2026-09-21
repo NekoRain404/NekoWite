@@ -163,6 +163,8 @@ const COMMANDS: &[&str] = &[
     "desktop_pet_read_settings",
     "desktop_pet_update_settings",
     "desktop_pet_open_settings",
+    "desktop_pet_take_settings_requests",
+    "desktop_pet_take_task_requests",
 ];
 
 fn main() {

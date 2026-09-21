@@ -54,11 +54,33 @@ pub fn write_file(
     content: &str,
     max_history: Option<u32>,
 ) -> Result<Option<String>, String> {
+    write_file_guarded(vault_root, path, content, max_history, None)
+}
+
+/// Save only if the editor's last observed bytes still occupy this path.
+/// `None` preserves explicit creation and the existing storage API semantics.
+pub fn write_file_guarded(
+    vault_root: &str,
+    path: &str,
+    content: &str,
+    max_history: Option<u32>,
+    expected_content: Option<&str>,
+) -> Result<Option<String>, String> {
     // Serialize the whole read-snapshot-write sequence. `write_file` does no
     // `.await`, so the guard never crosses a yield point and cannot deadlock
     // the async executor; it just windows two concurrent saves apart.
     let _guard = write_lock().lock().map_err(|e| e.to_string())?;
     let resolved = resolve_within(vault_root, path)?;
+    // Check inside the same transaction as rename/delete and before history:
+    // stale editor saves must neither recreate old paths nor spend snapshots.
+    // The lock orders this process's writers; external programs do not share it.
+    if let Some(expected) = expected_content {
+        let actual = std::fs::read(&resolved)
+            .map_err(|e| fs_error("verify the file before saving", &resolved, e))?;
+        if actual != expected.as_bytes() {
+            return Err("file changed since it was read; reload before saving".into());
+        }
+    }
     // Refused before the read and the snapshot below, which is the point of
     // asking here as well as at the publish (which stays the authority): those
     // two steps are work done FOR a write that is not going to happen, and the

@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod agent_events;
 pub mod agent_capabilities;
 pub mod agent_catalogue;
 pub mod agent_recovery;
@@ -9,6 +10,7 @@ pub mod agent_settings;
 pub mod agent_skills;
 pub mod ai;
 pub mod desktop_pet;
+pub mod desktop_pet_navigation;
 pub mod desktop_pet_surface;
 pub mod fs;
 pub mod key_vault;

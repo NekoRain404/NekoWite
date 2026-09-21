@@ -57,13 +57,16 @@ pub async fn write_file(
     path: String,
     content: String,
     max_history: Option<u32>,
+    expected_content: Option<String>,
     state: tauri::State<'_, VaultRegistry>,
 ) -> Result<Option<String>, String> {
     require_opened_vault(&state, &vault_root)?;
     // `Some(warning)` = the text was written, but something optional around it
     // failed (currently: the history snapshot). The window shows it; it must not
     // be mistaken for a failed save.
-    file_store::write_file(&vault_root, &path, &content, max_history)
+    crate::storage::save_store::write_file_guarded(
+        &vault_root, &path, &content, max_history, expected_content.as_deref(),
+    )
 }
 
 #[tauri::command(rename_all = "snake_case")]

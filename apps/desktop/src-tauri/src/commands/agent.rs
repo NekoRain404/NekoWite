@@ -375,7 +375,7 @@ pub async fn agent_start(
         let emit = app.clone();
         let session =
             crate::state::start_session(&runtime_state, &app, &vault_id, move |envelope| {
-                let _ = tauri::Emitter::emit(&emit, AGENT_EVENT_CHANNEL, envelope);
+                super::agent_events::publish(&emit, &envelope);
             })
             .await
             .map_err(AgentFailure::unavailable)?;
@@ -393,6 +393,30 @@ pub async fn agent_stop<R: tauri::Runtime>(
     runtime_state: tauri::State<'_, AgentRuntimeState>,
     ipc: tauri::State<'_, AgentIpcState>,
 ) -> Result<(), AgentFailure> {
+    stop_running_engine(&app, &runtime_state, &ipc)
+}
+
+/// The teardown itself, as a plain call rather than a command.
+///
+/// It is a function because there are two callers and they must not drift: `agent_stop`, when the
+/// reader asks for the engine to come down, and `lib.rs`'s `RunEvent::Exit`, when the app is
+/// closing and there is no reader to ask. The second was missing until 2026-09-21 and the reason
+/// is worth keeping written down:
+///
+/// **`App::run` exits through `std::process::exit`.** Tauri's own doc on it says so
+/// (`tauri-2.11.5/src/app.rs:1346`), and `std::process::exit` does not run destructors — so the
+/// managed state was never dropped, `AgentInstance`'s `Drop` never ran, and every launch left the
+/// engine behind. `agent_runtime::mod`'s promise that 「the process group and its teardown」 belong
+/// to the transport was true the whole time; nothing reached it on the exit path. This is the same
+/// shape as the rest of this repository's recurring defect — built, correct, and unreachable —
+/// except that its cost lands on the machine rather than on the reader.
+///
+/// The three steps and their order are `agent_stop`'s, unchanged.
+pub fn stop_running_engine<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    runtime_state: &AgentRuntimeState,
+    ipc: &AgentIpcState,
+) -> Result<(), AgentFailure> {
     // The prompts first, then the engine: a pending request belongs to a turn that is about to
     // end, and the engine is blocking on it — so it is answered `cancelled` while there is still
     // a connection to answer on (§6.2's 旧授权按钮失效, on the process-exit route).
@@ -404,9 +428,13 @@ pub async fn agent_stop<R: tauri::Runtime>(
     // this instance was running can still be running", which §6.2 maps to `interrupted` and never
     // to a completion. Done while the identity is still in hand, because the instance's `Drop` is
     // what ends the incarnation and it takes the epoch with it.
+    //
+    // At exit this is the step that is easy to think of as unnecessary and is not: without it a
+    // task the closing app was running stays `working` in the pet's list, and the next launch
+    // draws a task no process is behind. The cost of getting it wrong outlives the process.
     if let Some(session) = &session {
         let identity = session.identity.clone();
-        report_pet_tasks(&app, |state| state.tasks.retire(&identity), "a stop");
+        report_pet_tasks(app, |state| state.tasks.retire(&identity), "a stop");
     }
     // Taking the instance out of the slot is what stops the engine: its own `Drop` releases the
     // registration and asks the process to exit. Doing it here rather than leaving it to the

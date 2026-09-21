@@ -2,13 +2,12 @@
 //!
 //! ## Why this is not a table this app keeps
 //!
-//! `Always allow` is not the session's answer, and treating it as one was the premise
-//! `permission-configured.md` §5 corrected by measurement: the engine writes the grant into its
-//! own database (`XDG_DATA_HOME/opencode/opencode.db`, inside the profile root), keyed by
-//! `(project_id, action, resource)`, and every later evaluation loads it. A later session on the
-//! same profile is asked nothing at all. So there is exactly one table, it is the engine's, and
-//! this module is a **view and a delete on it** — never a second mechanism, never a copy that
-//! could disagree about what is in force.
+//! This is a view/delete of the engine's V2 persistent permission table, keyed by
+//! `(project_id, action, resource)`. It is NOT a complete view of active approvals:
+//! bundled OpenCode 1.18.29 ACP uses a separate, in-memory legacy permission service.
+//! Real provider testing on 2026-09-20 disproved the earlier assumption that an ACP
+//! `Always allow` writes this table. Empty results and successful removals must never
+//! be represented as revoking those temporary approvals.
 //!
 //! ## How the engine is reached, and why the port is pinned
 //!

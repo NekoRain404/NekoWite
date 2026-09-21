@@ -53,3 +53,9 @@ mod windows;
 // reads, and the click that goes back to a session.
 #[path = "desktop_pet_ipc_test/wiring.rs"]
 mod wiring;
+#[path = "desktop_pet_ipc_test/character_selection.rs"]
+mod character_selection;
+#[path = "desktop_pet_ipc_test/event_boundary.rs"]
+mod event_boundary;
+#[path = "desktop_pet_ipc_test/navigation.rs"]
+mod navigation;

@@ -92,6 +92,8 @@
     "allow-desktop-pet-open-task",
     "allow-desktop-pet-read-settings",
     "allow-desktop-pet-update-settings",
-    "allow-desktop-pet-open-settings"
+    "allow-desktop-pet-open-settings",
+    "allow-desktop-pet-take-settings-requests",
+    "allow-desktop-pet-take-task-requests"
   ]
 }

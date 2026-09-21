@@ -66,6 +66,7 @@
  * ([`character_window_size`], and `ball::ball_window_size` for the ball).
  */
 use serde::Serialize;
+mod selection;
 
 use super::ball::Ball;
 use super::settings::{PetSettingsDomain, PetSettingsStore};
@@ -481,6 +482,7 @@ pub struct PetWindowHost {
     /// identity, and a caller left over from a closed window would otherwise be believed.
     generation: u32,
     instances: Vec<PetInstance>,
+    selected_instance: Option<PetWindowLabel>,
     /// The ball's window and its switch. Deliberately *not* an entry in `instances`: the two types
     /// of window differ in what they hold (a character, or none), in what the cap counts, and in
     /// whether a per-window operation may be aimed at them — see this file's header. The label is
@@ -508,6 +510,7 @@ impl PetWindowHost {
             cap: DEFAULT_CHARACTER_CAP,
             generation: 0,
             instances: Vec::new(),
+            selected_instance: None,
             ball: Ball::new(PetWindowLabel::ball()),
             style: PET_WINDOW_STYLE,
             character_size: CHARACTER_DEFAULT_SIZE,

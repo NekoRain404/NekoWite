@@ -68,6 +68,11 @@ use crate::desktop_pet::{
 };
 use crate::state::DesktopPetState;
 
+pub use super::desktop_pet_navigation::{
+    __cmd__desktop_pet_open_settings, __cmd__desktop_pet_open_task,
+    __tauri_command_name_desktop_pet_open_settings, __tauri_command_name_desktop_pet_open_task,
+    desktop_pet_open_settings, desktop_pet_open_task,
+};
 use super::desktop_pet_surface::settings_store;
 
 // Re-exported from `desktop_pet_surface` so that the paths naming them do not move: `lib.rs`'s
@@ -133,15 +138,6 @@ pub const PET_TASK_OPEN_CHANNEL: &str = "pet-open-task";
 /// spellings are one decision.
 pub const PET_HOST_APPEARANCE_CHANNEL: &str = "pet-host-appearance";
 
-/// The main window's label, as the app builds it from `tauri.conf.json`.
-///
-/// Taken from [`crate::main_window`] rather than spelled here: the label is one fact about one
-/// window, and it is now named in three places — this file's raise, the setup that builds the
-/// window, and the launch that rebuilds it when the user has closed it — so it lives in the module
-/// those three are about. It is still never taken from a request: which window the pet's 设置
-/// raises is the host's decision.
-const MAIN_WINDOW: &str = crate::main_window::LABEL;
-
 /// §5.1's pet sub-pages, as this side validates them.
 ///
 /// Duplicated from D1's `PET_SETTINGS_PAGES` (`pet-contracts/config.ts`) rather than trusted from
@@ -202,13 +198,6 @@ impl PetFeatureState {
             visible: enabled && host.is_visible(),
         }
     }
-}
-
-/// A settings page a pet window asked the main window to open.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SettingsRequest {
-    page: String,
 }
 
 /// What the care ledger settled, or the fact that it settled nothing (§8).
@@ -780,72 +769,6 @@ fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|since| since.as_millis() as u64)
         .unwrap_or(0)
-}
-
-/// Bring the main window up on the session one task belongs to (§6.2's 点击返回任务).
-///
-/// The same two-step shape as [`desktop_pet_open_settings`], and for the same reason: the window
-/// is raised first, so the request lands on a listener that is mounted. What crosses is D1's
-/// `PetTaskKey` — the six fields that name one run — and nothing else: no URL, no command, no
-/// path, and no window label. §6.3 requires a notification's action to be a limited target the
-/// host issued, and the host issued this one (the window read it from `desktop_pet_tasks`).
-///
-/// The key is *not* validated against the projection here, and that is a decision: a run that has
-/// been retired still has a session the main window may want to show last known state for, and
-/// "this session is gone" is a fact the window that holds sessions can state and this one cannot.
-/// What the main window does with a key it does not recognise is that window's business.
-#[tauri::command]
-pub fn desktop_pet_open_task<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    task: crate::desktop_pet::PetTaskKey,
-) -> Result<(), String> {
-    raise_main(&app)?;
-    tauri::Emitter::emit_to(&app, MAIN_WINDOW, PET_TASK_OPEN_CHANNEL, task)
-        .map_err(|error| format!("the task request could not be delivered: {error}"))
-}
-
-/// Bring the main window up on one of §5.1's pet pages.
-///
-/// Two steps, in this order, and the order is the requirement: §5.1's 「主窗口隐藏时先安全唤起，不
-/// 依赖 DOM 是否已挂载」. The window is raised first, so the event lands on a listener that is
-/// mounted — a request delivered to a hidden window's page is a request answered by nothing.
-///
-/// *Closed* is not the same state as *gone for good*: while the pet is on, this process outlives
-/// the main window the user closed, and `main_window::raise` builds it again from its declaration
-/// rather than refusing. It used to answer 「the main window is not open, so there is nowhere to
-/// show the settings」 and nothing acted on it — a refusal a right-click could not get past, in
-/// the one state this host is the only thing that can report.
-#[tauri::command]
-pub fn desktop_pet_open_settings<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    page: String,
-) -> Result<(), String> {
-    if !SETTINGS_PAGES.contains(&page.as_str()) {
-        return Err(format!(
-            "{page} is not one of the pet's settings pages: {}",
-            SETTINGS_PAGES.join(", ")
-        ));
-    }
-    raise_main(&app)?;
-    tauri::Emitter::emit_to(
-        &app,
-        MAIN_WINDOW,
-        PET_SETTINGS_CHANNEL,
-        SettingsRequest { page },
-    )
-    .map_err(|error| format!("the settings request could not be delivered: {error}"))
-}
-
-/// Raise the main window, or say why it cannot be raised.
-///
-/// One call into [`crate::main_window::raise`], which is where both halves live: the window that
-/// exists is unminimized, shown and focused (each step reported rather than swallowed — "the
-/// settings did not open" is a dead-looking right-click, and which of the three failed is what
-/// tells a minimized window apart from one the session manager took away), and the window the user
-/// closed is built again from its declaration instead of being answered with a refusal nobody
-/// could act on.
-fn raise_main<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
-    crate::main_window::raise(app)
 }
 
 /// Tell every window what the feature state is now.

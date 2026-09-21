@@ -95,6 +95,12 @@ pub fn stored(store: &PetSettingsStore) -> Option<PetSettingsRecord> {
 /// afterwards says "no window" — and `desktop_pet_open` is the call that hands a page the refusal
 /// itself, for a page that wants the sentence.
 pub fn apply(host: &mut PetWindowHost, record: &PetSettingsRecord, character: &str) -> bool {
+    if record.domain == PetSettingsDomain::Character {
+        // The renderer already follows this selection; keep the managed instance's key aligned
+        // so the next general save reuses it. Selection alone must not open a disabled window.
+        host.select_character(character);
+        return false;
+    }
     if record.domain != PetSettingsDomain::General {
         return false;
     }
@@ -117,7 +123,7 @@ pub fn apply(host: &mut PetWindowHost, record: &PetSettingsRecord, character: &s
     // §5.1's 显示角色窗口 going off rather than §4's rollback: the ball's own switch was recorded a
     // line above and is untouched by this call, so 只开悬浮球 is what is left standing.
     if character_window {
-        if let Err(refusal) = host.open(character) {
+        if let Err(refusal) = host.open_selected(character) {
             eprintln!("the pet's window could not be opened for {character}: {refusal:?}");
         }
     } else {

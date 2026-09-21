@@ -507,6 +507,18 @@
           "markdownDescription": "Enables the desktop_pet_state command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_pet_take_settings_requests command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-take-settings-requests",
+          "markdownDescription": "Enables the desktop_pet_take_settings_requests command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_pet_take_task_requests command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-pet-take-task-requests",
+          "markdownDescription": "Enables the desktop_pet_take_task_requests command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_pet_tasks command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-pet-tasks",
@@ -1003,6 +1015,18 @@
           "type": "string",
           "const": "deny-desktop-pet-state",
           "markdownDescription": "Denies the desktop_pet_state command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_take_settings_requests command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-take-settings-requests",
+          "markdownDescription": "Denies the desktop_pet_take_settings_requests command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_pet_take_task_requests command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-pet-take-task-requests",
+          "markdownDescription": "Denies the desktop_pet_take_task_requests command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_pet_tasks command without any pre-configured scope.",

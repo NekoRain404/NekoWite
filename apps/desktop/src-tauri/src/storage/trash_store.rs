@@ -24,6 +24,46 @@ use crate::domain::path_policy::{
 };
 use crate::errors::fs_error;
 
+#[cfg(test)]
+mod delete_lock_tests {
+    #[test]
+    fn delete_waits_for_the_save_transaction_lock() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join(format!("delete-lock-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("note.md"), "saved").unwrap();
+        let guard = crate::storage::atomic_write::write_lock().lock().unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let worker_root = root.clone();
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            done_tx
+                .send(super::delete_file(worker_root.to_str().unwrap(), "note.md"))
+                .unwrap();
+        });
+        started_rx.recv().unwrap();
+        let while_locked = done_rx.recv_timeout(Duration::from_millis(100));
+        let still_exists = root.join("note.md").exists();
+        // Release before asserting so a regression cannot poison the shared lock.
+        drop(guard);
+        let waited = while_locked.is_err();
+        let result =
+            while_locked.unwrap_or_else(|_| done_rx.recv_timeout(Duration::from_secs(5)).unwrap());
+        worker.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(
+            waited && still_exists,
+            "delete must wait for the save transaction"
+        );
+        assert!(result.is_ok());
+    }
+}
+
 // The two verbs the split moved out, kept reachable from this module path
 // because it is the one `commands::recovery` names them from. The direction of
 // USE is `trash_clear`/`trash_restore` → this file, never the reverse: both are
@@ -114,6 +154,11 @@ fn purge_trash_entry(p: &Path, is_dir: bool) {
 /// removes it, so each rebuild deposited four+ `%2Enekowite%2Findex%2F…`
 /// entries that no user could act on.
 pub fn delete_file(vault_root: &str, path: &str) -> Result<String, String> {
+    // Resolve and move under the save lock so a checked save cannot publish
+    // into a path that deletion has already moved to the trash.
+    let _guard = super::atomic_write::write_lock()
+        .lock()
+        .map_err(|e| e.to_string())?;
     let (resolved, relative) = resolve_within_rel(vault_root, path)?;
     if relative.is_empty() {
         return Err("cannot delete the vault root".into());
