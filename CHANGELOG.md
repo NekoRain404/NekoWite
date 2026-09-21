@@ -239,8 +239,8 @@
 
 ### Changed
 
-- **更正 Rust `storage::index_store` 的模块文档**：原文称「今天没有磁盘索引可存」，但前端的持久化全文索引就写在 vault 内的 `.nekowite/index/`（分片 JSON + `.nekowite/index.meta.json`，带校验和与原子替换）。现文档如实说明索引由前端持有、该 Rust 模块只是未来 Rust 侧索引的预留位置，并指出 `search_notes` 目前仍是实时遍历。
-- **如实记录：打开笔记后保存会把 9 类写法规范化**（渲染模型是文档文本的权威来源，所以打开时标签页会采用模型的 Markdown 形式）。实测这 9 类**没有任何内容丢失**，只是字节форм改变，且「源码面板显示的内容」与「保存写入的内容」始终一致：
+- **更正 Rust `storage::index_store` 的模块文档**：原文称「今天没有磁盘索引可存」，并把索引元数据写成 `.nekowite/index.meta.json`。实际前端的持久化全文索引写在 vault 内的 `.nekowite/index/`：元数据记录落在 `manifest.json`（键名以 `.meta` 结尾者映射到它），分片是 `shard-*.json`，原子写入用同目录的 `<文件>.json.tmp`；`.nekowite/index.meta.json` 只是持久化端口对 `index.meta` 这个键的通用落盘路径，没有任何生产代码使用它（只有 `persistence.test.ts` 的用例）。现文档如实说明索引由前端持有、指向真正实现它的 `features/search/services/index-storage.ts` 与 `index-shard-store.ts`、该 Rust 模块只是未来 Rust 侧索引的预留位置，并指出 `search_notes` 目前仍是实时遍历。
+- **如实记录：打开笔记后保存会把 9 类写法规范化**（渲染模型是文档文本的权威来源，所以打开时标签页会采用模型的 Markdown 形式）。实测这 9 类**没有任何内容丢失**，只是字节形式改变，且「源码面板显示的内容」与「保存写入的内容」始终一致：
   - 行尾两个空格硬换行 → 反斜杠硬换行（`line one\`）
   - 连续多个空行 → 折叠为一个空行
   - 缩进代码块 → 围栏代码块（缩进与制表符保留）

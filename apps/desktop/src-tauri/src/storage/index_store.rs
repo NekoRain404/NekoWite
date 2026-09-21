@@ -2,10 +2,11 @@
 //!
 //! The vault's persistent full-text index is owned by the FRONTEND, not by this
 //! module: it is stored inside the vault at `.nekowite/index/` as sharded JSON
-//! (`.nekowite/index/shard-*.json` plus `.nekowite/index.meta.json`) and is
-//! written through the frontend fs gateway — see `features/search` and
-//! `features/vault/services/indexPersistence.ts`, which reconcile it
-//! incrementally (mtime/size tokens, per-shard checksums, atomic temp+swap).
+//! (the metadata record `manifest.json` plus `shard-*.json`, with `<file>.json.tmp`
+//! staged siblings) and is written through the frontend fs gateway — see
+//! `features/search/services/index-storage.ts` for the key-to-file mapping and
+//! `index-shard-store.ts` for the incremental reconcile (mtime/size tokens,
+//! per-shard checksums, commit record written last).
 //!
 //! This module is the reserved home for a future RUST-side index. Nothing here
 //! reads or writes those files today, so a Rust index would be an addition
