@@ -366,13 +366,3 @@ export function createTauriPetConnection(options: TauriPetOptions = {}): PetHost
     },
   }
 }
-
-/**
- * D1's `PetGateway` over the host connection, for the callers that take the narrower interface.
- *
- * A view of the same object rather than a second one: the settings pages get a `PetGateway`, and
- * the lifecycle operations stay on the connection the composition holds.
- */
-export function createTauriPetGateway(options: TauriPetOptions = {}): PetGateway {
-  return createTauriPetConnection(options)
-}

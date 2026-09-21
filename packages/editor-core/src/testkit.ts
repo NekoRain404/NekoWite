@@ -1,7 +1,6 @@
 import { prosePluginsCtx, SchemaReady } from '@milkdown/core'
 import type { Ctx, MilkdownPlugin } from '@milkdown/ctx'
 import type { Node } from '@milkdown/prose/model'
-import { Slice } from '@milkdown/prose/model'
 import { Plugin } from '@milkdown/prose/state'
 import { TextSelection } from '@milkdown/prose/state'
 import type { EditorView } from '@milkdown/prose/view'
@@ -188,12 +187,6 @@ export function countNodes(view: EditorView, typeName: string): number {
   return count
 }
 
-export function textAt(view: EditorView, row: number, col: number): string {
-  const rect = selectedRect(view.state)
-  const pos = rect.tableStart + rect.map.positionAt(row, col, rect.table)
-  return (view.state.doc.nodeAt(pos) as Node | null)?.textContent ?? ''
-}
-
 /** All cell texts row-major, so a test can prove nothing was lost. */
 export function gridText(view: EditorView): string[] {
   const out: string[] = []
@@ -256,24 +249,6 @@ export function typeText(view: EditorView, text: string, from: number): void {
     typeChar(view, char, at)
     at += char.length
   }
-}
-
-/**
- * Dispatch a paste event through the view's paste hooks. `text/html` is passed
- * through so the ProseMirror HTML parser runs exactly as it does in the browser.
- */
-export function pasteText(view: EditorView, text: string, html?: string): boolean {
-  const event = {
-    clipboardData: {
-      getData: (type: string) =>
-        type === 'text/html' ? html ?? '' : type === 'text/plain' ? text : '',
-      types: html ? ['text/plain', 'text/html'] : ['text/plain'],
-    },
-    preventDefault: () => undefined,
-    stopPropagation: () => undefined,
-  } as unknown as ClipboardEvent
-  const handled = view.someProp('handlePaste', (f) => Boolean(f(view, event, Slice.empty)))
-  return Boolean(handled)
 }
 
 /**

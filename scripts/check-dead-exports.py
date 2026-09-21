@@ -52,7 +52,11 @@ DECL = re.compile(
 # The ceiling the list is held to. It is the count this tree had when the ratchet was added, and its
 # only job is to make the next addition a decision: see the note beside the comparison at the end.
 # 2026-09-22: 89 of 1372 exported functions, measured with this script.
-CEILING = 89
+# 2026-09-22, later the same day: 85 of 1368, after four exports that nothing referenced at all —
+# neither production nor any spec — were deleted (`replaceImageSrc`, `textAt`, `pasteText` in
+# editor-core, `createTauriPetGateway` in the desktop's pet gateway). The script asks for this in its
+# own output when the count drops; the ratchet is only a ratchet if somebody turns it.
+CEILING = 85
 
 
 def main() -> int:

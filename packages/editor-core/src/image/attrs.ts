@@ -56,11 +56,6 @@ export function restoreImageSize(view: EditorView, pos: number): Node | null {
   return updateImageAttrs(view, pos, { width: null, height: null })
 }
 
-/** Replace the image src with a new path/url. Single undo. */
-export function replaceImageSrc(view: EditorView, pos: number, src: string): Node | null {
-  return updateImageAttrs(view, pos, { src })
-}
-
 /** Delete the image node at `pos`. Single undo. */
 export function deleteImageNode(view: EditorView, pos: number): boolean {
   const node = imageNodeAt(view, pos)
