@@ -247,9 +247,9 @@ pub fn apply_window_geometry(host: &mut PetWindowHost, record: &PetSettingsRecor
 
 /// The notification switches, as an applied write delivers them to the ledger that reads them.
 ///
-/// The same gap [`apply_feature_switch`] closes, one domain over and one layer down: the eight
-/// switches on the notification page are written by `desktop_pet_update_settings`, and the thing
-/// they decide — whether a notice is attempted at all — is §6.3's ledger, which
+/// The same gap [`apply_feature_switch`] closes, one domain over and one layer down: the switches
+/// of the `notification` domain are written by `desktop_pet_update_settings`, and the thing they
+/// decide — whether a notice is attempted at all — is §6.3's ledger, which
 /// `state::DesktopPetState::new` reads them into exactly once, at startup, because a file read on
 /// the driver's task for every frame is what that read exists to avoid. An applied write is the
 /// *other* moment the answer is known to this process, and without this hook a switch flipped by

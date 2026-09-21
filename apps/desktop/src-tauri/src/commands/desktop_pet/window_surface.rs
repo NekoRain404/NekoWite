@@ -20,12 +20,13 @@
 //!   parameter that names a window, so there is nothing to forge: a request body cannot say who it
 //!   is, and `PetWindowHost` offers no operation that accepts a label either.
 //! - 「仅限制前端按钮或只写 capabilities 文件不能替代自定义命令授权检查」 — the capability file
-//!   (`capabilities/desktop-pet.json`) says which *plugin* permissions a pet window has; it says
-//!   nothing about these commands, because app commands are not ACL-gated at all (Tauri checks the
-//!   ACL for app commands only when the app defines its own permission manifest, which this app
-//!   does not). The authorization for every privileged operation is therefore the check *here* and
-//!   in `window_host::PetWindowHost::authorized`, and the capability file is the second,
-//!   independent layer rather than the only one.
+//!   (`capabilities/desktop-pet.json`) says which of these commands a pet window may call, and it is
+//!   a real layer rather than a note: `build.rs` declares the app's own command manifest, so Tauri
+//!   consults the ACL for them the way it does for a plugin's. What it cannot say is *which* window
+//!   of the group is asking, and that is what the rule is about. The authorization for every
+//!   privileged operation is therefore the check *here* and in
+//!   `window_host::PetWindowHost::authorized`, and the capability file is the second, independent
+//!   layer rather than the only one.
 //!
 //! [`desktop_pet_capabilities`] is the read that reports the other side of the same question: what
 //! this machine was *measured* to support, rather than what §7.1 permits. It is here rather than in
@@ -52,10 +53,11 @@ pub fn desktop_pet_state(
 
 /// The character windows that are open.
 ///
-/// Read-only, and the only place a label is handed outward. That is not the rule §7.1 states —
-/// a front end that can *read* a label still cannot name one in a request, and no command here
-/// accepts one — but it is worth saying, because a future command that took a label would have
-/// to justify itself against this.
+/// Read-only, and not the only place a label is handed outward: `desktop_pet_open` and
+/// `desktop_pet_close_own` answer with one too. What §7.1 states is the other direction — a front
+/// end that can *read* a label still cannot name one in a request, and no command here accepts
+/// one — and it is worth saying, because a future command that took a label would have to justify
+/// itself against this.
 #[tauri::command]
 pub fn desktop_pet_windows(
     state: tauri::State<'_, DesktopPetState>,

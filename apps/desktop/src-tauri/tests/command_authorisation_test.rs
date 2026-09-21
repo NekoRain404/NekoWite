@@ -545,7 +545,7 @@ fn a_pet_window_cannot_drive_the_features_own_lifecycle() {
 /// - **the glob has to match the label.** A label no capability matched would be a window whose
 ///   every invoke is refused, which the first assertion rules out by reaching a command the pet
 ///   capability grants;
-/// - **it has to hand out the pet's eight commands rather than the main window's.** The refusals
+/// - **it has to hand out the pet's commands rather than the main window's.** The refusals
 ///   below are the same ones a `pet-1` window gets, read against the ball's own label — so a
 ///   future label that quietly matched `main` (or a capability that listed `pet-ball` in
 ///   `default.json` as well) fails here instead of shipping a launcher with the editor's ACL.

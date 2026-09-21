@@ -10,10 +10,11 @@
  *
  * - **Labels are the host's** (§7.1: 「Tauri 管理窗口标识与角色实例关联」). Upstream took the
  *   label from the front end — `close_extra_pet` (`:487-497`) accepted any string and checked a
- *   prefix on it, and `list_extra_pets` (`:499-505`) handed labels back out. Here a label never
- *   leaves this module: the one operation a pet window may invoke takes no window argument at
- *   all, and the caller's identity is read from the window the windowing system says made the
- *   call, never from the request body.
+ *   prefix on it, and `list_extra_pets` (`:499-505`) handed labels back out. Here the traffic
+ *   runs one way: labels do go *out*, since `PetInstance` and `Closed` carry one to the page,
+ *   but no command accepts one — the two that act on a window take the `WebviewWindow` Tauri
+ *   reports — so the caller's identity is read from the window the windowing system says made
+ *   the call, never from the request body.
  * - **Labels are never reused.** Upstream's `next_extra_label` (`:475-485`) picked the lowest
  *   free index, so a closed window's label went to the next one. With identity read from the
  *   label that is an alias: a caller left over from a closed window would inherit a live one's
@@ -36,11 +37,12 @@
  * close it per window. Three consequences, each with the place it is enforced:
  *
  * - **It is minted with the same label prefix, so `capabilities/desktop-pet.json` governs it.**
- *   `"windows": ["pet-*"]` is what hands a window the pet's eight commands and two `core:event`
- *   permissions *instead of* `capabilities/default.json`'s sixty-odd; a label that matched
- *   neither would give the ball a window with no IPC at all, and one that matched `main` would
- *   give it the editor's whole surface. The prefix itself, and the two sides that read it, are
- *   `identity.rs`'s; what is this file's is that the ball is built out of the same type.
+ *   `"windows": ["pet-*"]` is what hands a window the pet's nine commands and two `core:event`
+ *   permissions *instead of* the surface `capabilities/default.json` hands the main window; a
+ *   label that matched neither would give the ball a window with no IPC at all, and one that
+ *   matched `main` would give it the editor's whole surface. The prefix itself, and the two sides
+ *   that read it, are `identity.rs`'s; what is this file's is that the ball is built out of the
+ *   same type.
  * - **It is not an instance, so the two per-window operations refuse it.** {@link
  *   PetWindowHost::close_own} and {@link PetWindowHost::set_click_through} resolve their caller
  *   through {@link PetWindowHost::authorized}, which looks the label up in `instances` — where the

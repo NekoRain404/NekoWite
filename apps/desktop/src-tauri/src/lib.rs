@@ -387,8 +387,9 @@ pub fn run() {
             //
             // Which of them a given window may actually call is not decided here and not by
             // this list. Registering a command is what makes it callable at all; the
-            // capability files are what hand it out, and the pet window holds eight — the
-            // three added to this list with the task feed, the five it already had, and no more.
+            // capability files are what hand it out, and the pet window holds nine — the
+            // three added to this list with the task feed, the five it already had, and the
+            // read of the app's own appearance, which is granted to no other window.
             //
             // `desktop_pet_update_settings` is the pet's switch: writing `general.characterWindow`
             // or `general.ball` is what opens and closes a window, and the same write carries the

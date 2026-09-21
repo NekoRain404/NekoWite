@@ -42,9 +42,12 @@ use super::window_host::{
 /// `FLOATING_BALL_LABEL`, `:310`), so there is nothing for a generation to distinguish it from.
 ///
 /// It carries the pet's label prefix on purpose. `capabilities/desktop-pet.json` selects its windows
-/// by the glob `pet-*`, and a label outside it would be a window with no capability at all — and
-/// `capabilities/desktop-pet-ball.json` narrows what this one window may do beyond that, which is
-/// the same glob rule read the other way.
+/// by the glob `pet-*`, and a label outside it would be a window with no capability at all.
+/// `capabilities/desktop-pet-ball.json` names this one window and grants it
+/// `core:window:allow-start-dragging` — a permission `desktop-pet.json` already grants the ball, so
+/// the second file is a *subset* of what the ball holds rather than a narrowing of it: Tauri unions
+/// every capability whose window glob matches, and a second file can only add. It is kept because
+/// the union is then stated per surface, and `command_surface_test.rs` pins both of its arrays.
 pub const BALL_LABEL: &str = "pet-ball";
 
 /// The ball's page. The second light entry (§9), beside `desktop-pet.html`: the ball is a different

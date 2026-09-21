@@ -267,8 +267,8 @@ pub(super) fn host(
 /// Tell every window what the feature state is now.
 ///
 /// Broadcast rather than addressed to the pet windows, because the address would be the labels —
-/// and a label is the one thing this module does not hand out. The channel is the pet's own, so
-/// the frames cost the main window a listener it never registered. A failed emit is not an error:
+/// which this surface hands out and never accepts. The channel is the pet's own, so the frames
+/// cost the main window a listener it never registered. A failed emit is not an error:
 /// it means no window is listening, which is what the shutdown path looks like, and the state is
 /// readable on request in any case.
 ///

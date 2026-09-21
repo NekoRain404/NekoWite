@@ -20,7 +20,7 @@
 //!
 //! ## Why the counts below are asserted rather than bounded
 //!
-//! `82` and the pet's nine are not round numbers to relax when the surface grows. Each is a
+//! `84` and the pet's nine are not round numbers to relax when the surface grows. Each is a
 //! statement that the *whole* surface was enumerated rather than sampled, and a count that was
 //! quietly lowered to let a change through would take the enumeration with it: a list read short
 //! passes every other assertion here, because the other assertions compare two derivations of the
@@ -139,11 +139,11 @@ fn the_manifest_and_the_handler_list_name_the_same_commands() {
 ///
 /// The IPC tests in the sibling target are the evidence that the policy is consulted; this one is
 /// the evidence that it is the policy somebody meant. It is the same two facts stated from the
-/// other side — the pet's permissions are exactly the eight, and the main window's are every
-/// declared command except the two that belong to a pet window alone — so a permission added to
+/// other side — the pet's permissions are exactly the nine, and the main window's are every
+/// declared command except the three that belong to a pet window alone — so a permission added to
 /// the wrong file fails here even if no test happens to invoke that command.
 ///
-/// The eight are the *app commands*; the pet's windows also hold two `core:event` permissions and
+/// The nine are the *app commands*; the pet's windows also hold two `core:event` permissions and
 /// one `core:window` one, and those three are the only thing in these files that is not this app's
 /// own surface. The window one is asserted below by name, because it is the permission the pet's
 /// drag is made of and it is the one a second `core:window:` line would quietly enlarge.

@@ -10,10 +10,10 @@
 //!
 //! **A capability file reads the same policy from the other side.** `capabilities/desktop-pet.json`
 //! selects a window by the glob `pet-*`, so [`LABEL_PREFIX`] is what hands a pet window the pet's
-//! eight commands and two `core:event` permissions *instead of* `capabilities/default.json`'s
-//! sixty-odd. A label that matched neither would be a window with no IPC at all, and one that
-//! matched `main` would be given the editor's whole surface — which is why the prefix lives here,
-//! beside the only type that may compose a label out of it, rather than at a call site.
+//! nine commands and two `core:event` permissions *instead of* `capabilities/default.json`, which
+//! governs the main window. A label that matched neither would be a window with no IPC at all, and
+//! one that matched `main` would be given the editor's whole surface — which is why the prefix lives
+//! here, beside the only type that may compose a label out of it, rather than at a call site.
 
 use serde::Serialize;
 

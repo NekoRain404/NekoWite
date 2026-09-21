@@ -118,7 +118,13 @@ pub struct EngineEvents {
 }
 
 impl EngineConnection {
-    /// Spawns the engine and completes its side of the ACP handshake.
+    /// Spawns the engine and opens the connection to it: the channels and the reader task are
+    /// wired, the frame reader is bounded, and nothing is sent.
+    ///
+    /// ACP's `initialize` is the session's first request and not this one's — the first
+    /// `open_session`, `load_session` or `list_sessions` negotiates it, once per incarnation
+    /// (`session/handshake.rs`) — so returning from here says the pipes are open, not that the
+    /// engine has been asked anything.
     ///
     /// Must be called from a Tokio runtime: the connection runs as a task, and
     /// it has to outlive this call — the ACP connection is live for as long as
