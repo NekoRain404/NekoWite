@@ -72,14 +72,14 @@ NEKOWITE_REQUIRE_PROCESS_TESTS=1 cargo test --locked --no-fail-fast \
 | 图谱 解析/重建/过滤器 | `services/link-graph.test.ts`、`features/graph/components/GraphPanel.test.ts`、`services/graph-layout-client.test.ts`、`e2e/usage-search-graph.spec.ts` | COVERED |
 | 插件 授权前不执行/超时/审计/CSP | `packages/plugin-host/src/runtime.test.ts`、`lifecycle.test.ts`、`trust.test.ts`、`governance.test.ts`、`services/security-regression.test.ts`、`services/plugins.test.ts`、`e2e/security-csp.spec.ts` | COVERED |
 | 安全 vault 绑定/Key 掩码/KDF/路径 | `src-tauri/tests/vault_auth_test.rs`、`keys_test.rs`、`key_vault_status_test.rs`、`fs_test/path_policy.rs`、`asset_scope_test.rs`、`services/security-regression.test.ts`、`services/paths.test.ts` | COVERED |
-| 持久化/窗口 | `platform/persistence/persistence.test.ts`、`stores/window-state.test.ts`、`app/window-state.test.ts`、`src-tauri/tests/main_window_test.rs` | PARTIAL：版本迁移与几何校验有测试；Rust 侧只断言窗口身份与重建，没有「保存的几何往返」用例 |
+| 持久化/窗口 | `platform/persistence/persistence.test.ts`、`stores/window-state.test.ts`、`app/window-state.test.ts`、`src-tauri/tests/main_window_test.rs`、`src-tauri/tests/desktop_pet_settings_test/geometry.rs` | COVERED：版本迁移、几何 clamp 与校验、主窗口身份与重建、桌宠窗口几何的 Rust 侧（`apply_window_geometry`）都有用例。**没有任何用例能证明 `setSize` / `setPosition` 真的移动了窗口**——那是窗口管理器的行为，下面 §3 单列 |
 | 导出 HTML/PDF | `services/export.test.ts`、`export-renderers.test.ts`、`export-page.test.ts`、`features/notes/composables/use-note-export.test.ts`、`packages/editor-core/src/export/golden.test.ts` | COVERED：HTML 与渲染器有断言（含 golden 逐字节）；PDF 一侧覆盖到打印文档的内容、`@page` 规则与 iframe 生命周期。**打印对话框本身、以及它写出的那个文件，没有任何自动化证据**——那是操作系统的窗口，测试驱动不了；下面 §3 单独列着 |
 | 恢复/无障碍 | `app/recovery-closed-loop.test.ts`、`stores/tab-recovery.test.ts`、`stores/untitled-rescue.test.ts`、`services/announcer.test.ts`、`composables/use-focus-trap.test.ts`、`features/settings/components/SettingsPanel.focus.test.ts` | COVERED |
 
 ## 3. 明确没人守的地方
 
 - **系统打印对话框**：PDF 的最后一跳——用户点「打印」之后系统对话框做了什么、文件落在哪里——没有任何自动化证据，因为那是操作系统的窗口。能测的部分（送进对话框之前的渲染内容、`@page` 纸张规则、iframe 的挂载与清理）现在都有用例，见 §2 的导出行。
-- **窗口几何的 Rust 侧往返**：几何的 clamp 与持久化只在前端测过。
+- **几何操作真的生效**：主窗口的 `win.setSize` / `win.setPosition`（`app/window-state.ts`）与桌宠窗口的 `apply_window_geometry` 都只测到「参数算对了、传下去了」。**「回显」不等于「生效」**：2026-09-22 实测过一件同类的事——在没有窗口管理器的 Xvfb 里，WebDriver 的 `Set Window Rect` 会把你给的数字（800x600、1280x836、1600x1000）原样回显，而内容区始终是 1024x732。窗口管理器是否照做，只有在有 WM 的真实会话里才能回答；这条与 `e2e/webkit/` 的那条前提是同一件事。
 - **`pnpm test:e2e` 是个陷阱**：它直接调 playwright（§1.3）。CI 用它没问题，本地在有 `pnpm tauri dev` 时用它会抢端口。
 
 以上都不是「大概没问题」，而是「没有证据」：写在这里是为了让下一个改动它的人知道自己在无人区。（曾经还有两条——撤销粒度、以及 `use-note-export.ts` 完全没有测试——已在后续两轮补上，见 §2 的对应行。）

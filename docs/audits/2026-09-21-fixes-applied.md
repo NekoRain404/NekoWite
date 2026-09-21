@@ -1636,6 +1636,18 @@ flat/recommended config reports every unused parameter when there is no later us
 `_source, _vault, _savePath, _opts` is not. The signature is what keeps the call sites checked; the empty
 implementation keeps the lint quiet.
 
+**The plan's last gap row was imprecise, and checking it produced the round's own correction.** It read
+「窗口几何的 Rust 侧往返：几何的 clamp 与持久化只在前端测过」, which implies a backend path without a
+backend test. There is no such path: the main window's geometry is restored by the frontend calling
+Tauri's own `win.setSize`/`win.setPosition` (`app/window-state.ts:153-154`), and the geometry logic this
+repository owns is the clamp and validation, which is frontend code with frontend tests. The *pet* window
+is the one with a Rust geometry path — `apply_window_geometry`
+(`commands/desktop_pet_surface.rs:227`) — and it has had Rust tests since it was written
+(`tests/desktop_pet_settings_test/geometry.rs:330`, `:348`). So the row now says what is true: geometry is
+covered on both sides, and the thing nothing covers is whether the window manager *honours* it — which is
+the same class of claim as the harness finding above, and is now stated with the 1024x732 measurement
+behind it.
+
 ### The real-engine attempt, and what it measured about its own instrument
 
 The round also tried to take a reading on the engine that ships — `node e2e/webkit/measure.mjs --only
