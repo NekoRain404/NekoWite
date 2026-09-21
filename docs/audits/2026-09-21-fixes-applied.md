@@ -1828,6 +1828,16 @@ included `interface`/`type` declarations; the real figure, recounted for the com
 runtime values. Both are the same failure mode this programme keeps meeting from the other side: a reading
 taken once and trusted, when the point was to check it.
 
+**The live AI reading, re-measured this round** (`bash scripts/verify-ai-live.sh`, key written to
+`/tmp/nkw-test-key` at 0600 and removed in the same command; never in `argv`, never in a file, never
+printed): **3 passed, 0 failed**, exit 0, 9.8 s. The gateway still lists the same five models
+(`deepseek-v4-flash`, `deepseek-v4.1-flash`, `glm-5.2`, `mimo-v2.5`, `mimo-v2.5-pro`), the paid turn
+streamed through the app's own transport (HTTP 200, `text/event-stream`, terminal `[DONE]` after 2 chunks
+this time against 4 last time — the chunk count is the gateway's business and the app's parser is what the
+test asserts), and the reasoning turn billed **89 prompt + 16 completion, 13 of them
+`reasoning_tokens`** — down from §16's 30/27 and inside the moving band the script's own header documents,
+with the prompt side stable at 89 across every run so far.
+
 ### The gate
 
 | Step | Result |
