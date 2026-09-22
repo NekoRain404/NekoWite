@@ -29,13 +29,12 @@ import { closeWindow, pressKeyAt, screenshotWindow, windowGeometry, windowProper
 const PRINT_DIALOG_TIMEOUT_MS = 45_000
 
 /**
- * How long the toast stack is watched for the export's own notice.
- *
- * The notice is written ten seconds after the export starts (`PRINT_OUTCOME_DEADLINE_MS` in
- * `services/export.ts`), so this has to outlast that with room for the toast to render — and it must not
- * outlast the toast itself, which is dismissed in seconds.
+ * How long the export is watched for **either** outcome: the dialog, or the app's own notice that there
+ * will not be one. The notice is written ten seconds after the export starts (`PRINT_OUTCOME_DEADLINE_MS`
+ * in `services/export.ts`) and the toast is dismissed in seconds, so the window has to be wide enough for
+ * both clocks — a dialog can take most of the timeout below to be built on a machine with a slow CUPS.
  */
-const PRINT_NOTICE_TIMEOUT_MS = 20_000
+const PRINT_OUTCOME_TIMEOUT_MS = 60_000
 
 const ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf'
 
@@ -229,31 +228,41 @@ export async function measurePrintDialog({ run, script, findElement, readings, s
       { timeout: PRINT_DIALOG_TIMEOUT_MS, what },
     ).catch(() => null)
 
-  readings.dialogWindow = await waitForDialog('a dialog-sized window for the export\'s print dialog')
   /**
-   * The app's own words, when it has any. `exportToPdf` reports `no-print-started` after ten seconds
-   * without a `beforeprint`, and both callers put that in the toast stack (`AppToast.vue`, `.toast` with
-   * `role="alert"`) — so this is where the fix for the silent no-op becomes visible from outside.
-   *
-   * Read **before** the dialog wait below, because a toast is gone in seconds while a dialog waits for the
-   * user; on a machine where printing works this costs one timeout and finds nothing, which is the correct
-   * reading there.
+   * Either the system printed or the app said why it could not — and **one poll for both**, because the
+   * two arrive on different clocks: a dialog appears at once where printing works, and the notice is
+   * written ten seconds after the export starts (`PRINT_OUTCOME_DEADLINE_MS` in `services/export.ts`).
+   * Reading them in sequence hides one behind the other, which is exactly what the first version of this
+   * did: it waited the dialog's full 45 seconds and then looked for a toast that had already been
+   * dismissed.
    */
-  readings.exportNotice = await until(
+  const described = new Map()
+  /** Each window is described once: `xprop` and a screenshot per poll iteration is work for no new reading. */
+  const describeOnce = (w) => {
+    if (!described.has(w.id)) described.set(w.id, describe(w))
+    return described.get(w.id)
+  }
+  const toastText = () =>
+    run(
+      'POST',
+      '/execute/sync',
+      script('return Array.from(document.querySelectorAll(".toast")).map((t) => t.textContent.trim()).join(" | ")'),
+    ).catch(() => null)
+  const firstOutcome = await until(
     async () => {
-      const text = await run(
-        'POST',
-        '/execute/sync',
-        script('return Array.from(document.querySelectorAll(".toast")).map((t) => t.textContent.trim()).join(" | ")'),
-      )
-      return text && text.length > 0 ? text : null
+      const notice = await toastText()
+      if (typeof notice === 'string' && notice.length > 0) return { notice }
+      const dialog = newWindows().map(describeOnce).find(dialogShaped)
+      return dialog ? { dialog } : null
     },
-    { timeout: PRINT_NOTICE_TIMEOUT_MS, what: 'the export notice, if the app has something to say' },
+    { timeout: PRINT_OUTCOME_TIMEOUT_MS, what: "a print dialog or the export's own notice" },
   ).catch(() => null)
+  readings.exportNotice = firstOutcome?.notice ?? null
+  readings.dialogWindow = firstOutcome?.dialog ?? null
   readings.printFrame = await run('POST', '/execute/sync', script(PRINT_FRAME_SCRIPT)).catch(
     (e) => `unreadable: ${String(e?.message ?? e).slice(0, 160)}`,
   )
-  readings.printWindows = newWindows().map(describe)
+  readings.printWindows = newWindows().map(describeOnce)
 
   if (readings.dialogWindow === null) {
     // No dialog from the app's own export. The same call is then made **in the app's own frame** and, if

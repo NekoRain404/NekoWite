@@ -567,7 +567,10 @@ async function main() {
     const closed = [readings.framesAfterWindowclose, readings.framesAfterEscape].some(
       (n) => typeof n === 'number' && n >= 0,
     )
-    if (!closed) {
+    // The cleanup is judged only when a dialog actually appeared. With no dialog there is nothing to
+    // dismiss and nothing to expect: the frame is designed to stay until the exporters' five-minute
+    // backstop, so calling that a failure would be blaming the app for a print that never began.
+    if (printedDialog != null && !closed) {
       // The cleanup is judged only when a close actually happened. A probe that could not dismiss the
       // dialog has not measured the app's `afterprint` path, and reporting that as a defect would blame
       // the app for the probe's own limitation — so the two cases are kept apart.
