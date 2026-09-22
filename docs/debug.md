@@ -39,6 +39,18 @@
     同一份文件里记着几个坑：tauri-driver 自己会拉起原生驱动（别再拉一个，会抢端口）、session 默认挂在三个
     窗口里的某一个（这份构建挂在桌宠球上，必须先切主窗口）、每次执行脚本都要带 `args`、笔记要等索引建立完
     才出现（必须轮询）、`.ProseMirror img` 里还有 ProseMirror 自己的 separator（要排除，否则会误报图片没加载）。
+    加 `--print` 后它还会走「导出 PDF」：右键菜单 → 打印帧里是不是渲染好的整篇文档（`@page` 规则、
+    `asset://` 图片是否解析）→ **X 树里有没有真正的打印对话框**（`xwininfo` + `xprop`，尺寸与窗口类型都要过，
+    否则右键留下的 tooltip 会被当成对话框——第一版就错在这里）→ 关掉后打印帧有没有被移除。2026-09-22 的读数：
+    文档内容与图片都对，**对话框始终不出现**，`beforeprint` 也不触发，帧留到五分钟兜底才被清掉。
+    两个环境前提写在这个探针里：本机是 Wayland 会话，GTK 窗口在 `xwininfo` 里根本看不见，所以探针强制
+    `GDK_BACKEND=x11`；以及这个驱动上**带 element 原点的指针动作会挂住**，指针只能按 viewport 坐标给。
+    同一个问题在 WebKitGTK 自带浏览器里的对照是 `node apps/desktop/e2e/webkit/probe-print-dialog.mjs`
+    （对照项是探针自己起的 `xmessage` 窗口：它必须被看见，否则整轮判为无法归因）；2026-09-22 在裸 Xvfb 与
+    `kwin_x11` 下各跑一次，读数相同——`window.print()` 在两种嵌入方式里都不开始打印。应用侧因此改为
+    10 秒内没有 `beforeprint` 就明确告诉用户，并给出「导出 HTML → 浏览器打印」的替代路径。
+    CSP 那一侧的同类问题在 `node apps/desktop/e2e/webkit/probe-csp-frame.mjs`：`frame-src 'none'` 会拦下
+    网络帧（`violations=frame-src<-http`），但**不拦**三个功能用的 `srcdoc` 帧，所以导出帧不是被策略清空的。
   - **测试面全景**（哪些测试真的会跑、每个功能域由哪些文件守着、哪里还没有证据）见
     `docs/test-plan.md`。
 

@@ -72,6 +72,17 @@ same blob successfully (`blob=allowed:blob-ran`) — which is what makes this th
 rather than MiniBrowser's. Until that run the sentence above rested on a Chromium test, and
 Chromium is not WebKitGTK.)*
 
+**The same policy's `frame-src 'none'` does not block the app's own frames**, which is worth
+knowing before either blaming it or relaxing it. Three shipped features put a document into an
+`<iframe>` through `srcdoc`: the PDF export's print frame, the long-image exporter
+(`services/export.ts`, `services/export-image.ts`) and the settings dialog's export preview. On
+2026-09-22 `apps/desktop/e2e/webkit/probe-csp-frame.mjs` measured, on WebKitGTK, on the policy
+string read out of `tauri.conf.json` and with a no-policy control for each case: a frame loading a
+network URL is **refused** and the violation names the directive (`violations=frame-src<-http`),
+while the identical `srcdoc` frame loads with **no** violation. Local-scheme frames are not what
+this directive refuses, so the policy is not quietly emptying those documents — and widening
+`frame-src` would not be the fix if one day they were.
+
 ### 3. IPC is bound to the vault the user actually opened
 
 Path-confined Rust commands (`read_file`, `write_file`, `stat_file`, `list_dir`,

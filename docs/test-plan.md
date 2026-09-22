@@ -56,6 +56,9 @@ NEKOWITE_REQUIRE_PROCESS_TESTS=1 cargo test --locked --no-fail-fast \
 | `bash scripts/package-linux.test.sh` | 46 条断言：打包脚本的 6 个场景（缺件 / 陈旧 / 缺 portable / 校验失败 / 发布失败 / 成功），含「只 `exit 0` 的假 rpm 必须被拒绝、真 rpm 必须被选中」与「三个 XDG 目录与 TMPDIR、npm 缓存都必须落在本次运行的临时目录里」 |
 | `pnpm --filter @nekowite/desktop test:webkit-harness` | harness 自己的 5 个 `node:test` 用例：HiDPI 裁剪换算、探针「什么都没量到」的判定规则 |
 | `node apps/desktop/e2e/webkit/drive-app.mjs`（需 `xvfb-run`，需要已构建的应用） | **真实应用**的真机探针（不属于上面的 gate，原因见 §4）：页面是否 Tauri 页、生产 CSP 是否在应用内生效（`eval` 对照 + `blob:` 导入被拒）、知识库是否打开、笔记是否用原生点击打开、图片是否经 `asset://` 渲染、真实按键输入的文字是否被 `Ctrl+S` 写到磁盘 |
+| `node apps/desktop/e2e/webkit/drive-app.mjs --print`（同上，另需 `xwininfo` / `xprop` / `xdotool`） | 上面那条再加一步：右键菜单里的「导出 PDF」。读数：打印帧里确实是渲染后的整篇文档（`@page` 规则、正文、`asset://` 图片已解析）→ **有没有出现真正的 GTK 打印对话框**（`xwininfo` 取 X 树，`xprop` 排除 tooltip/弹出类，尺寸排除 1×1 与 10×10 辅助窗，并存一张截图）→ 关掉对话框后打印帧有没有被移除；没有对话框时，把同一批调用分别在**应用自己的打印帧**与主框架里重做，读 `beforeprint`/`afterprint` |
+| `node apps/desktop/e2e/webkit/probe-print-dialog.mjs`（需 `xvfb-run`） | 同一批调用在 **WebKitGTK 自带浏览器**（MiniBrowser）里的对照：主框架与隐藏 `srcdoc` 帧各自 `window.print()` 后 `beforeprint` 是否触发、有没有对话框窗口。对照项是探针自己启动的 `xmessage` 窗口——它必须被看见，否则整轮判为「无法归因」并以 1 退出 |
+| `node apps/desktop/e2e/webkit/probe-csp-frame.mjs`（需 `xvfb-run`） | 应用自己的 CSP 会不会拦掉它自己的导出帧：`frame-src 'none'` 下网络帧必须被拒并报 `violations=frame-src<-http`，而三个功能用的 `srcdoc` 帧必须照常加载；两者都带无策略对照 |
 
 `pnpm perf` 单列：`vitest run --config vitest.perf.config.ts`，断言 `docs/PERF.md` 的预算。`check:export-css` 单列：`node scripts/check-katex.ts`，读 `dist/assets/*.js`，因此必须在 `pnpm build` 之后跑。
 
@@ -74,12 +77,12 @@ NEKOWITE_REQUIRE_PROCESS_TESTS=1 cargo test --locked --no-fail-fast \
 | 插件 授权前不执行/超时/审计/CSP | `packages/plugin-host/src/runtime.test.ts`、`lifecycle.test.ts`、`trust.test.ts`、`governance.test.ts`、`services/security-regression.test.ts`、`services/plugins.test.ts`、`e2e/security-csp.spec.ts` | COVERED |
 | 安全 vault 绑定/Key 掩码/KDF/路径 | `src-tauri/tests/vault_auth_test.rs`、`keys_test.rs`、`key_vault_status_test.rs`、`fs_test/path_policy.rs`、`asset_scope_test.rs`、`services/security-regression.test.ts`、`services/paths.test.ts` | COVERED |
 | 持久化/窗口 | `platform/persistence/persistence.test.ts`、`stores/window-state.test.ts`、`app/window-state.test.ts`、`src-tauri/tests/main_window_test.rs`、`src-tauri/tests/desktop_pet_settings_test/geometry.rs` | COVERED：版本迁移、几何 clamp 与校验、主窗口身份与重建、桌宠窗口几何的 Rust 侧（`apply_window_geometry`）都有用例。**没有任何用例能证明 `setSize` / `setPosition` 真的移动了窗口**——那是窗口管理器的行为，下面 §3 单列 |
-| 导出 HTML/PDF | `services/export.test.ts`、`export-renderers.test.ts`、`export-page.test.ts`、`features/notes/composables/use-note-export.test.ts`、`packages/editor-core/src/export/golden.test.ts` | COVERED：HTML 与渲染器有断言（含 golden 逐字节）；PDF 一侧覆盖到打印文档的内容、`@page` 规则与 iframe 生命周期。**打印对话框本身、以及它写出的那个文件，没有任何自动化证据**——那是操作系统的窗口，测试驱动不了；下面 §3 单独列着 |
+| 导出 HTML/PDF | `services/export.test.ts`、`export-renderers.test.ts`、`export-page.test.ts`、`features/notes/composables/use-note-export.test.ts`、`use-export-settings.test.ts`、`NoteListPanel.noteMenu.test.ts`、`packages/editor-core/src/export/golden.test.ts` | COVERED：HTML 与渲染器有断言（含 golden 逐字节）；PDF 一侧覆盖到打印文档的内容、`@page` 规则、iframe 生命周期，以及由 `beforeprint`/`afterprint` 决定的返回值（`printed` / `no-print-started`）与两个调用点各自的提示。**打印对话框本身、以及它写出的那个文件**没有任何自动化证据——那是操作系统的窗口，测试驱动不了；但「本机到底弹不弹」已有真机读数，见 §3 |
 | 恢复/无障碍 | `app/recovery-closed-loop.test.ts`、`stores/tab-recovery.test.ts`、`stores/untitled-rescue.test.ts`、`services/announcer.test.ts`、`composables/use-focus-trap.test.ts`、`features/settings/components/SettingsPanel.focus.test.ts` | COVERED |
 
 ## 3. 明确没人守的地方
 
-- **系统打印对话框**：PDF 的最后一跳——用户点「打印」之后系统对话框做了什么、文件落在哪里——没有任何自动化证据，因为那是操作系统的窗口。能测的部分（送进对话框之前的渲染内容、`@page` 纸张规则、iframe 的挂载与清理）现在都有用例，见 §2 的导出行。
+- **系统打印对话框**：PDF 的最后一跳——用户点「打印」之后系统对话框做了什么、文件落在哪里——没有自动化证据，因为那是操作系统的窗口（`xwininfo` 只能证明窗口有没有出现，不能驱动它的按钮）。送进对话框之前的一切现在都有读数：渲染内容、`@page` 纸张规则、`asset://` 图片是否解析、iframe 的挂载与清理（`services/export.test.ts`），以及**本机是否真的弹出对话框**（`drive-app.mjs --print`）。2026-09-22 的读数是否定的：WebKitGTK 2.52.6 上 `window.print()` 被接受、`beforeprint` 不触发、对话框不出现、也不抛异常；同一批调用在 WebKitGTK 自带的浏览器里（`probe-print-dialog.mjs`，带 `xmessage` 对照，也在 `kwin_x11` 下重跑过）同样什么都不发生。所以「导出 PDF 什么也没发生」现在会明确报错，并给出「导出 HTML → 浏览器打印」的替代路径。
 - **几何操作真的生效**：主窗口的 `win.setSize` / `win.setPosition`（`app/window-state.ts`）与桌宠窗口的 `apply_window_geometry` 都只测到「参数算对了、传下去了」。**「回显」不等于「生效」**：2026-09-22 实测过一件同类的事——在没有窗口管理器的 Xvfb 里，WebDriver 的 `Set Window Rect` 会把你给的数字（800x600、1280x836、1600x1000）原样回显，而内容区始终是 1024x732。窗口管理器是否照做，只有在有 WM 的真实会话里才能回答；这条与 `e2e/webkit/` 的那条前提是同一件事。
 - **`pnpm test:e2e` 是个陷阱**：它直接调 playwright（§1.3）。CI 用它没问题，本地在有 `pnpm tauri dev` 时用它会抢端口。
 
