@@ -20,6 +20,19 @@ WORK="$(mktemp -d "$WORK_ROOT/run.XXXXXX")"
 export TMPDIR="$WORK/tmp" XDG_CACHE_HOME="$WORK_ROOT/cache"
 export XDG_DATA_HOME="$WORK_ROOT/data" XDG_STATE_HOME="$WORK_ROOT/state"
 export npm_config_cache="$XDG_CACHE_HOME/npm"
+# `linuxdeploy` — which is what produces the AppImage — ships *as* an AppImage, and an AppImage normally needs
+# FUSE to mount itself. Containers and this machine have no `/dev/fuse`, where the bundler then dies with
+# `failed to run linuxdeploy` / `fuse: device not found`, after the deb and rpm have already been built. The
+# AppImage runtime's own answer is to extract itself and run from the extraction, which is what this asks for;
+# it is set here rather than left to the caller because the bundle step must not depend on the host having FUSE.
+export APPIMAGE_EXTRACT_AND_RUN=1
+# And `linuxdeploy` strips every library it deploys, with a `strip` from its own AppImage that predates
+# `.relr.dyn` (binutils 2.36+): on this distribution it dies with
+#   `ERROR: Strip call failed: …/usr/bin/strip: … unknown type [0x13] section '.relr.dyn'`
+# after the AppDir has been populated. `NO_STRIP=1` is linuxdeploy's own escape hatch; measured cost on this
+# tree: the AppImage came out 168,692,216 bytes against 167,737,848 with stripping — 0.9 MB, and the AppImage
+# is verified by running it later in this script either way.
+export NO_STRIP=1
 mkdir -p "$TMPDIR" "$XDG_CACHE_HOME/tauri" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$WORK/tools" "$WORK/previous"
 echo "Packaging evidence and scratch: $WORK"
 
@@ -45,6 +58,13 @@ npx --yes pnpm --filter @nekowite/desktop typecheck
 npx --yes pnpm --filter @nekowite/desktop lint
 
 echo "[4/7] Build executable and all Linux bundles"
+# The pinned engine, verified by `[1/7]` above. Defined here rather than at the staging step below, because the
+# AppImage recovery needs it: tauri's relinking of this 176 MB sidecar produces a binary the loader cannot run
+# (see the recovery), so the recovery puts this artefact back before it builds the AppImage itself.
+STAGED_ENGINE="$ROOT/apps/desktop/src-tauri/binaries/opencode-x86_64-unknown-linux-gnu"
+[ -s "$STAGED_ENGINE" ] || {
+  echo "FAIL: no verified engine to stage from: $STAGED_ENGINE" >&2; exit 1;
+}
 APPIMAGE_RUNTIME="$XDG_CACHE_HOME/tauri/runtime-x86_64"
 APPIMAGE_RUNTIME_URL="https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64"
 if [ ! -s "$APPIMAGE_RUNTIME" ]; then
@@ -72,6 +92,21 @@ npx --yes pnpm --filter @nekowite/desktop exec tauri build || BUILD_STATUS=$?
 if [ "$BUILD_STATUS" -ne 0 ]; then
   if [ -f "$APPDIR/AppRun" ] && [ -x "$APPDIR/usr/bin/nekowite" ] \
      && [ -s "${BUNDLES[0]}" ] && [ -s "${BUNDLES[1]}" ]; then
+    # **The engine is put back, unpatched, before the recovery runs.**
+    #
+    # Tauri relinks every bundled executable to carry `$ORIGIN/../lib`, and for this 176 MB sidecar its patcher
+    # adds a LOAD segment the loader cannot digest: measured on 2026-09-22, the copy it produced in the AppDir
+    # core-dumped on `--version` and made `ldd` exit 1 without a word — which is what killed linuxdeploy with
+    # `Failed to run ldd`, after the deb and the rpm had already been built. The same file patched by
+    # `patchelf --set-rpath` runs (`1.18.29`) and `ldd`s clean, so the recovery stages the pristine pinned
+    # engine — the artefact `scripts/verify-opencode-linux.sh` has just verified — and relinks it itself.
+    # `cp` is not enough on its own: tauri's segment lives in the file it wrote, so the copy is replaced first.
+    cp -f "$STAGED_ENGINE" "$APPDIR/usr/bin/opencode"
+    patchelf --set-rpath '$ORIGIN/../lib' "$APPDIR/usr/bin/opencode"
+    "$APPDIR/usr/bin/opencode" --version >/dev/null 2>&1 || {
+      echo "FAIL: the engine in the AppDir does not run after relinking" >&2
+      exit 1
+    }
     AI_TMP="$(mktemp -d "$TMPDIR/appimage.XXXXXX")"
     ( cd "$AI_TMP" && ARCH=x86_64 PATH="$XDG_CACHE_HOME/tauri:$PATH" \
       "$XDG_CACHE_HOME/tauri/linuxdeploy-x86_64.AppImage" --appdir "$APPDIR" --output appimage )
@@ -109,10 +144,8 @@ cp -p "$TARGET/nekowite" "$STAGE/$BIN_NAME"
 # vetted before this point and the one `[6/7]` compares the staged copy against. When Tauri
 # *does* leave a copy at `$TARGET/opencode`, the comparison below still runs against it, so a
 # bundler that ever stages something else is caught rather than silently preferred.
-STAGED_ENGINE="$ROOT/apps/desktop/src-tauri/binaries/opencode-x86_64-unknown-linux-gnu"
-[ -s "$STAGED_ENGINE" ] || {
-  echo "FAIL: no verified engine to stage from: $STAGED_ENGINE" >&2; exit 1;
-}
+# `STAGED_ENGINE` is the path defined at the top of `[4/7]`, so the AppImage recovery and this staging step
+# cannot disagree about which artefact they mean.
 cp -p "$TARGET/opencode" "$STAGE/opencode" 2>/dev/null || cp -p "$STAGED_ENGINE" "$STAGE/opencode"
 CANDIDATES=()
 for artifact in "${BUNDLES[@]}"; do

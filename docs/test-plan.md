@@ -53,7 +53,7 @@ NEKOWITE_REQUIRE_PROCESS_TESTS=1 cargo test --locked --no-fail-fast \
 | `python3 scripts/check-dead-exports.py` | 对照失明，或「没有任何调用点」的导出数超过文件里的 `CEILING`（现为 85） |
 | `python3 scripts/check-channels.py` | Rust 发出的事件在前端没有名字，或前端 `listen` 的事件没有发出点 |
 | `bash scripts/boot-probe.test.sh` | 45 条断言：启动探针的崩溃 / 早退 / 存活三条路径、取消语义、HOME 与六个 XDG/TMPDIR 的隔离（`xvfb-run`、`dbus-run-session`、`pkill` 都是 mock） |
-| `bash scripts/package-linux.test.sh` | 46 条断言：打包脚本的 6 个场景（缺件 / 陈旧 / 缺 portable / 校验失败 / 发布失败 / 成功），含「只 `exit 0` 的假 rpm 必须被拒绝、真 rpm 必须被选中」与「三个 XDG 目录与 TMPDIR、npm 缓存都必须落在本次运行的临时目录里」 |
+| `bash scripts/package-linux.test.sh` | 47 条断言：打包脚本的 6 个场景（缺件 / 陈旧 / 缺 portable / 校验失败 / 发布失败 / 成功），含「只 `exit 0` 的假 rpm 必须被拒绝、真 rpm 必须被选中」、「三个 XDG 目录与 TMPDIR、npm 缓存都必须落在本次运行的临时目录里」，以及「AppImage 打包不得依赖 FUSE」（脚本必须自己导出 `APPIMAGE_EXTRACT_AND_RUN`） |
 | `pnpm --filter @nekowite/desktop test:webkit-harness` | harness 自己的 5 个 `node:test` 用例：HiDPI 裁剪换算、探针「什么都没量到」的判定规则 |
 | `node apps/desktop/e2e/webkit/drive-app.mjs`（需 `xvfb-run`，需要已构建的应用） | **真实应用**的真机探针（不属于上面的 gate，原因见 §4）：页面是否 Tauri 页、生产 CSP 是否在应用内生效（`eval` 对照 + `blob:` 导入被拒）、知识库是否打开、笔记是否用原生点击打开、图片是否经 `asset://` 渲染、真实按键输入的文字是否被 `Ctrl+S` 写到磁盘 |
 | `node apps/desktop/e2e/webkit/drive-app.mjs --trash`（需 `xvfb-run`，需要已构建的应用） | **删一篇笔记再从回收站恢复**，断言的是文件系统而不是面板：原生右键 → 菜单里的删除 → 应用自己的行内确认 → 笔记必须真的离开知识库、`.nekowite-trash/` 必须多出这一条 → 侧栏「回收站」组里点「恢复」→ 文件必须回到原路径、文本与删除前逐字相同、回收站条目数必须回落。删除与恢复是用户无法手动撤销的两个动作，这条读数是它们的真机证据 |

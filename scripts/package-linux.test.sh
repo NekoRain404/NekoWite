@@ -71,6 +71,9 @@ put('bundle/appimage/${names[4]}',${JSON.stringify(extractor)});
       // step [2/7] with `[ERROR] unable to open database file` on a machine whose
       // `$HOME` is not writable — which is the case this assertion now pins.
       for (const key of ['TMPDIR', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'npm_config_cache']) check(`success: local ${key}`, () => assert.ok(env.env[key]?.startsWith(root + '/')))
+      // The AppImage step runs `linuxdeploy`, itself an AppImage, and this machine has no `/dev/fuse`: without
+      // the flag the bundler dies after building the deb and the rpm, which is what happened on 2026-09-22.
+      check('success: AppImage bundling does not need FUSE', () => assert.equal(env.env.APPIMAGE_EXTRACT_AND_RUN, '1'))
       check('success: real rpm selected', () => assert.match(env.rpm, /^RPM version /))
       check('success: original HOME preserved', () => assert.equal(env.env.HOME, process.env.HOME))
       check('success: prior release backed up', () => assert.ok(fs.readdirSync(path.join(root, 'release/superseded')).some(dir => fs.existsSync(path.join(root, 'release/superseded', dir, names[0])))))

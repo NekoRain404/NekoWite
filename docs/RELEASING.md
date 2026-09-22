@@ -68,6 +68,14 @@ pnpm package:linux        # 即 bash scripts/package-linux.sh
 1. `[1/7]` 校验待打入的引擎：`bash scripts/verify-opencode-linux.sh`。
 2. `[2/7]`–`[3/7]` desktop 的测试与 typecheck / lint。
 3. `[4/7]` `tauri build` 一次产出 deb、rpm、AppImage；AppImage 用缓存的 type2 runtime。
+   **这一步在容器和这台机器上会遇到三个环境坑，脚本自己吸收**（2026-09-22 实测，三者互相独立）：
+   `linuxdeploy` 自己就是一个 AppImage，没有 `/dev/fuse` 时它会死；它自带的 `strip` 早于 `.relr.dyn`
+   （binutils 2.36+），在本发行版上 strip 系统库时报 `unknown type [0x13] section '.relr.dyn'`；而
+   tauri 给随包引擎重链 `$ORIGIN/../lib` 时会给这个 176 MB 的 sidecar 加一个加载器无法消化的 LOAD
+   段，产物 `--version` 直接 core dump、`ldd` 无声退出 1，linuxdeploy 于是报 `Failed to run ldd`。
+   脚本的做法：`APPIMAGE_EXTRACT_AND_RUN=1`（自解压运行）、`NO_STRIP=1`（AppImage 因此大 0.9 MB）、
+   以及恢复分支里用 `patchelf --set-rpath` 给**未打过补丁的** pinned 引擎重新链接后端到端重建 AppImage
+   （重建前先运行一次 `--version` 确认能跑）。deb 与 rpm 不受第三个坑影响。
 4. `[5/7]` 把**本次构建的**产物暂存到 `release/.candidate.XXXXXX/`：便携二进制
    `nekowite_<version>_x64`、引擎 `opencode`、以及三个包。
 5. `[6/7]` 校验引擎：暂存的 `opencode` 必须与
