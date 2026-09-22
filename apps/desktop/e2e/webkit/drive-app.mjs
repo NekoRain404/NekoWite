@@ -49,9 +49,8 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createServer } from 'node:http'
 import { measurePrintDialog } from './drive-print.mjs'
-import { sleep, until } from './webdriver.mjs'
+import { freeDualPort, sleep, until } from './webdriver.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = path.resolve(HERE, '../../../..')
@@ -113,28 +112,6 @@ const VAULT_DIR = path.join(REPO, 'apps/desktop/src-tauri/target/drive-app-vault
 const PRINT = process.argv.includes('--print')
 /** Where the dialog's own picture is written: the git-ignored target tree, beside the other probe output. */
 const PRINT_SHOT_DIR = path.join(REPO, 'apps/desktop/src-tauri/target/drive-app-print')
-
-/**
- * A port free on **both** loopback families, which is what the driver needs.
- *
- * `freePort()` in `webdriver.mjs` probes `127.0.0.1` only, and WebKitWebDriver binds `local` — a name
- * that reaches `::1` as well. On a machine with a leaked IPv6 listener whose owning process is already
- * gone (this sandbox has some: `ss -ltnpe` lists the port, `ps` lists nobody), the IPv4 probe calls the
- * port free and the driver's own bind then fails with "Unable to listen for HTTP server at host local
- * and port N". Binding `::` with `ipv6Only: false` asks the kernel the same question the driver will.
- */
-function freeDualPort() {
-  return new Promise((resolve) => {
-    const probe = createServer()
-    probe.unref()
-    probe.on('error', () => resolve(null))
-    probe.listen({ port: 0, host: '::', ipv6Only: false }, () => {
-      const address = probe.address()
-      const port = typeof address === 'object' && address ? address.port : null
-      probe.close(() => resolve(port))
-    })
-  })
-}
 
 /** A vault with one note, and the two records that let the app open it without a dialog. */
 function seedVault() {

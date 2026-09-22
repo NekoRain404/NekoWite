@@ -32,6 +32,28 @@ export function freePort() {
   })
 }
 
+/**
+ * Ask the OS for a port free on **both** loopback families, which is what `tauri-driver` needs.
+ *
+ * {@link freePort} probes `127.0.0.1` only, and WebKitWebDriver binds `local` — a name that reaches
+ * `::1` as well. On a machine with a leaked IPv6 listener whose owning process is already gone (this
+ * one has some: `ss -ltnpe` lists the port, `ps` lists nobody), the IPv4 probe calls the port free and
+ * the driver's own bind then fails with "Unable to listen for HTTP server at host local and port N".
+ * Binding `::` with `ipv6Only: false` asks the kernel the same question the driver will.
+ */
+export function freeDualPort() {
+  return new Promise((resolve) => {
+    const probe = createServer()
+    probe.unref()
+    probe.on('error', () => resolve(null))
+    probe.listen({ port: 0, host: '::', ipv6Only: false }, () => {
+      const address = probe.address()
+      const port = typeof address === 'object' && address ? address.port : null
+      probe.close(() => resolve(port))
+    })
+  })
+}
+
 export class WebDriver {
   constructor(port) {
     this.base = `http://127.0.0.1:${port}`
