@@ -93,7 +93,12 @@ const STALE_AGE_MS = 2 * 60 * 60 * 1000
 const RENDERER_VAULT = path.join(TARGET, 'probe-egress-vault')
 const RENDERER_NOTE = 'egress-probe-note.md'
 const RENDERER_TITLE = 'egress-probe-note'
-const REMOTE_IMAGE = 'https://remote-image.invalid/x.png'
+// A host that resolves, not a `.invalid` one: if a future change relaxed `img-src` far enough
+// for the image to load, the probe has to see the request it caused, and an unresolvable name
+// would fail identically either way.
+const REMOTE_IMAGE = 'https://pets.thenightwatcher.online/probe-remote-image.png'
+/** What MathLive's own markup contains, and the LaTeX fallback never does. */
+const MATH_RENDERED = 'ML__latex'
 const RENDERER_ASSET =
   '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="40"><rect width="64" height="40" fill="#22c55e"/></svg>\n'
 const RENDERER_CONTENT = `# ${RENDERER_TITLE}
@@ -155,11 +160,11 @@ const IDLE_MS = 10_000
 /**
  * When the math node is sampled, in milliseconds after the editor appeared.
  *
- * `math/atoms.ts`'s `renderLatexMarkup` renders real math only when MathLive has loaded; until then it
- * falls back to the escaped LaTeX, and `views.ts` renders once — on create — with no re-render when the
- * library arrives. Whether that shows is a question about timing, so it is measured as one: the first
- * sample is taken while the page is still settling and the last one long after any import should have
- * finished.
+ * `math/atoms.ts`'s `renderLatexMarkup` renders real math only when MathLive has loaded, and until then it
+ * falls back to the escaped LaTeX. How long that lasts is a question about timing, so it is measured as
+ * one: the first sample is taken while the page is still settling and the last one long after any import
+ * should have finished. This is what caught the node view rendering once, before the library arrived, and
+ * never again — the fix is in `views.ts`, and the assertion below is what keeps it fixed.
  */
 const MATH_SAMPLE_AT_MS = [4_000, 12_000, 24_000]
 
@@ -313,6 +318,12 @@ async function main() {
     )
 
     // Phase 1: the idle window. Nothing has been asked of the app yet, and nothing may leave.
+    // Everything sent while the app was starting and while this session was being attached. The idle
+    // window below opens *after* that, so without this bucket a boot-time request would be judged by
+    // nothing — and "nothing left the app" would silently mean "nothing left it during the windows the
+    // probe happened to create".
+    readings.phases.boot = { hits: proxy.hits.map((hit) => hit.line) }
+
     await phase('idle', async () => {
       await sleep(IDLE_MS)
       return { waitedMs: IDLE_MS }
@@ -413,11 +424,18 @@ async function main() {
         { timeout: 20_000, what: 'the note row in the tree' },
       ).catch(() => null)
       if (row) await run('POST', `/element/${row}/click`, {})
+      // The note's own text, not the presence of an editor: the app renders an empty `.ProseMirror` before
+      // the document lands, so the weaker wait let the sampling below start on a note that was not there —
+      // three samples of `mathNodes: 0` and a first reading that looked like the math bug it was measuring.
+      // The assertion downstream is what caught it, which is why a recorded reading nothing reads is worth
+      // less than one that can fail.
       await until(
         async () =>
-          (await run('POST', '/execute/sync', script('return document.querySelector(".ProseMirror") ? true : null')).catch(
-            () => null,
-          ))
+          (await run('POST', '/execute/sync', {
+            script:
+              'const p = document.querySelector(".ProseMirror"); return p && p.innerText.includes(arguments[0]) ? true : null',
+            args: ['Inline math'],
+          }).catch(() => null))
             ? true
             : null,
         { timeout: 20_000, what: 'the note to open in the editor' },
@@ -473,6 +491,29 @@ async function main() {
     readings.rendererFigures = await run('POST', '/execute/sync', script(RENDERER_FIGURES_SCRIPT)).catch(
       (e) => `unreadable: ${String(e?.message ?? e).slice(0, 160)}`,
     )
+
+    /**
+     * The control this instrument was missing: a request **from the webview**, not from the Rust side.
+     *
+     * Every other arm proves the proxy sees `reqwest`'s traffic; none proved it sees WebKit's, and the
+     * renderer phase's claim is about an `<img>` the webview would fetch. A top-level navigation is the one
+     * request the page can make that no directive in `tauri.conf.json` restricts, so it is the honest
+     * control: if this line never reaches the proxy, "the renderer sent nothing" cannot be attributed to
+     * the webview's stack, and the probe says which half it measured instead of quoting it as both.
+     */
+    await phase('webviewControl', async () => {
+      await run('POST', '/execute/sync', {
+        script: `window.location.href = arguments[0]; return 'navigating'`,
+        args: ['http://egress-control.invalid/'],
+      }).catch(() => undefined)
+      await sleep(4_000)
+      return { url: 'http://egress-control.invalid/' }
+    })
+    // A last window before teardown, for anything deferred to the end of the phase above.
+    await phase('settle', async () => {
+      await sleep(3_000)
+      return { waitedMs: 3_000 }
+    })
   } finally {
     if (session.id) await run('DELETE', '').catch(() => undefined)
     try {
@@ -488,13 +529,33 @@ async function main() {
   console.log(JSON.stringify(readings, null, 2))
 
   const lines = (name) => (readings.phases[name]?.hits ?? []).join(' | ')
-  const hostsIn = (name) =>
-    (readings.phases[name]?.hits ?? [])
-      .map((line) => line.replace(/^CONNECT\s+/, '').split(':')[0])
-      .filter((host) => host.length > 0)
+  /**
+   * The host a proxy line names, or null when it names none.
+   *
+   * Only well-formed lines count, which is the whole reason this is a function: `hostsIn` used to strip a
+   * leading `CONNECT ` and split on `:`, so a plain-HTTP `GET http://host/…` became the host `GET http`
+   * and the probe's own `clientError …` record became one too — an instrument that reported its own
+   * bookkeeping as egress, and blamed the renderer for it.
+   */
+  const hostOf = (line) => {
+    if (line.startsWith('CONNECT ')) return line.slice('CONNECT '.length).split(':')[0] || null
+    if (line.startsWith('GET ')) {
+      try {
+        return new URL(line.slice('GET '.length)).hostname || null
+      } catch {
+        return null
+      }
+    }
+    return null
+  }
+  /** The hosts a phase contacted. Diagnostics (`clientError …`) are recorded but never read as hosts. */
+  const hostsIn = (name) => (readings.phases[name]?.hits ?? []).map(hostOf).filter((host) => host !== null)
+  const diagnosticsIn = (name) => (readings.phases[name]?.hits ?? []).filter((line) => hostOf(line) === null)
   const answerIn = (name) => JSON.stringify(readings.phases[name]?.answer ?? null)
   const problems = []
   const notes = []
+  const PHASES = ['boot', 'idle', 'registryFreshCache', 'registryStaleCache', 'petCatalogue', 'renderer', 'webviewControl', 'settle']
+  readings.proxyDiagnostics = PHASES.flatMap((name) => diagnosticsIn(name))
 
   if (readings.tauri !== true) problems.push('window.__TAURI_INTERNALS__ is absent: this is not a Tauri page')
   if (hostsIn('idle').length > 0) {
@@ -543,13 +604,53 @@ async function main() {
       }
     }
   }
-  const documented = new Set([PET.host, REGISTRY.host])
-  const phases = ['idle', 'registryFreshCache', 'registryStaleCache', 'petCatalogue', 'renderer']
-  const unlisted = [...new Set(phases.flatMap((name) => hostsIn(name)))].filter(
+  // `egress-control.invalid` is the probe's own navigation, sent on purpose to prove the webview honours
+  // the proxy variables — the app never names it, and it is excluded here rather than reported as egress.
+  const documented = new Set([PET.host, REGISTRY.host, 'egress-control.invalid'])
+  const unlisted = [...new Set(PHASES.flatMap((name) => hostsIn(name)))].filter(
     (host) => !documented.has(host),
   )
   if (unlisted.length > 0) {
     problems.push(`host(s) docs/PRIVACY.md does not list were contacted: ${unlisted.join(', ')}`)
+  }
+  // The formula, asserted rather than printed: the samples are what caught the node view rendering its
+  // fallback for ever, and a reading nothing reads cannot catch it a second time.
+  const samples = Array.isArray(readings.mathSamples) ? readings.mathSamples : []
+  if (samples.length === 0) {
+    notes.push('the math node was never sampled')
+  } else {
+    const late = samples.filter((sample) => (sample.at ?? 0) >= 12_000)
+    const unrendered = late.filter((sample) => !String(sample.markup ?? '').includes(MATH_RENDERED))
+    if (unrendered.length > 0) {
+      problems.push(
+        `the formula is still the LaTeX source text after ${unrendered.map((s) => `${s.at}s`).join(', ')}: ${JSON.stringify(unrendered)}`,
+      )
+    }
+    if (readings.mathAfterReopen && !String(readings.mathAfterReopen.markup ?? '').includes(MATH_RENDERED)) {
+      problems.push(`the formula did not render after leaving the note and returning: ${JSON.stringify(readings.mathAfterReopen)}`)
+    }
+  }
+  const localFigure = Array.isArray(figures?.figures)
+    ? figures.figures.find((figure) => String(figure.src).startsWith('asset://')) ?? null
+    : null
+  if (localFigure === null) {
+    problems.push('the note rendered no local image with an asset:// src, so the targeted half of the refusal is unmeasured')
+  } else if (localFigure.failed === 'true' || localFigure.loaded !== true) {
+    problems.push(`the local image beside the refused one did not load: ${JSON.stringify(localFigure)}`)
+  }
+
+  /**
+   * Whether the control landed. Kept as a recorded limitation rather than a failure: the Rust-side phases
+   * are measured either way, and calling the whole probe red because WebKitGTK ignores a proxy variable
+   * would hide readings that are sound.
+   */
+  if (hostsIn('webviewControl').includes('egress-control.invalid')) {
+    readings.webviewProxyControl = 'established — a navigation from the page reached the proxy'
+  } else {
+    readings.webviewProxyControl = 'NOT established — no request from the webview reached the proxy'
+    notes.push(
+      'a top-level navigation from the page never reached the proxy, so the renderer phase measured the request paths the probe can see, not every path WebKit could take',
+    )
   }
 
   if (problems.length > 0) {
@@ -567,12 +668,12 @@ async function main() {
     return
   }
   const math = readings.rendererFigures?.math
-  const mathFields = readings.rendererFigures?.mathFields
   console.log('PASS: the app sat idle at its welcome screen with nothing leaving it; a fresh registry cache')
   console.log(`      answered with no request at all; a stale one contacted exactly ${REGISTRY.host}; the pet`)
   console.log(`      catalogue — uncached by design — contacted exactly ${PET.host}; and rendering a note that`)
   console.log(`      names ${REMOTE_IMAGE} sent nothing anywhere, with the image marked failed and offered`)
-  console.log(`      "open in browser" instead of a retry that could never work (${math} math node(s), ${mathFields} mounted editor(s)).`)
+  console.log(`      "open in browser" instead of a retry that could never work (${math} math node(s), rendered).`)
+  console.log(`      Webview control: ${readings.webviewProxyControl}.`)
 }
 
 await main()

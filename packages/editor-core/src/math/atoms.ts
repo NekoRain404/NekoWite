@@ -15,6 +15,17 @@ type MathLiveModule = typeof MathLiveNS
 let mathlivePromise: Promise<MathLiveModule | null> | null = null
 let mathliveModule: MathLiveModule | null = null
 
+/**
+ * Everything waiting to be told that MathLive is here.
+ *
+ * A listener list rather than one promise each, because the loader **retries**: a failed import clears
+ * `mathlivePromise` (`catch` below) so the next caller starts a fresh attempt, while a promise the caller
+ * already holds can never resolve to that later success. A node view that bound itself to the failed
+ * attempt would keep showing the LaTeX source text after a retry had quietly succeeded — the very symptom
+ * the notification exists to end.
+ */
+const readyListeners = new Set<() => void>()
+
 function loadMathLive(): Promise<MathLiveModule | null> {
   if (!mathlivePromise) {
     mathlivePromise = import('mathlive')
@@ -29,6 +40,10 @@ function loadMathLive(): Promise<MathLiveModule | null> {
           /* no-op */
         }
         mathliveModule = mod
+        // The listeners are told *here*, not by the promise: this runs once per successful attempt,
+        // including a retry after a failure, and it runs before anyone can be handed a stale handle.
+        for (const listener of [...readyListeners]) listener()
+        readyListeners.clear()
         return mod
       })
       .catch(() => {
@@ -42,6 +57,24 @@ function loadMathLive(): Promise<MathLiveModule | null> {
 
 export function warmMathLive(): Promise<void> {
   return loadMathLive().then(() => undefined)
+}
+
+/** Whether a render happening *now* can use MathLive. See {@link whenMathLiveReady} for the other half. */
+export function mathLiveReady(): boolean {
+  const live = getMathLive()
+  return typeof live?.convertLatexToMarkup === 'function'
+}
+
+/**
+ * Call `listener` when MathLive arrives, and answer the way to stop waiting.
+ *
+ * It fires for a **later** arrival only: a caller that can render right now asks {@link mathLiveReady}
+ * first, so a node view opened after the library is loaded renders once instead of twice. The unsubscribe
+ * matters because these listeners outlive views — a note can be closed while the import is still running.
+ */
+export function whenMathLiveReady(listener: () => void): () => void {
+  readyListeners.add(listener)
+  return () => readyListeners.delete(listener)
 }
 
 function getMathLive(): MathLiveGlobal | null {
