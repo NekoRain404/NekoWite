@@ -23,6 +23,14 @@
     必须能导入（证明拒绝是 CSP 做的，不是 MiniBrowser 不会导入 blob）。2026-09-22 的读数：内联脚本没跑、
     blob 导入被拒且违规事件指向 `script-src-elem<-blob`、无 CSP 的同一页面导入成功。
     `docs/SECURITY.md` §2 的结论以这次测量为依据，而不是以 Chromium 的端到端用例为依据。
+  - **驱动真实应用本身**（不是 MiniBrowser）：`node apps/desktop/e2e/webkit/drive-app.mjs`（放在
+    `xvfb-run` 下）用 `tauri-driver` 把**构建出来的应用**交给 WebDriver，读它自己的页面。它会用仓库
+    内临时目录里的 `last-vault` 记录 + `nekowite.vault` 键打开一个临时知识库（`open_file.rs` 的规则里，
+    后端记住的根是被认可的），然后读：页面是否 Tauri 页（`__TAURI_INTERNALS__`）、`eval` 是否被拒
+    （对照，证明策略在这个脚本上下文里生效）、`blob:` 模块导入是否被拒、状态栏是否渲染、笔记是否列出。
+    2026-09-22 三连跑全绿。同一份文件里记着四个坑：tauri-driver 自己会拉起原生驱动（别再拉一个，会抢端口）、
+    session 默认挂在三个窗口里的某一个（这份构建挂在桌宠球上，必须先切主窗口）、每次执行脚本都要带
+    `args`、笔记要等索引建立完才出现（必须轮询）。
   - **测试面全景**（哪些测试真的会跑、每个功能域由哪些文件守着、哪里还没有证据）见
     `docs/test-plan.md`。
 
