@@ -91,7 +91,9 @@ const STALE_AGE_MS = 2 * 60 * 60 * 1000
  * 远程图片不会被加载 … 因此渲染笔记不会顺带发起网络请求") and it is the same instrument that can check it.
  */
 const RENDERER_VAULT = path.join(TARGET, 'probe-egress-vault')
-const RENDERER_NOTE = 'egress-probe-note.md'
+// `.mdx`, not `.md`: the editor reads an `.mdx` file with the MDX parser and everything else as plain
+// Markdown (`editor-external-sync.ts`), so a `<Callout>` in a `.md` note is text rather than a component.
+const RENDERER_NOTE = 'egress-probe-note.mdx'
 const RENDERER_TITLE = 'egress-probe-note'
 // A host that resolves, not a `.invalid` one: if a future change relaxed `img-src` far enough
 // for the image to load, the probe has to see the request it caused, and an unresolvable name
@@ -101,13 +103,43 @@ const REMOTE_IMAGE = 'https://pets.thenightwatcher.online/probe-remote-image.png
 const MATH_RENDERED = 'ML__latex'
 const RENDERER_ASSET =
   '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="40"><rect width="64" height="40" fill="#22c55e"/></svg>\n'
+/**
+ * The note the last phase renders: **one of each documented construct**, plus the two images and the
+ * formula whose own readings this phase had already.
+ *
+ * It is a checklist because that is how the formula defect was found: a construct that silently does not
+ * render looks exactly like a construct that does, from the outside. Every entry below has a DOM marker in
+ * `packages/editor-core/src` (`nk-heading-anchor`, `nk-code-block`, `mark.nk-highlight`, `wikilink-chip`,
+ * `footnote-ref`, `mdx-component`, `figure.neko-image`, `math-node`), so "did it render" is a count rather
+ * than an opinion. A citation is included and only *recorded*: its chip resolves against the vault's
+ * reference library, which this scratch vault does not have.
+ */
 const RENDERER_CONTENT = `# ${RENDERER_TITLE}
+
+A paragraph with a [[another-note|wikilink]] and a footnote[^1] and ==highlighted== text.
+
+- [ ] an open task
+- [x] a finished task
+
+| left | right |
+| --- | --- |
+| 1 | 2 |
+
+\`\`\`js
+const answer = 42
+\`\`\`
+
+<Callout type="info">a callout body</Callout>
+
+A citation [@smith2020] follows.
 
 ![remote](${REMOTE_IMAGE})
 
 ![local](probe-asset.svg)
 
 Inline math $x^2 + y^2 = z^2$ follows.
+
+[^1]: the footnote body
 `
 /** A second note, so the math note can be left and re-entered without closing a tab or typing. */
 const PLAIN_NOTE = 'egress-plain-note.md'
@@ -128,6 +160,35 @@ const ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf'
  * whether the src is remote (`isRemoteHttpSrc`): retry is useless for an image the host's policy refuses,
  * so the honest offer is "open in browser". That difference is what this reads.
  */
+/**
+ * One count per documented construct, so "the note renders" is a list of claims rather than an impression.
+ *
+ * `mdxPlaceholders` is the interesting one: the MDX node view draws a built-in component when it can
+ * resolve it and a placeholder when it cannot, and only one of those is the app working.
+ */
+const RENDER_CONSTRUCTS_SCRIPT = `
+const q = (selector) => document.querySelectorAll('.ProseMirror ' + selector).length
+return {
+  headings: q('.nk-heading'),
+  headingAnchors: q('.nk-heading-anchor'),
+  codeBlocks: q('.nk-code-block'),
+  codeCopyButtons: q('.nk-code-copy'),
+  tables: q('table'),
+  // Not input[type=checkbox]: the box is drawn by a pseudo-element and the plugin toggles it from a click
+  // zone inside the item (task/checkbox.ts), so the item itself is the only DOM the renderer produces.
+  taskItems: q('li[data-item-type="task"]'),
+  taskChecked: q('li[data-item-type="task"][data-checked="true"]'),
+  highlights: q('mark.nk-highlight'),
+  wikilinks: q('.wikilink-chip'),
+  footnotes: q('.footnote-ref'),
+  mdxComponents: q('.mdx-component'),
+  mdxPlaceholders: q('.mdx-component-placeholder'),
+  citeChips: q('.cite-chip'),
+  mathNodes: q('.math-node'),
+  images: q('figure.neko-image'),
+}
+`
+
 const RENDERER_FIGURES_SCRIPT = `
 const figures = Array.from(document.querySelectorAll('.ProseMirror figure.neko-image'))
 return {
@@ -456,6 +517,9 @@ async function main() {
         })
       }
       readings.mathSamples = samples
+      readings.renderConstructs = await run('POST', '/execute/sync', script(RENDER_CONSTRUCTS_SCRIPT)).catch(
+        (e) => `unreadable: ${String(e?.message ?? e).slice(0, 160)}`,
+      )
       /**
        * The warm arm: leave the math note and come back to it.
        *
@@ -630,6 +694,41 @@ async function main() {
       problems.push(`the formula did not render after leaving the note and returning: ${JSON.stringify(readings.mathAfterReopen)}`)
     }
   }
+  /**
+   * The checklist: every documented construct this note carries, and the count the app has to reach.
+   *
+   * A construct that silently does not render looks exactly like one that does. This is the reading that
+   * found the formula showing its own source, one construct at a time.
+   */
+  const constructs = readings.renderConstructs
+  if (constructs === null || typeof constructs !== 'object') {
+    notes.push(`the rendered constructs could not be read (${constructs})`)
+  } else {
+    const REQUIRED = [
+      ['headingAnchors', 1, 'the heading rendered no anchor button'],
+      ['codeBlocks', 1, 'the fenced code block did not render as a code block'],
+      ['codeCopyButtons', 1, 'the code block has no copy button'],
+      ['tables', 1, 'the GFM table did not render as a table'],
+      ['taskItems', 2, 'the task list did not render its items'],
+      ['highlights', 1, '==highlight== did not render as a mark'],
+      ['wikilinks', 1, 'the [[wikilink]] did not render as a chip'],
+      ['footnotes', 1, 'the footnote reference did not render'],
+      ['mdxComponents', 1, 'the <Callout> did not render as an MDX component'],
+      ['mathNodes', 1, 'the inline formula did not render as a math node'],
+      ['images', 2, 'one of the two images did not render as an image node'],
+    ]
+    for (const [key, atLeast, message] of REQUIRED) {
+      if (Number(constructs[key] ?? 0) < atLeast) {
+        problems.push(`${message} (${key}=${constructs[key] ?? 'missing'})`)
+      }
+    }
+    if (Number(constructs.mdxPlaceholders ?? 0) > 0) {
+      problems.push(
+        `the <Callout> drew a placeholder instead of the component (mdxPlaceholders=${constructs.mdxPlaceholders})`,
+      )
+    }
+  }
+
   const localFigure = Array.isArray(figures?.figures)
     ? figures.figures.find((figure) => String(figure.src).startsWith('asset://')) ?? null
     : null

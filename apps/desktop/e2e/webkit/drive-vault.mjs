@@ -22,6 +22,11 @@ import path from 'node:path'
  * `XDG_CONFIG_HOME`, so the record lands in the scratch config directory the app is about to read.
  */
 export function seedVault({ dir, files, configHome }) {
+  // Emptied first, and this is not hygiene: a vault left behind by an earlier run keeps its notes, and a
+  // probe that looks a note up **by title** then opens whichever the tree lists — which is how the
+  // construct checklist in `probe-egress.mjs` came back with four of eleven constructs rendered: it had
+  // opened last run's note, whose title was the same.
+  fs.rmSync(dir, { recursive: true, force: true })
   fs.mkdirSync(dir, { recursive: true })
   for (const [name, content] of Object.entries(files)) {
     const file = path.join(dir, name)
