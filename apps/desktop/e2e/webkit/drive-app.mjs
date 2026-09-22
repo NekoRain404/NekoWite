@@ -80,6 +80,14 @@ const ENV = {
 const NOTE = 'probe-note.md'
 /** The note's H1, which is the text the tree shows: a note without frontmatter is titled by its heading. */
 const NOTE_TITLE = 'drive-probe-note'
+/**
+ * What the probe types. ASCII and no spaces, so every character is one key event, and **unique to this
+ * run** so the text found afterwards can only be this run's keystrokes. (`seedVault` rewrites the note
+ * before each run, so a fixed token could not survive in the *file* — but the editor could still be
+ * holding a buffer from an earlier session, and a reading that cannot tell those apart is worth one
+ * `process.pid` to make unambiguous.)
+ */
+const TYPED_TOKEN = `probe-typed-${process.pid}`
 /** The scratch vault's directory name; the shell shows it, so the verdict can too. */
 const VAULT_DIR = path.join(REPO, 'apps/desktop/src-tauri/target/drive-app-vault')
 
@@ -195,6 +203,37 @@ async function main() {
   const session = { id: null, port: driverPort }
   const run = (method, suffix, body) => request(session.port, method, `/session/${session.id}${suffix}`, body)
   const script = (source) => ({ script: source, args: [] })
+  /** One key down/up pair, in the driver's actions format. */
+  const keyPair = (value) => [
+    { type: 'keyDown', value },
+    { type: 'keyUp', value },
+  ]
+
+  /** Type `text` as real key events — never a synthetic KeyboardEvent, which would test a listener. */
+  async function typeText(text) {
+    await run('POST', '/actions', {
+      actions: [{ type: 'key', id: 'keyboard', actions: [...text].flatMap((ch) => keyPair(ch)) }],
+    })
+  }
+
+  /** Ctrl+S. `\uE009` is the WebDriver codepoint for the control key. */
+  async function pressCtrlS() {
+    await run('POST', '/actions', {
+      actions: [
+        {
+          type: 'key',
+          id: 'keyboard',
+          actions: [
+            { type: 'keyDown', value: '\uE009' },
+            { type: 'keyDown', value: 's' },
+            { type: 'keyUp', value: 's' },
+            { type: 'keyUp', value: '\uE009' },
+          ],
+        },
+      ],
+    })
+  }
+
   /** The W3C element key, and the element id behind it. */
   const ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf'
   async function findElement(using, value) {
@@ -364,6 +403,35 @@ async function main() {
         outer: img.outerHTML.slice(0, 120),
       }))`),
     )
+
+    stage('type into the editor')
+    // Real key events, through the driver's actions endpoint: a script that dispatches a synthetic
+    // KeyboardEvent would prove that a listener works, not that the editor accepts input from the
+    // window. The caret goes where a reader would put it — a click on the editor — and the token is
+    // typed one key at a time.
+    const editor = await findElement('css selector', '.ProseMirror')
+    readings.editorFound = editor !== null
+    if (editor) {
+      await run('POST', `/element/${editor}/click`, {})
+      await typeText(TYPED_TOKEN)
+      readings.typed = await until(
+        async () => {
+          const text = await run('POST', '/execute/sync', script('return document.querySelector(".ProseMirror")?.innerText ?? ""'))
+          return String(text).includes(TYPED_TOKEN) ? true : null
+        },
+        { timeout: 10_000, what: 'the typed token to appear in the editor' },
+      ).catch(() => false)
+    }
+
+    stage('save with Ctrl+S, and read the file from disk')
+    // The ground truth is the file, not the UI: the probe reads the note from the filesystem after the
+    // save, so a save that only updated the view would fail here.
+    await pressCtrlS()
+    readings.savedToDisk = await until(
+      async () => (fs.readFileSync(path.join(vault, NOTE), 'utf8').includes(TYPED_TOKEN) ? true : null),
+      { timeout: 15_000, what: 'the token to reach the file on disk' },
+    ).catch(() => false)
+    readings.fileSize = fs.statSync(path.join(vault, NOTE)).size
   } finally {
     if (session.id) await run('DELETE', '').catch(() => undefined)
     for (const child of [driver]) {
@@ -385,6 +453,11 @@ async function main() {
   if (readings.readyState !== 'complete') problems.push(`the page never finished loading (${readings.readyState})`)
   if (readings.tauri !== true) problems.push('window.__TAURI_INTERNALS__ is absent: this is not a Tauri page')
   if (!(readings.railButtons >= 1)) problems.push('the shell did not render: no status bar after the vault was opened')
+  if (readings.editorFound !== true) problems.push('no .ProseMirror element to type into')
+  if (readings.typed !== true) problems.push('the typed token never appeared in the editor')
+  if (readings.savedToDisk !== true) {
+    problems.push(`the typed token never reached ${NOTE} on disk after Ctrl+S`)
+  }
   if (readings.rowFound !== true) problems.push('the note row was not found in the tree')
   if (typeof readings.editorText !== 'string' || readings.editorText.startsWith('TIMED-OUT')) {
     problems.push(`the note never opened in the editor (${readings.editorText})`)
@@ -417,9 +490,10 @@ async function main() {
     return
   }
   console.log('PASS: the built app answered WebDriver with its own vault open — Tauri page, shell rendered,')
-  console.log('      the note listed and opened by a native click, its image rendered through the host\'s asset')
-  console.log('      protocol — and the production CSP is in force inside it: `eval` refused (the control)')
-  console.log('      and a blob module import refused with it.')
+  console.log('      the note opened by a native click, its image rendered through the host\'s asset protocol,')
+  console.log(`      "${TYPED_TOKEN}" typed as real key events and saved to disk with Ctrl+S — and the`)
+  console.log('      production CSP is in force inside it: `eval` refused (the control) and a blob module')
+  console.log('      import refused with it.')
 }
 
 await main()
