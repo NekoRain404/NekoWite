@@ -178,7 +178,10 @@ export function useExportSettings(): ExportSettingsModel {
       // Awaited, and reported on failure: this used to be a bare call whose
       // rejection went nowhere, so a render error or a missing vault looked
       // exactly like the button doing nothing at all.
-      await exportToPdf(tab.content, exportOptions(tab.path))
+      const { outcome } = await exportToPdf(tab.content, exportOptions(tab.path))
+      // The same "button did nothing" this path was fixed for once already, from
+      // the other side: a webview that never starts the print reports no error.
+      if ((await outcome) === 'no-print-started') notifyError(t('error.exportNoPrintDialog'))
     } catch (e) {
       notifyError(describeExportError(e))
     }

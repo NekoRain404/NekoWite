@@ -521,7 +521,10 @@ describe('Note card context menu', () => {
 
     beforeEach(async () => {
       exportMocks.exportHtml.mockReset()
-      exportMocks.exportToPdf.mockReset()
+      // A handle, not `undefined`: the caller reads `outcome` off what the exporter
+      // returns, so a mock that answers nothing would fail every case below on a
+      // destructuring error rather than on what the case is about.
+      exportMocks.exportToPdf.mockReset().mockResolvedValue({ outcome: Promise.resolve('printed') })
       fsMocks.saveFileDialog.mockReset()
       // The native dialog hands back an absolute path; echoing the default
       // name under the vault keeps every other assertion about the export

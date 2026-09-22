@@ -36,7 +36,11 @@ const saveDialog = vi.hoisted(() =>
 const html = vi.hoisted(() =>
   vi.fn<(source: string, vault: string, savePath: string, opts: ExportUiOptions) => Promise<void>>(async () => {}),
 )
-const pdf = vi.hoisted(() => vi.fn<(source: string, opts: ExportUiOptions) => Promise<void>>(async () => {}))
+const pdf = vi.hoisted(() =>
+  vi.fn<(source: string, opts: ExportUiOptions) => Promise<{ outcome: Promise<string> }>>(async () => ({
+    outcome: Promise.resolve('printed'),
+  })),
+)
 const readTarget = vi.hoisted(() =>
   vi.fn<(deps: NoteActionDeps, vault: string | null, target: NoteActionTarget) => Promise<string>>(async () => ''),
 )
@@ -81,7 +85,7 @@ beforeEach(() => {
   read.mockClear()
   saveDialog.mockReset().mockResolvedValue(DESTINATION)
   html.mockReset().mockResolvedValue(undefined)
-  pdf.mockReset().mockResolvedValue(undefined)
+  pdf.mockReset().mockResolvedValue({ outcome: Promise.resolve('printed') })
   readTarget.mockReset().mockResolvedValue('# A\n\nbody')
 })
 
@@ -170,6 +174,25 @@ describe('exporting the note the menu was opened on', () => {
 
     expect(reported).toHaveLength(1)
     expect(reported[0]).toContain('the print frame never loaded')
+  })
+
+  it('speaks when the webview never started a print, and says what still works', async () => {
+    // Measured on WebKitGTK 2.52.6: `window.print()` returns, no dialog appears
+    // and nothing is thrown, so without this the menu item closes and the page is
+    // unchanged. `docs/DOC-AUDIT.md` §4 kept this unverified for two rounds.
+    pdf.mockResolvedValue({ outcome: Promise.resolve('no-print-started') })
+    await model().exportPdf(PATH)
+
+    expect(reported).toEqual([t('error.exportNoPrintDialog')])
+  })
+
+  it('says nothing extra when the print did start', async () => {
+    // The control for the case above: the same call, the same wiring, one value
+    // different — so the notice is the outcome's doing and not this path's.
+    pdf.mockResolvedValue({ outcome: Promise.resolve('printed') })
+    await model().exportPdf(PATH)
+
+    expect(reported).toEqual([])
   })
 
   it('with no vault open, offers the dialog without a directory and skips the vault check', async () => {

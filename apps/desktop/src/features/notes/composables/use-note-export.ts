@@ -112,7 +112,12 @@ export function useNoteExport(options: UseNoteExportOptions): NoteExportModel {
     const vault = options.vault()
     try {
       const source = await readTargetContent(exportDeps(), vault, noteActionTarget(path))
-      await exportToPdf(source, exportOptions(path))
+      const { outcome } = await exportToPdf(source, exportOptions(path))
+      // The one failure with nothing to see: the webview takes the print call and
+      // never starts one, so the menu closes and the page is unchanged. Measured on
+      // WebKitGTK 2.52.6 (`docs/DOC-AUDIT.md` §4, `apps/desktop/e2e/webkit/`), and
+      // the message names the way out rather than only the problem.
+      if ((await outcome) === 'no-print-started') notifyError(t('error.exportNoPrintDialog'))
     } catch (e) {
       notifyError(describeExportError(e))
     }

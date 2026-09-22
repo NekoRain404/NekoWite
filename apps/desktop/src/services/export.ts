@@ -62,6 +62,31 @@ const LOAD_SAFETY_MS = 60_000
 /// and removing the frame underneath it cancels their print.
 const PRINT_BACKSTOP_MS = 300_000
 
+/// How long the frame is given to report that a print **started** before the
+/// export says none did.
+///
+/// `beforeprint` is fired as the print operation begins — before the dialog is
+/// built — so a frame that has not reported one by now was handed to a webview
+/// that did not print. That is not hypothetical: on WebKitGTK 2.52.6
+/// `window.print()` returns, `beforeprint` never fires and no dialog ever
+/// appears, so 导出 PDF used to do nothing at all with nothing said about it
+/// (measured in `apps/desktop/e2e/webkit/drive-app.mjs --print` and, for the
+/// engine, in `probe-print-dialog.mjs`). The number is a judgement: long enough
+/// that a slow start is not called a failure, short enough that a user who saw
+/// nothing hears about it while they are still looking at the menu.
+const PRINT_OUTCOME_DEADLINE_MS = 10_000
+
+/** What the webview made of the print request. `no-print-started` is the one a
+ *  user has to be told about: from their side the item did nothing. */
+export type PdfExportOutcome = 'printed' | 'no-print-started'
+
+export interface PdfExportHandle {
+  /** Resolves as soon as the frame reports a print, or when the deadline above
+   *  passes without one. Never rejects: the export failing and the webview
+   *  refusing to print are the same thing to the person waiting. */
+  outcome: Promise<PdfExportOutcome>
+}
+
 /** The document as the printer should see it: rendered, with the configured
  *  paper size, orientation and margin as its `@page` rule. Shared with the
  *  preview so what the user is shown and what they print are the same bytes. */
@@ -71,13 +96,25 @@ export async function renderForPrint(source: string, opts: ExportUiOptions): Pro
   return injectExportPageCss(html, exportPageCss(pageSize, orientation, marginMm))
 }
 
-export async function exportToPdf(source: string, opts: ExportUiOptions): Promise<void> {
-  if (typeof document === 'undefined') return
+export async function exportToPdf(source: string, opts: ExportUiOptions): Promise<PdfExportHandle> {
+  if (typeof document === 'undefined') return { outcome: Promise.resolve('no-print-started') }
   const html = await renderForPrint(source, opts)
   const iframe = document.createElement('iframe')
   iframe.style.display = 'none'
   iframe.srcdoc = html
   document.body.appendChild(iframe)
+
+  let answer: (outcome: PdfExportOutcome) => void = () => undefined
+  const outcome = new Promise<PdfExportOutcome>((resolve) => {
+    answer = resolve
+  })
+  // Armed here rather than when `onload` fires: a frame that never loads must
+  // still produce an answer, or the caller waits for a print that cannot come.
+  const deadline = setTimeout(() => answer('no-print-started'), PRINT_OUTCOME_DEADLINE_MS)
+  const decide = (value: PdfExportOutcome): void => {
+    clearTimeout(deadline)
+    answer(value)
+  }
 
   let cleanupTimer: ReturnType<typeof setTimeout> | undefined
   const cleanup = (): void => {
@@ -96,6 +133,7 @@ export async function exportToPdf(source: string, opts: ExportUiOptions): Promis
     const win = iframe.contentWindow
     if (!win) {
       cleanup()
+      decide('no-print-started')
       return
     }
     // `window.print()` does NOT block — measured: it returns in ~0 ms and the
@@ -103,13 +141,23 @@ export async function exportToPdf(source: string, opts: ExportUiOptions): Promis
     // this used to do) therefore detached the document the preview was still
     // reading, and the export silently did nothing. `afterprint` is the real
     // "the user is finished" signal; until it arrives the frame has to stay.
-    win.addEventListener('afterprint', cleanup, { once: true })
+    // An `afterprint` also settles the outcome: a print that finished started.
+    win.addEventListener(
+      'afterprint',
+      () => {
+        decide('printed')
+        cleanup()
+      },
+      { once: true },
+    )
+    win.addEventListener('beforeprint', () => decide('printed'), { once: true })
     win.focus()
     try {
       win.print()
     } catch {
       // A webview that refuses to print at all: there is nothing to wait for.
       cleanup()
+      decide('no-print-started')
       return
     }
     // Backstop for a webview that never fires `afterprint`. It replaces the
@@ -118,6 +166,8 @@ export async function exportToPdf(source: string, opts: ExportUiOptions): Promis
     if (cleanupTimer !== undefined) clearTimeout(cleanupTimer)
     cleanupTimer = setTimeout(cleanup, PRINT_BACKSTOP_MS)
   }
+
+  return { outcome }
 }
 
 /** Render the document the way the printers do, so every exporter and the

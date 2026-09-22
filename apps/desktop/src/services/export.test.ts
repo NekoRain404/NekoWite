@@ -106,6 +106,7 @@ describe('exportToPdf', () => {
     onload: (() => void) | null
     fireLoad: () => void
     fireAfterPrint: () => void
+    fireBeforePrint: () => void
   }
 
   function makeIframe(print: () => void): FakeIframe {
@@ -122,6 +123,7 @@ describe('exportToPdf', () => {
       onload: null,
       fireLoad: () => iframe.onload?.call(iframe),
       fireAfterPrint: () => listeners.get('afterprint')?.(),
+      fireBeforePrint: () => listeners.get('beforeprint')?.(),
     }
     return iframe
   }
@@ -183,13 +185,43 @@ describe('exportToPdf', () => {
     vi.advanceTimersByTime(1)
     expect(iframe.remove).toHaveBeenCalledTimes(1)
   })
+
+  it('reports `printed` once the frame says a print started', async () => {
+    const iframe = makeIframe(() => undefined)
+    stubDom(iframe)
+    const { outcome } = await exportToPdf('# T\n', {})
+    iframe.fireLoad()
+    iframe.fireBeforePrint()
+    await expect(outcome).resolves.toBe('printed')
+  })
+
+  it('reports `no-print-started` when the frame never says one — what WebKitGTK does', async () => {
+    // Measured on WebKitGTK 2.52.6 (`drive-app.mjs --print`, `probe-print-dialog.mjs`):
+    // `window.print()` returns, `beforeprint` never fires and no dialog appears, so the
+    // user presses 导出 PDF and nothing happens. This is the reading that lets the
+    // caller say so instead of leaving them with a menu item that did nothing.
+    const iframe = makeIframe(() => undefined)
+    stubDom(iframe)
+    const { outcome } = await exportToPdf('# T\n', {})
+    iframe.fireLoad()
+    let settled: string | null = null
+    void outcome.then((value) => {
+      settled = value
+    })
+    // Undecided while the deadline runs: a slow print must not be reported as a failed one.
+    vi.advanceTimersByTime(9_999)
+    await Promise.resolve()
+    expect(settled).toBeNull()
+    vi.advanceTimersByTime(1)
+    await expect(outcome).resolves.toBe('no-print-started')
+  })
 })
 
 describe('export applies settings-store params', () => {
   interface PdfIframe {
     style: Record<string, string>
     srcdoc: string
-    contentWindow: { print: () => void; focus: () => void } | null
+    contentWindow: { print: () => void; focus: () => void; addEventListener: () => void } | null
     remove: ReturnType<typeof vi.fn>
     onload: (() => void) | null
   }
@@ -198,7 +230,7 @@ describe('export applies settings-store params', () => {
     const iframe: PdfIframe = {
       style: {},
       srcdoc: '',
-      contentWindow: { print, focus: vi.fn() },
+      contentWindow: { print, focus: vi.fn(), addEventListener: vi.fn() },
       remove: vi.fn(),
       onload: null,
     }

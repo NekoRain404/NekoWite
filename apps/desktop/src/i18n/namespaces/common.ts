@@ -16,6 +16,8 @@ export const common = {
     error: {
       exportOutsideVault: 'Please choose a path inside the vault to export',
       exportFailed: 'Export failed: {msg}',
+      exportNoPrintDialog:
+        'The system opened no print dialog — this webview did not start a print. Use “Export HTML” and print that to PDF from a browser instead.',
       aiGenFailed: 'AI generation failed: {msg}',
     },
 
@@ -40,6 +42,7 @@ export const common = {
     error: {
       exportOutsideVault: '请选择 vault 内的路径导出',
       exportFailed: '导出失败：{msg}',
+      exportNoPrintDialog: '系统没有打开打印对话框——这个 WebView 没有开始打印。可以改用「导出 HTML」，再在浏览器里打印成 PDF。',
       aiGenFailed: 'AI 生成失败：{msg}',
     },
 

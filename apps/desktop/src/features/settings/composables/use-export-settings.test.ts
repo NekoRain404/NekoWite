@@ -19,6 +19,7 @@ import type { ExportImageFormat } from '../../../stores/settings'
 import { useTabsStore } from '../../../stores/tabs'
 import type { OpenTab } from '../../../stores/tabs'
 import { onNotify } from '../../../services/errors'
+import { t } from '../../../i18n'
 import type { ExportUiOptions, ExportImageResult } from '../../../services/export'
 import { VAULT_ROOT_DIR } from '../../../platform/gateways/contracts'
 
@@ -27,7 +28,7 @@ import { VAULT_ROOT_DIR } from '../../../platform/gateways/contracts'
 // a path through it passes while proving nothing about the path.
 const mocks = vi.hoisted(() => ({
   exportHtml: vi.fn<(source: string, vault: string, savePath: string, opts: ExportUiOptions) => Promise<void>>(),
-  exportToPdf: vi.fn<(source: string, opts: ExportUiOptions) => Promise<void>>(),
+  exportToPdf: vi.fn<(source: string, opts: ExportUiOptions) => Promise<{ outcome: Promise<string> }>>(),
   exportImage: vi.fn<(source: string, format: ExportImageFormat, quality: number, opts: ExportUiOptions) => Promise<ExportImageResult>>(),
   renderPlainText: vi.fn<(source: string, opts: ExportUiOptions) => Promise<string>>(),
   renderCsv: vi.fn<(source: string, opts: ExportUiOptions) => Promise<string | null>>(),
@@ -95,7 +96,7 @@ beforeEach(() => {
   pinia = createPinia()
   setActivePinia(pinia)
   mocks.exportHtml.mockReset().mockResolvedValue(undefined)
-  mocks.exportToPdf.mockReset().mockResolvedValue(undefined)
+  mocks.exportToPdf.mockReset().mockResolvedValue({ outcome: Promise.resolve('printed') })
   mocks.exportImage.mockReset().mockResolvedValue({
     base64: 'AAAA', mime: 'image/png', width: 864, height: 5000, bytes: 1024,
   })
@@ -238,6 +239,19 @@ describe('useExportSettings', () => {
 
     expect(mocks.flushEdits).toHaveBeenCalledTimes(1)
     expect(messages).toHaveLength(1)
+  })
+
+  it('reports a print the webview never started, which is the button doing nothing', async () => {
+    const m = mountModel()
+    openTab()
+    const messages: string[] = []
+    const off = onNotify((msg) => messages.push(msg))
+    mocks.exportToPdf.mockResolvedValue({ outcome: Promise.resolve('no-print-started') })
+
+    await m.exportPdfFile()
+    off()
+
+    expect(messages).toEqual([t('error.exportNoPrintDialog')])
   })
 
   it('does nothing when no note is open', async () => {
