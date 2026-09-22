@@ -2103,3 +2103,57 @@ read the shipped page, so the questions that needed the real application — wha
 answerable instead of deferred; the packager can run on a machine whose `$HOME` is not writable; and the
 `spec=0` class of dead exports is empty, so the next entry in that list is a regression rather than a
 backlog.
+
+## 22. The round after that: the probe opens a note, and the asset chain is proven
+
+**The instrument built in §21 now drives further, and its second step answers a question that had been on
+the manual list for rounds.** `drive-app.mjs` clicks the note in the real tree — a **native** click through
+the driver's element endpoint, not a script's `.click()`, because the point of driving the application is
+the application — and then reads what the editor rendered:
+
+```
+rowFound     true
+editorText   "drive-probe-note Written by drive-app.mjs."
+images       [{ parent: "neko-image",
+                src: "asset://localhost/%2Fhome%2Fnekorain%2F…",
+                loaded: true, naturalWidth: 64 }]
+```
+
+That is the whole `asset://` chain measured where it ships: the frontend asks for a media path,
+`commands/fs/media.rs` grants that one file on the asset scope (the static scope in `tauri.conf.json` is
+empty by design), the window fetches the percent-encoded absolute path, and the image decodes. Three
+consecutive runs pass. `docs/test-plan.md` §4 had this as 「图片 `asset://` scope 在真机上是否都能显示」,
+something only a human could answer; the ordinary case is now a reading, and the entry keeps the half that
+is still manual — the `.tmp/` staging path, where an image lives before its note is first saved.
+
+**The one defect the step found was in the probe.** Its first version counted two `<img>` elements and
+reported a broken image in a note whose image had loaded; the second is
+`<img class="ProseMirror-separator" alt="">`, ProseMirror's own inline separator beside a node view. It is
+excluded now, and the per-image `parent`/`outer` fields that identified it stay in the reading, because the
+evidence that resolved a false reading is the evidence the next one will need. This is the second time this
+programme has had to widen a selector's meaning rather than its threshold — §16's `.status-btn` count on a
+window with no shell was the first — and both were caught by the practice of printing the context a number
+came from.
+
+**A small thing worth recording, because it happened twice in one round.** The packager fix in §21 exists
+because `pnpm` needs `XDG_DATA_HOME`; running `eslint` by hand an hour later failed with the identical
+`[ERROR] unable to open database file`, in this session's own shell. The defect that took a packaging run to
+find is one keystroke away from anyone who runs a `pnpm` command without the three variables — which is
+what makes the fix worth its two assertions in the packager's suite rather than a comment.
+
+### The gate
+
+| Step | Result |
+|---|---|
+| `verify` | PASS — **5954 tests across 3 package runs** |
+| `fmt` | PASS |
+| `clippy` | PASS — 97 warning lines, under the 110 ceiling |
+| `instruments` | PASS — 85 of 1368 uncalled exports, at the §20 ceiling |
+| `scripts` | PASS — 91 checks, 0 failed |
+| `harness` | PASS — 5 passed, 0 failed |
+| `build` | PASS |
+| `rust` | PASS — 79 targets, 1409 passed, 0 failed |
+| `e2e` (`--with-e2e`) | PASS — 297 passed |
+
+One run, all nine steps, exit 0. No bundles were rebuilt: this round changes a probe and three documents,
+and §21's bundles already carry this source.
