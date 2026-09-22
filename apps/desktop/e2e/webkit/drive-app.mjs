@@ -538,12 +538,15 @@ async function main() {
     // it: "this frame cannot print" and "printing reaches no dialog here at all" are different findings, and
     // the print events say which side of the request failed.
     const printedDialog = readings.dialogWindow ?? readings.exportFrameDialog ?? readings.mainFrameDialog
-    if (printedDialog == null) {
+    // Either the system printed, or the app said why it could not. What must never happen again is
+    // neither — that is the silent no-op this pair of probes exists to catch, and the fix is only real if
+    // the built application actually says something.
+    if (printedDialog == null && !readings.exportNotice) {
       const opened = (readings.printWindows ?? [])
         .map((w) => `${w.id} ${w.width}x${w.height} ${w._NET_WM_WINDOW_TYPE ?? 'no type'}`)
         .join(', ')
       problems.push(
-        `no print dialog appeared for the PDF export. Windows it did open: [${opened}]. A print repeated inside the app's own frame returned "${readings.exportFramePrint}" (events after: ${readings.exportFrameEventsAfter}), and one from the main frame returned "${readings.mainFramePrint}" (events after: ${readings.mainFrameEventsAfter})`,
+        `no print dialog appeared and the app said nothing about it. Windows it did open: [${opened}]. A print repeated inside the app's own frame returned "${readings.exportFramePrint}" (events after: ${readings.exportFrameEventsAfter}), and one from the main frame returned "${readings.mainFramePrint}" (events after: ${readings.mainFrameEventsAfter})`,
       )
     }
     const printFrame = readings.printFrame
@@ -613,7 +616,7 @@ async function main() {
       console.log(`      and reached a real GTK print dialog (${dialog}); closing it left the frame count at ${after}.`)
     } else {
       console.log(`      but reached no print dialog (${readings.exportFramePrint} / ${readings.mainFramePrint});`)
-      console.log(`      its cleanup was therefore unmeasured: ${readings.printCleanupUnmeasured ?? 'no dialog to close'}`)
+      console.log(`      the app's own notice, read out of the toast stack: ${readings.exportNotice ?? '(none)'}`)
     }
   }
 }

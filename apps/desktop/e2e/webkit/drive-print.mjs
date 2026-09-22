@@ -28,6 +28,15 @@ import { closeWindow, pressKeyAt, screenshotWindow, windowGeometry, windowProper
  */
 const PRINT_DIALOG_TIMEOUT_MS = 45_000
 
+/**
+ * How long the toast stack is watched for the export's own notice.
+ *
+ * The notice is written ten seconds after the export starts (`PRINT_OUTCOME_DEADLINE_MS` in
+ * `services/export.ts`), so this has to outlast that with room for the toast to render — and it must not
+ * outlast the toast itself, which is dismissed in seconds.
+ */
+const PRINT_NOTICE_TIMEOUT_MS = 20_000
+
 const ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf'
 
 /** The card's own in-view centre, and the viewport it has to be inside for a viewport-origin pointer move. */
@@ -221,6 +230,26 @@ export async function measurePrintDialog({ run, script, findElement, readings, s
     ).catch(() => null)
 
   readings.dialogWindow = await waitForDialog('a dialog-sized window for the export\'s print dialog')
+  /**
+   * The app's own words, when it has any. `exportToPdf` reports `no-print-started` after ten seconds
+   * without a `beforeprint`, and both callers put that in the toast stack (`AppToast.vue`, `.toast` with
+   * `role="alert"`) — so this is where the fix for the silent no-op becomes visible from outside.
+   *
+   * Read **before** the dialog wait below, because a toast is gone in seconds while a dialog waits for the
+   * user; on a machine where printing works this costs one timeout and finds nothing, which is the correct
+   * reading there.
+   */
+  readings.exportNotice = await until(
+    async () => {
+      const text = await run(
+        'POST',
+        '/execute/sync',
+        script('return Array.from(document.querySelectorAll(".toast")).map((t) => t.textContent.trim()).join(" | ")'),
+      )
+      return text && text.length > 0 ? text : null
+    },
+    { timeout: PRINT_NOTICE_TIMEOUT_MS, what: 'the export notice, if the app has something to say' },
+  ).catch(() => null)
   readings.printFrame = await run('POST', '/execute/sync', script(PRINT_FRAME_SCRIPT)).catch(
     (e) => `unreadable: ${String(e?.message ?? e).slice(0, 160)}`,
   )
