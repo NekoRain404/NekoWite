@@ -37,7 +37,8 @@ export const registry = {
         notExecutable: 'The file at {path} has no executable bit, so it cannot be started.',
       },
       control: { enable: 'Switch on', disable: 'Switch off' },
-      picker: { title: 'New agent session', current: 'Current', add: 'Add ACP agent', manage: 'Manage ACP agents', busy: 'Stop active tasks and answer pending permissions before switching agents.' },
+      picker: { title: 'Choose agent', current: 'Current', add: 'Add ACP agent', manage: 'Manage agents', busy: 'Stop active tasks and answer pending permissions before switching agents.' },
+      discovery: { title: 'Installed agents', hint: 'Scan known ACP and terminal agents in Linux PATH. Nothing is added automatically.', scan: 'Scan', scanning: 'Scanning...', retry: 'Scan again', empty: 'No scan results yet.', failed: 'The agent scan could not be completed.', acp: 'ACP', terminal: 'Terminal CLI', use: 'Use in form' },
       deletion: { title: 'Delete registration', confirm: 'Delete', cancel: 'Cancel', hint: 'Delete this ACP registration? The program, configuration, credentials and session history will be kept.' },
       fields: {
         agentId: 'Id',
@@ -115,7 +116,8 @@ export const registry = {
         notExecutable: '{path} 处的文件没有可执行权限，无法启动。',
       },
       control: { enable: '启用', disable: '停用' },
-      picker: { title: '新建 Agent 会话', current: '当前', add: '添加 ACP', manage: '管理 ACP', busy: '请先停止运行中的任务并处理待授权请求，再切换 Agent。' },
+      picker: { title: '选择 Agent', current: '当前', add: '添加 ACP', manage: '管理 Agent', busy: '请先停止运行中的任务并处理待授权请求，再切换 Agent。' },
+      discovery: { title: '已安装的 Agent', hint: '扫描 Linux PATH 中已知的 ACP 和终端 Agent，不会自动添加。', scan: '扫描', scanning: '扫描中…', retry: '重新扫描', empty: '尚未扫描。', failed: '无法完成 Agent 扫描。', acp: 'ACP', terminal: '终端 CLI', use: '填入表单' },
       deletion: { title: '删除注册', confirm: '删除', cancel: '取消', hint: '删除此 ACP 注册？程序、配置、凭据和会话历史将保留。' },
       fields: {
         agentId: '标识',

@@ -31,7 +31,7 @@ const props = withDefaults(
     prefill?: { agentId: string; displayName: string; program: string; args: readonly string[] } | null
     labels?: AgentRegistryLabels
   }>(),
-  { sessionAgentId: null, canStartSession: true, prefill: null },
+  { sessionAgentId: null, canStartSession: true, prefill: null, labels: () => registryLabels() },
 )
 
 const emit = defineEmits<{ (event: 'new-session', agentId: string): void }>()
@@ -360,8 +360,8 @@ function engineText(): string {
       <div class="registry-discovery">
         <div class="registry-discovery-heading">
           <div>
-            <span class="settings-label">发现已安装 Agent</span>
-            <span class="settings-note">扫描 Linux PATH 中已知的 ACP 和终端 Agent，不会自动添加。</span>
+            <span class="settings-label">{{ labels.discovery.title }}</span>
+            <span class="settings-note">{{ labels.discovery.hint }}</span>
           </div>
           <button
             type="button"
@@ -369,19 +369,42 @@ function engineText(): string {
             :disabled="discoveryBusy"
             data-test="registry-discover"
             @click="discover"
-          >{{ discoveryBusy ? '扫描中…' : '扫描' }}</button>
+          >
+            {{ discoveryBusy ? labels.discovery.scanning : labels.discovery.scan }}
+          </button>
         </div>
-        <span v-if="discoveryFailed" class="settings-note is-error">扫描失败，请稍后重试。</span>
-        <ul v-else-if="discovered.length" class="registry-discovery-list">
-          <li v-for="candidate in discovered" :key="candidate.agentId" class="registry-discovery-row">
+        <span
+          v-if="discoveryFailed"
+          class="settings-note is-error"
+        >{{ labels.discovery.failed }}</span>
+        <ul
+          v-else-if="discovered.length"
+          class="registry-discovery-list"
+        >
+          <li
+            v-for="candidate in discovered"
+            :key="candidate.agentId"
+            class="registry-discovery-row"
+          >
             <div>
               <strong>{{ candidate.displayName }}</strong>
-              <span class="settings-note">{{ candidate.kind === 'acp' ? 'ACP' : '终端 CLI' }} · {{ candidate.program }}</span>
+              <span class="settings-note">
+                {{ candidate.kind === 'acp' ? labels.discovery.acp : labels.discovery.terminal }} · {{ candidate.program }}
+              </span>
             </div>
-            <button type="button" class="registry-button" @click="useCandidate(candidate)">填入</button>
+            <button
+              type="button"
+              class="registry-button"
+              @click="useCandidate(candidate)"
+            >
+              {{ labels.discovery.use }}
+            </button>
           </li>
         </ul>
-        <span v-else class="settings-note">尚未扫描。</span>
+        <span
+          v-else
+          class="settings-note"
+        >{{ labels.discovery.empty }}</span>
       </div>
       <div class="registry-engine">
         <span class="settings-label">{{ labels.engine.title }}</span>

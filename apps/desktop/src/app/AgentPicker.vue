@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Bot, Plus, Settings2 } from 'lucide-vue-next'
+import { Bot, ChevronDown, Plus, Settings2 } from 'lucide-vue-next'
 import { t } from '../i18n'
 import type { AgentRegistryClient, AgentRegistryEntry } from '../features/agent-settings/services/agent-registry-policy'
 import { useDetachedPopup } from '../features/agent/composables/use-detached-popup'
@@ -77,8 +77,12 @@ onBeforeUnmount(() => { generation += 1 })
     @click="toggle"
     @keydown.down.prevent="toggle"
   >
-    <Plus
-      :size="16"
+    <Bot
+      :size="15"
+      aria-hidden="true"
+    />
+    <ChevronDown
+      :size="12"
       aria-hidden="true"
     />
   </button>
@@ -162,7 +166,7 @@ onBeforeUnmount(() => { generation += 1 })
 </template>
 
 <style scoped>
-.agent-picker-trigger { display: grid; place-items: center; align-self: center; flex: none; width: 26px; height: 26px; border: 0; border-radius: var(--app-radius-sm); background: transparent; color: var(--app-muted); cursor: pointer; }
+.agent-picker-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 2px; align-self: center; flex: none; width: 34px; height: 26px; border: 0; border-radius: var(--app-radius-sm); background: transparent; color: var(--app-muted); cursor: pointer; }
 .agent-picker-trigger:hover, .agent-picker-trigger[aria-expanded='true'] { background: var(--app-elevated); color: var(--app-accent); }
 .agent-picker-menu { position: fixed; z-index: 1000; max-width: calc(100vw - 16px); max-height: min(420px, calc(100vh - 16px)); overflow: auto; padding: 4px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-panel); color: var(--app-text); box-shadow: 0 5px 18px #0003; font: 12px var(--app-font); }
 .agent-picker-menu button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 6px 8px; border: 0; border-radius: var(--app-radius-sm); background: transparent; color: inherit; text-align: left; cursor: pointer; }
