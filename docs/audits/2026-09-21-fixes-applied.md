@@ -2634,3 +2634,91 @@ written 0600 to `/tmp/nkw-test-key` and removed in the same command.
 
 One run, eight steps, exit 0. **No bundles were rebuilt, and none needed to be**: this round changed a probe
 and two documents, and §26's artifacts were built from these same application sources.
+
+## 28. The round after that: three surfaces the instrument had never read
+
+**The pattern from §27 — one of each thing, asserted — was pointed at three surfaces nothing had rendered on
+the shipping engine.** The settings dialog, the desktop pet's own windows, and the one keyboard shortcut the
+guide documents with an observable effect. No defect was found; what follows is what each reading is, and the
+one place a reading of mine was wrong.
+
+### The settings dialog, page by page (`--settings`)
+
+Eight pages of the app's own surface, never rendered by an instrument that runs the shipping engine — the
+Playwright suite is Chromium against a stubbed host, and nothing else opens this dialog at all. `drive-app.mjs
+--settings` opens it the way a user does (the sidebar's footer button, by its title in either language),
+clicks each nav row, waits for that row to become the active one, and reads the page: its text, its control
+count, the `data-test` markers it carries, and the toast stack — a page that threw on mount leaves nothing to
+read, which is the failure this walks for.
+
+All eight rendered, on the first run and again after the stage moved into its own module:
+
+    settingsNavRows 8    settingsClosed true
+    常规 版本 1.0.0 知识库 浏览… 切换知识库会关闭当前所有打开的文档。 语言 简体中文
+    外观 主题 浅色 深色 跟随系统 配色方案 默认 暖阳 森林 海洋 樱花 薄雾 石墨 午夜 …
+    编辑器 视图 源码 渲染 对照 … 保存 自动保存间隔 15秒 历史版本上限 …
+    导出 导出（当前文档） 导出 HTML 导出 PDF 导出长图 导出纯文本 导出表格（CSV）…
+    AI 服务商 local 模型 刷新 接口地址（Base URL）…
+    插件 … 当前版本不加载插件：插件代码会以与主程序相同的权限运行 …（data-test="plugins-blocked"）
+    智能体 右侧栏显示哪个面板、本应用可以启动哪些引擎…
+    常规与交互 角色与动画 气泡与消息 通知与声音 养成与统计 项目与多角色 高级与集成 …
+
+The row count is asserted as a **floor**, not an equality: a page that disappeared is a defect; a new one is a
+change to document. The two documented markers are asserted by name (`app-version` on the general page,
+`plugins-blocked` on the plugins page), so the guide's claims about those rows are checked against the app
+rather than against the source.
+
+### The pet's own windows (`--pet`)
+
+The ball and the character are separate webviews, and every instrument until now switched **away** from them
+(the driver's session attaches to a pet window and `drive-app.mjs` selects the main one). The two draw
+different things, so the reading is per window: `.pet-ball` and its DOM for the ball, `.pet-sprite` and its
+canvas **backing size** for the character — a canvas of `0x0` is one that was never laid out, which is what a
+page that failed to render leaves behind.
+
+    tauri://localhost/desktop-pet.html        .pet-sprite 1, canvas 160x180, complete, Tauri
+    tauri://localhost/desktop-pet-ball.html   .pet-ball 1, .pet-sprite 1, canvas 32x32, complete, Tauri
+
+### The documented shortcut (`--keys`)
+
+`Ctrl+S` was already read (§23's save). The guide's other observable binding is `Ctrl+K`: the palette opened,
+took the keyboard (`document.activeElement` was `.palette-input`), and `Esc` closed it.
+
+**And one reading of mine was wrong, in the way that matters.** I typed the note's *title* — `drive-probe-note`,
+its H1, which is exactly what the tree lists — and the palette answered 「无匹配结果」. That looks like a
+search that cannot find the open note, and the app is right and I was not: `fileEntryOf` labels a file row with
+the **basename** and offers the directory as its hint, so the palette searches paths, while the tree shows
+titles. The guide says 「搜索命令或文件」, and that is what it does. The stage now asserts the file-name query
+(which lists `probe-note.md` under 文件) and *records* the title query, so the divergence is a reading rather
+than an assertion of mine: if the app ever searches titles, the reading changes without the probe going red
+for a change nobody asked for.
+
+### Budget
+
+`drive-app.mjs` reached 876 lines with the settings stage inside it, past the 800-line test budget, so that
+stage is now `drive-settings.mjs` (89 lines) — the same split, for the same reason, as `drive-print.mjs` and
+`x-windows.mjs` before it. The probe that owns the session is back to 804 lines with the pet and shortcut
+stages in it; the next stage added there will want a module too.
+
+### The gate
+
+| Step | Result |
+|---|---|
+| `verify` | PASS — **5962 tests across 3 package runs** (unchanged: no unit test this round) |
+| `fmt` | PASS |
+| `clippy` | PASS — 97 warning lines, under the 110 ceiling |
+| `instruments` | PASS — 85 of 1368 uncalled exports, at the ceiling |
+| `scripts` | PASS — 91 checks, 0 failed |
+| `harness` | PASS — 5 passed, 0 failed |
+| `build` | PASS |
+| `rust` | PASS — 79 targets, 1409 passed, 0 failed |
+
+One run, eight steps, exit 0. **No bundles were rebuilt**: this round changed two probes and two documents,
+and §26's artifacts were built from these same application sources.
+
+**The live AI reading, re-measured this round**: **3 passed, 0 failed**, 11.45 s, with the log kept before
+anything read it. The paid turn streamed in four chunks to `data: [DONE]` and billed **17 prompt + 2
+completion**; the reasoning turn billed **89 prompt + 130 completion, 126 of them `reasoning_tokens`** — the
+widest this has been (the completion side has now read 30, 16, 9, 15, 16, 17, 130), which is the model
+thinking for longer rather than a change in the gateway. The key was written 0600 to `/tmp/nkw-test-key` and
+removed in the same command.
