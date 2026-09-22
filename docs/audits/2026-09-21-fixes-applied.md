@@ -2375,3 +2375,67 @@ app's own transport in 4 chunks to `data: [DONE]`, answered `PONG`, and billed *
 bytes of thinking in 9 chunks and then a 4-byte answer, billed **89 prompt + 15 completion, 12 of them
 `reasoning_tokens`**; the completion side has now read 30, 16, 9, 15 across rounds, which is the movement
 that script's header documents rather than a change in the gateway.
+
+## 25. The round after that: what the app contacts, and the expectation I had wrong
+
+**§4's third item is now measured, and it was the last one that a measurement could settle.** The item was:
+"Whether the two network endpoints are actually reached in a packaged build. Read from the code and the mount
+hook; no packet capture or proxy was used." `probe-egress.mjs` is that capture: a local proxy that records
+and **refuses** (the reading is the attempt, not the success — and a proxy that pretended to be the endpoint
+would leave the app's own failure reporting unmeasured), put in front of the built application through
+`HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`, with the app driven by WebDriver. Four phases, because the claim in
+`docs/PRIVACY.md` is about *when*:
+
+    idle                no request at all in ten seconds at the welcome screen
+    registryFreshCache  no request; answer `freshness: current` from the cache the probe seeded
+    registryStaleCache  CONNECT cdn.agentclientprotocol.com:443; answer `freshness: stale`
+    petCatalogue        CONNECT pets.thenightwatcher.online:443; answer `status: unreachable`
+
+Two runs, identical readings, exit 0. Both commands' answers name the URL they could not reach
+(`error sending request for url (https://…/manifest.json)`, `(…/registry.json) (showing a copy fetched 2
+hours ago)`), which is the other half of what the document claims about being offline — and the fresh-cache
+phase is the instrument's own control: without it, "no request" cannot be told apart from "this command
+never fetches", and with only the pet catalogue measured, "nothing was sent" cannot be told apart from "the
+proxy was ignored".
+
+**My first version of this probe asserted something false, and the code is what said so.** It read the
+registry twice and expected the second read to come from the cache — which is wrong: a *failed* fetch writes
+no cache entry, so asking again is correct behaviour rather than a defect. The probe said `the second
+registry read went to the network again, so the cache is not doing what the code says`, which is the shape
+of a false finding a probe can produce on its own. It now seeds the cache itself, both arms of the rule: a
+fresh document answers with no request at all, a document older than `CACHE_MAX_AGE` produces exactly the
+documented fetch.
+
+**Two traps are in the file for the next reader.** `NO_PROXY` must carry the app's own schemes
+(`ipc.localhost`, `asset.localhost`, `tauri.localhost`) or the measurement is of a broken application rather
+than a quiet one; and the seeded cache has to be a document this build **parses** (the shape its own Rust
+tests use), because an unreadable cache is replaced by a fetch — which would have made the control fail for
+a reason that has nothing to do with caching.
+
+**Where the audit's §4 now stands.** Item 1 (the AI kill switch) was settled by `settings-ai-list-models-gate`,
+item 2 (WebKitGTK refusing `blob:` imports) by `probe-csp-blob.mjs`, item 4 (the export dialog and
+`asset://` on paper) by §24, item 6 (the 68 unrun Rust targets) by the gate's 79-target run, and item 3 by
+this round. What is left is item 5 — `git tag` being empty, where the question is whether that is deliberate
+rather than whether it is true — and the parts of §2's tables that are read-only or product decisions.
+
+### The gate
+
+| Step | Result |
+|---|---|
+| `verify` | PASS — **5959 tests across 3 package runs** (unchanged: this round adds no unit test) |
+| `fmt` | PASS |
+| `clippy` | PASS — 97 warning lines, under the 110 ceiling |
+| `instruments` | PASS — 85 of 1368 uncalled exports, at the ceiling |
+| `scripts` | PASS — 91 checks, 0 failed |
+| `harness` | PASS — 5 passed, 0 failed |
+| `build` | PASS |
+| `rust` | PASS — 79 targets, 1409 passed, 0 failed |
+
+One run, eight steps, exit 0. **No bundles were rebuilt and none needed to be**: this round changed probes
+and documents, and the artifacts from §24 already carry the export fix.
+
+**The live AI reading, re-measured this round**: **3 passed, 0 failed**, 8.05 s. The paid turn streamed in
+four chunks to `data: [DONE]` and billed **17 prompt + 2 completion**, every count the app reported being
+one the provider sent; the reasoning turn billed **89 prompt + 16 completion, 13 of them `reasoning_tokens`**
+(the completion side has now read 30, 16, 9, 15, 16). The key was written 0600 to `/tmp/nkw-test-key` and
+removed in the same command; it is nowhere in the tree.
