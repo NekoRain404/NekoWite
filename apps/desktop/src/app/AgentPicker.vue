@@ -20,6 +20,8 @@ const sourceOrder = { bundled: 0, managed: 1, external: 2 }
 const enabled = computed(() => entries.value.filter(entry => entry.enabled).sort((left, right) =>
   sourceOrder[left.source] - sourceOrder[right.source] || (left.displayName || left.agentId).localeCompare(right.displayName || right.agentId),
 ))
+const currentEntry = computed(() => entries.value.find(entry => entry.agentId === props.currentAgentId) ?? null)
+const triggerLabel = computed(() => currentEntry.value?.displayName || props.currentAgentId || t('agent.registry.picker.title'))
 function entryTitle(entry: AgentRegistryEntry): string {
   if (props.busy) return t('agent.registry.picker.busy')
   return entry.programState === 'launchable' ? entry.program : t(`agent.registry.programState.${entry.programState}`, { path: entry.program })
@@ -85,6 +87,10 @@ onBeforeUnmount(() => { generation += 1 })
       :size="12"
       aria-hidden="true"
     />
+    <span
+      class="agent-picker-label"
+      data-agent-current
+    >{{ triggerLabel }}</span>
   </button>
   <Teleport :to="popupHost">
     <div
@@ -166,8 +172,9 @@ onBeforeUnmount(() => { generation += 1 })
 </template>
 
 <style scoped>
-.agent-picker-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 2px; align-self: center; flex: none; width: 34px; height: 26px; border: 0; border-radius: var(--app-radius-sm); background: transparent; color: var(--app-muted); cursor: pointer; }
+.agent-picker-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 4px; align-self: center; flex: none; min-width: 34px; max-width: 168px; height: 26px; padding: 0 6px; border: 0; border-radius: var(--app-radius-sm); background: transparent; color: var(--app-muted); cursor: pointer; }
 .agent-picker-trigger:hover, .agent-picker-trigger[aria-expanded='true'] { background: var(--app-elevated); color: var(--app-accent); }
+.agent-picker-label { overflow: hidden; max-width: 116px; text-overflow: ellipsis; white-space: nowrap; font: 500 11px var(--app-font); }
 .agent-picker-menu { position: fixed; z-index: 1000; max-width: calc(100vw - 16px); max-height: min(420px, calc(100vh - 16px)); overflow: auto; padding: 4px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-panel); color: var(--app-text); box-shadow: 0 5px 18px #0003; font: 12px var(--app-font); }
 .agent-picker-menu button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 6px 8px; border: 0; border-radius: var(--app-radius-sm); background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .agent-picker-menu button:hover, .agent-picker-menu button:focus-visible { background: var(--app-elevated); outline: 1px solid var(--app-accent); }

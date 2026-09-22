@@ -12,12 +12,12 @@ function readout(): AgentRegistryReadout {
       program: '/bin/agent', args: [], env: 'user-environment', envExtra: [], enabled: agentId !== 'disabled',
       adapterId: 'generic-acp', reportedVersion: null, programState: 'launchable' })) }
 }
-async function mount(busy = false) {
+async function mount(busy = false, currentAgentId = 'one') {
   const read = vi.fn(async () => readout())
   const client: AgentRegistryClient = { read, add: async () => null, delete: async () => null, setEnabled: async () => null }
   const select = vi.fn(); const manage = vi.fn()
   const host = document.createElement('div'); host.className = 'shell'; document.body.append(host)
-  const app = createApp(AgentPicker, { client, busy, onSelect: select, onManage: manage })
+  const app = createApp(AgentPicker, { client, busy, currentAgentId, onSelect: select, onManage: manage })
   app.mount(host)
   cleanups.push(() => { app.unmount(); host.remove() })
   await flush()
@@ -25,6 +25,11 @@ async function mount(busy = false) {
   return { host, click, read, select, manage }
 }
 describe('ACP picker', () => {
+  it('keeps the current agent visible on the compact trigger', async () => {
+    const { host } = await mount()
+    expect(host.querySelector('[data-agent-current]')?.textContent).toBe('one')
+  })
+
   it('refreshes registrations each open and starts the selected enabled agent', async () => {
     const { host, click, read, select } = await mount()
     await click('[data-agent-picker]')
