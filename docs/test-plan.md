@@ -50,11 +50,12 @@ NEKOWITE_REQUIRE_PROCESS_TESTS=1 cargo test --locked --no-fail-fast \
 | 命令 | 失败条件 |
 |---|---|
 | `python3 scripts/check-reachability.py` | 有 import 指向不存在的文件（先跑对照：扫描被人为弄瞎时必须报错） |
-| `python3 scripts/check-dead-exports.py` | 对照失明，或「没有任何调用点」的导出数超过文件里的 `CEILING`（现为 89） |
+| `python3 scripts/check-dead-exports.py` | 对照失明，或「没有任何调用点」的导出数超过文件里的 `CEILING`（现为 85） |
 | `python3 scripts/check-channels.py` | Rust 发出的事件在前端没有名字，或前端 `listen` 的事件没有发出点 |
 | `bash scripts/boot-probe.test.sh` | 45 条断言：启动探针的崩溃 / 早退 / 存活三条路径、取消语义、HOME 与六个 XDG/TMPDIR 的隔离（`xvfb-run`、`dbus-run-session`、`pkill` 都是 mock） |
-| `bash scripts/package-linux.test.sh` | 44 条断言：打包脚本的 6 个场景（缺件 / 陈旧 / 缺 portable / 校验失败 / 发布失败 / 成功），含「只 `exit 0` 的假 rpm 必须被拒绝、真 rpm 必须被选中」 |
+| `bash scripts/package-linux.test.sh` | 46 条断言：打包脚本的 6 个场景（缺件 / 陈旧 / 缺 portable / 校验失败 / 发布失败 / 成功），含「只 `exit 0` 的假 rpm 必须被拒绝、真 rpm 必须被选中」与「三个 XDG 目录与 TMPDIR、npm 缓存都必须落在本次运行的临时目录里」 |
 | `pnpm --filter @nekowite/desktop test:webkit-harness` | harness 自己的 5 个 `node:test` 用例：HiDPI 裁剪换算、探针「什么都没量到」的判定规则 |
+| `node apps/desktop/e2e/webkit/drive-app.mjs`（需 `xvfb-run`，需要已构建的应用） | **真实应用**的真机探针（不属于上面的 gate，原因见 §4）：页面是否 Tauri 页、生产 CSP 是否在应用内生效（`eval` 对照 + `blob:` 导入被拒）、知识库是否打开、笔记是否用原生点击打开、图片是否经 `asset://` 渲染、真实按键输入的文字是否被 `Ctrl+S` 写到磁盘 |
 
 `pnpm perf` 单列：`vitest run --config vitest.perf.config.ts`，断言 `docs/PERF.md` 的预算。`check:export-css` 单列：`node scripts/check-katex.ts`，读 `dist/assets/*.js`，因此必须在 `pnpm build` 之后跑。
 
@@ -96,6 +97,9 @@ NEKOWITE_REQUIRE_PROCESS_TESTS=1 cargo test --locked --no-fail-fast \
   `naturalWidth=64`），也就是「前端要路径 → `media.rs` 只放行这一个文件 → 窗口取回」这条链在发货的
   应用里跑通了。仍然是人工的：图片先暂存在 `.tmp/`、保存后才移入 `<笔记名>_assets/` 的那一段。
 - 安全边界：插件是否真的隔离（架构级残留）、Key 不出现在 URL 或日志、路径逃逸被拒。
+- **为什么 `drive-app.mjs` 不在 gate 里**：它需要**已构建的应用**、`WebKitWebDriver` 与一个显示器
+  （`tauri-driver` 把应用交给 WebDriver 驱动）。gate 的 `scripts` 步骤在缺这些东西的机器上只能跳过，
+  而「跳过读起来像通过」正是这套程序一直在拆的形状，所以它是**手动**探针，读数写在提交与账本里。
 
 ## 5. 怎么重新跑一遍
 
