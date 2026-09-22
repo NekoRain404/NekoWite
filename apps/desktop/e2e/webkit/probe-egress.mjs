@@ -8,11 +8,12 @@
  *
  * This is that capture, as close as this machine allows. A logging HTTP proxy is put in front of the app
  * through the standard environment variables and the app is driven with WebDriver, so every request it
- * makes through its own stack arrives as a `CONNECT host:port` line with a timestamp. Four phases, because
+ * makes through its own stack arrives as a `CONNECT host:port` line with a timestamp. Five phases, because
  * the claim is about *when*: idle at the welcome screen (nothing may leave), then the agent registry with a
  * **fresh** cache (nothing may leave either — `agent_catalogue_read` is cache-first), then the same command
  * with a **stale** cache (exactly the documented host), then the pet catalogue (which is deliberately not
- * cached, so it goes out every time).
+ * cached, so it goes out every time), and last a note rendered in the editor with a **remote image** in it
+ * — the document's second network claim, that rendering never reaches for one.
  *
  * The fresh-cache phase is also the control for the whole instrument: a probe that only ever saw requests
  * could not tell "the cache answered" from "this command never fetches", and a probe that only ever saw
@@ -39,6 +40,7 @@ import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { freeDualPort, sleep, until } from './webdriver.mjs'
+import { seedVault } from './drive-vault.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = path.resolve(HERE, '../../../..')
@@ -83,6 +85,66 @@ const REGISTRY_CACHE = path.join('.tmp-review-pnpm', 'data', 'dev.nekowite.app',
 /** Older than `CACHE_MAX_AGE` (one hour), without needing to know the constant. */
 const STALE_AGE_MS = 2 * 60 * 60 * 1000
 
+/**
+ * The note the last phase renders: a **remote** image the policy must refuse, a local one it must load,
+ * and inline math — because `docs/PRIVACY.md` makes a second claim about what rendering does ("文档里的
+ * 远程图片不会被加载 … 因此渲染笔记不会顺带发起网络请求") and it is the same instrument that can check it.
+ */
+const RENDERER_VAULT = path.join(TARGET, 'probe-egress-vault')
+const RENDERER_NOTE = 'egress-probe-note.md'
+const RENDERER_TITLE = 'egress-probe-note'
+const REMOTE_IMAGE = 'https://remote-image.invalid/x.png'
+const RENDERER_ASSET =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="40"><rect width="64" height="40" fill="#22c55e"/></svg>\n'
+const RENDERER_CONTENT = `# ${RENDERER_TITLE}
+
+![remote](${REMOTE_IMAGE})
+
+![local](probe-asset.svg)
+
+Inline math $x^2 + y^2 = z^2$ follows.
+`
+/** A second note, so the math note can be left and re-entered without closing a tab or typing. */
+const PLAIN_NOTE = 'egress-plain-note.md'
+const PLAIN_TITLE = 'egress-plain-note'
+const PLAIN_CONTENT = `# ${PLAIN_TITLE}
+
+Nothing to render here but this sentence.
+`
+
+/** The W3C element key, so an element can be clicked through the driver rather than by a page script. */
+const ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf'
+
+/**
+ * What the editor's image node views report about themselves.
+ *
+ * `packages/editor-core/src/image/node-view.ts` gives each image a `<figure class="neko-image">` with
+ * `data-failed`, a message span and two buttons — and it decides *which* affordance to show by asking
+ * whether the src is remote (`isRemoteHttpSrc`): retry is useless for an image the host's policy refuses,
+ * so the honest offer is "open in browser". That difference is what this reads.
+ */
+const RENDERER_FIGURES_SCRIPT = `
+const figures = Array.from(document.querySelectorAll('.ProseMirror figure.neko-image'))
+return {
+  figures: figures.map((figure) => {
+    const img = figure.querySelector('img')
+    return {
+      failed: figure.getAttribute('data-failed'),
+      src: (img && img.getAttribute('src') || '').slice(0, 60),
+      loaded: img ? Boolean(img.complete && img.naturalWidth > 0) : null,
+      message: (figure.querySelector('.neko-image-error-msg') || {}).textContent || null,
+      retryHidden: figure.querySelector('.neko-image-error-retry')?.hasAttribute('hidden') ?? null,
+      openHidden: figure.querySelector('.neko-image-error-open')?.hasAttribute('hidden') ?? null,
+    }
+  }),
+  math: document.querySelectorAll('.ProseMirror .math-node').length,
+  mathInline: document.querySelectorAll('.ProseMirror .math-inline').length,
+  mathFields: document.querySelectorAll('.ProseMirror math-field').length,
+  mathSample: (document.querySelector('.ProseMirror .math-node')?.textContent ?? '').slice(0, 40),
+  text: (document.querySelector('.ProseMirror')?.innerText ?? '').replace(/\\s+/g, ' ').slice(0, 160),
+}
+`
+
 const REQUEST_TIMEOUT_MS = 15_000
 const SESSION_TIMEOUT_MS = 120_000
 /** How long each phase is given for the request to appear. A refused CONNECT is answered at once; this is
@@ -90,6 +152,32 @@ const SESSION_TIMEOUT_MS = 120_000
 const PHASE_TIMEOUT_MS = 20_000
 /** The idle window: how long the app is left alone at the welcome screen before anything is asked of it. */
 const IDLE_MS = 10_000
+/**
+ * When the math node is sampled, in milliseconds after the editor appeared.
+ *
+ * `math/atoms.ts`'s `renderLatexMarkup` renders real math only when MathLive has loaded; until then it
+ * falls back to the escaped LaTeX, and `views.ts` renders once — on create — with no re-render when the
+ * library arrives. Whether that shows is a question about timing, so it is measured as one: the first
+ * sample is taken while the page is still settling and the last one long after any import should have
+ * finished.
+ */
+const MATH_SAMPLE_AT_MS = [4_000, 12_000, 24_000]
+
+/** Whether MathLive arrived, and what the math node is made of, at one moment. */
+const MATH_SAMPLE_SCRIPT = `
+const node = document.querySelector('.ProseMirror .math-node')
+const styles = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
+return {
+  mathNodes: document.querySelectorAll('.ProseMirror .math-node').length,
+  hasMathLive: Boolean(window.MathLive),
+  // \`loadMathLive\` imports the library's stylesheet with the module, and the bundler injects that as a
+  // style tag or a link — evidence that the import *succeeded*, where \`window.MathLive\` is only evidence
+  // that a global was set (an ESM bundle need not set one).
+  mathLiveStyles: styles.filter((s) => /ML__|mathlive/i.test(s.textContent || s.getAttribute('href') || '')).length,
+  markup: node ? node.innerHTML.slice(0, 120) : null,
+  text: node ? (node.textContent || '').slice(0, 40) : null,
+}
+`
 
 /**
  * A proxy that records what it is asked for and refuses it.
@@ -174,6 +262,11 @@ async function main() {
   const session = { id: null, port: driverPort }
   const run = (method, suffix, body) => request(session.port, method, `/session/${session.id}${suffix}`, body)
   const script = (source) => ({ script: source, args: [] })
+  /** The W3C element lookup, so the note row can be clicked through the driver rather than by a script. */
+  const findElement = async (using, value) => {
+    const found = await run('POST', '/element', { using, value })
+    return found?.[ELEMENT_KEY] ?? null
+  }
   const readings = { proxy: proxyUrl, phases: {} }
   /** The proxy hits that arrived since `from`, so each phase can be attributed by time rather than by hope. */
   const since = (from) => proxy.hits.filter((hit) => hit.at >= from).map((hit) => hit.line)
@@ -281,6 +374,105 @@ async function main() {
     await invoke(REGISTRY.command, 'registryStaleCache')
 
     await invoke(PET.command, 'petCatalogue')
+
+    /**
+     * The last phase: a vault is opened and a note is rendered, and **nothing may leave** — not the
+     * remote image the note names, and nothing else.
+     *
+     * A window of a few seconds after the editor appears, because the image node view resolves its src
+     * asynchronously and a fetch that were going to happen would happen then.
+     */
+    seedVault({
+      dir: RENDERER_VAULT,
+      configHome: ENV.XDG_CONFIG_HOME,
+      files: {
+        'probe-asset.svg': RENDERER_ASSET,
+        [RENDERER_NOTE]: RENDERER_CONTENT,
+        [PLAIN_NOTE]: PLAIN_CONTENT,
+      },
+    })
+    await phase('renderer', async () => {
+      await run('POST', '/execute/sync', {
+        script: `localStorage.setItem('nekowite.vault', arguments[0]); return true`,
+        args: [RENDERER_VAULT],
+      })
+      // `{}` rather than no body: this driver refuses a POST with an empty body, which reads as a driver
+      // capability until the body is sent.
+      await run('POST', '/refresh', {})
+      await until(
+        async () =>
+          (await run('POST', '/execute/sync', script('return document.querySelectorAll(".status-btn").length >= 1')).catch(
+            () => false,
+          ))
+            ? true
+            : null,
+        { timeout: 30_000, what: 'the shell to render with a vault open' },
+      ).catch(() => null)
+      const row = await until(
+        async () => findElement('xpath', `//*[contains(text(), "${RENDERER_TITLE}")]`).catch(() => null),
+        { timeout: 20_000, what: 'the note row in the tree' },
+      ).catch(() => null)
+      if (row) await run('POST', `/element/${row}/click`, {})
+      await until(
+        async () =>
+          (await run('POST', '/execute/sync', script('return document.querySelector(".ProseMirror") ? true : null')).catch(
+            () => null,
+          ))
+            ? true
+            : null,
+        { timeout: 20_000, what: 'the note to open in the editor' },
+      ).catch(() => null)
+      // Given to the renderer to settle: the node view resolves `asset://` and the refused remote src
+      // asynchronously, and a reading taken before that would see neither. The math node is sampled on
+      // the way, because "does it still show the LaTeX source" is a question about time.
+      const samples = []
+      let waited = 0
+      for (const at of MATH_SAMPLE_AT_MS) {
+        await sleep(Math.max(0, at - waited))
+        waited = at
+        samples.push({
+          at,
+          ...(await run('POST', '/execute/sync', script(MATH_SAMPLE_SCRIPT)).catch((e) => ({
+            unreadable: String(e?.message ?? e).slice(0, 140),
+          }))),
+        })
+      }
+      readings.mathSamples = samples
+      /**
+       * The warm arm: leave the math note and come back to it.
+       *
+       * If the formula renders the second time, the library is loaded by then and the fault is the
+       * render-once timing above; if it still shows the LaTeX source, the library never arrived and the
+       * fault is the import. Two clicks — no typing into the user's note, and no closing a tab.
+       */
+      const openNote = async (title) => {
+        const row = await until(
+          async () => findElement('xpath', `//*[contains(text(), "${title}")]`).catch(() => null),
+          { timeout: 15_000, what: `the row for ${title}` },
+        ).catch(() => null)
+        if (row) await run('POST', `/element/${row}/click`, {})
+        await until(
+          async () =>
+            (await run('POST', '/execute/sync', {
+              script: 'return document.querySelector(".ProseMirror") && document.querySelector(".ProseMirror").innerText.includes(arguments[0]) ? true : null',
+              args: [title],
+            }).catch(() => null))
+              ? true
+              : null,
+          { timeout: 15_000, what: `${title} to be open` },
+        ).catch(() => null)
+      }
+      await openNote(PLAIN_TITLE)
+      await openNote(RENDERER_TITLE)
+      await sleep(3_000)
+      readings.mathAfterReopen = await run('POST', '/execute/sync', script(MATH_SAMPLE_SCRIPT)).catch((e) => ({
+        unreadable: String(e?.message ?? e).slice(0, 140),
+      }))
+      return { rendered: RENDERER_NOTE }
+    })
+    readings.rendererFigures = await run('POST', '/execute/sync', script(RENDERER_FIGURES_SCRIPT)).catch(
+      (e) => `unreadable: ${String(e?.message ?? e).slice(0, 160)}`,
+    )
   } finally {
     if (session.id) await run('DELETE', '').catch(() => undefined)
     try {
@@ -324,8 +516,35 @@ async function main() {
       `the pet catalogue produced no request to ${PET.host} (hits: ${lines('petCatalogue') || 'none'}, answer: ${answerIn('petCatalogue')})`,
     )
   }
+  // The renderer's claim, in two halves: nothing left the app while it drew a note that names a remote
+  // image — and the app said so on the image itself rather than showing a silently broken one.
+  if (hostsIn('renderer').length > 0) {
+    problems.push(
+      `rendering a note sent something out of the app: ${lines('renderer')} — the note names ${REMOTE_IMAGE}, which the policy is supposed to refuse before any connection`,
+    )
+  }
+  const figures = readings.rendererFigures
+  if (figures === null || typeof figures !== 'object') {
+    notes.push(`the renderer's image nodes could not be read (${figures})`)
+  } else if (!Array.isArray(figures.figures) || figures.figures.length === 0) {
+    notes.push(`the note rendered no image at all (editor text: ${JSON.stringify(figures.text ?? null)})`)
+  } else {
+    const remote = figures.figures.find((figure) => String(figure.src).startsWith('https://')) ?? null
+    if (remote === null) {
+      problems.push(`no image node kept the remote src, so the refusal was not measured: ${JSON.stringify(figures.figures)}`)
+    } else {
+      if (remote.failed !== 'true') problems.push(`the remote image is not marked failed: ${JSON.stringify(remote)}`)
+      if (!remote.message) problems.push(`the remote image shows no message: ${JSON.stringify(remote)}`)
+      if (remote.loaded === true) problems.push(`the remote image actually loaded: ${JSON.stringify(remote)}`)
+      if (remote.openHidden !== false || remote.retryHidden !== true) {
+        problems.push(
+          `the remote image offers the wrong affordance (retry is useless for what the policy refuses): ${JSON.stringify(remote)}`,
+        )
+      }
+    }
+  }
   const documented = new Set([PET.host, REGISTRY.host])
-  const phases = ['idle', 'registryFreshCache', 'registryStaleCache', 'petCatalogue']
+  const phases = ['idle', 'registryFreshCache', 'registryStaleCache', 'petCatalogue', 'renderer']
   const unlisted = [...new Set(phases.flatMap((name) => hostsIn(name)))].filter(
     (host) => !documented.has(host),
   )
@@ -347,10 +566,13 @@ async function main() {
     process.exitCode = 1
     return
   }
+  const math = readings.rendererFigures?.math
+  const mathFields = readings.rendererFigures?.mathFields
   console.log('PASS: the app sat idle at its welcome screen with nothing leaving it; a fresh registry cache')
-  console.log(`      answered with no request at all; a stale one contacted exactly ${REGISTRY.host}; and the`)
-  console.log(`      pet catalogue — uncached by design — contacted exactly ${PET.host}. Both answers named the`)
-  console.log('      URL they could not reach, which is the other half of what the document claims.')
+  console.log(`      answered with no request at all; a stale one contacted exactly ${REGISTRY.host}; the pet`)
+  console.log(`      catalogue — uncached by design — contacted exactly ${PET.host}; and rendering a note that`)
+  console.log(`      names ${REMOTE_IMAGE} sent nothing anywhere, with the image marked failed and offered`)
+  console.log(`      "open in browser" instead of a retry that could never work (${math} math node(s), ${mathFields} mounted editor(s)).`)
 }
 
 await main()

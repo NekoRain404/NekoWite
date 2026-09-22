@@ -50,6 +50,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { measurePrintDialog } from './drive-print.mjs'
+import { seedVault } from './drive-vault.mjs'
 import { freeDualPort, sleep, until } from './webdriver.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -96,7 +97,7 @@ const NOTE = 'probe-note.md'
 const NOTE_TITLE = 'drive-probe-note'
 /**
  * What the probe types. ASCII and no spaces, so every character is one key event, and **unique to this
- * run** so the text found afterwards can only be this run's keystrokes. (`seedVault` rewrites the note
+ * run** so the text found afterwards can only be this run's keystrokes. (`seedProbeVault` rewrites the note
  * before each run, so a fixed token could not survive in the *file* — but the editor could still be
  * holding a buffer from an earlier session, and a reading that cannot tell those apart is worth one
  * `process.pid` to make unambiguous.)
@@ -113,25 +114,21 @@ const PRINT = process.argv.includes('--print')
 /** Where the dialog's own picture is written: the git-ignored target tree, beside the other probe output. */
 const PRINT_SHOT_DIR = path.join(REPO, 'apps/desktop/src-tauri/target/drive-app-print')
 
-/** A vault with one note, and the two records that let the app open it without a dialog. */
-function seedVault() {
-  const vault = VAULT_DIR
-  fs.mkdirSync(vault, { recursive: true })
-  // An image beside the note, referenced the ordinary way. Whatever the editor renders for it has to come
-  // through the host: the frontend asks for a media path, `commands/fs/media.rs` grants that one file on
-  // the asset scope, and the window fetches `asset://…`. Nothing in a browser test can prove that chain.
-  fs.writeFileSync(
-    path.join(vault, 'probe-asset.svg'),
-    '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="40"><rect width="64" height="40" fill="#3b82f6"/></svg>\n',
-  )
-  fs.writeFileSync(
-    path.join(vault, NOTE),
-    `# ${NOTE_TITLE}\n\n![probe](probe-asset.svg)\n\nWritten by drive-app.mjs.\n`,
-  )
-  const record = path.join(ENV.XDG_CONFIG_HOME, 'dev.nekowite.app', 'last-vault')
-  fs.mkdirSync(path.dirname(record), { recursive: true })
-  fs.writeFileSync(record, `${vault}\n`)
-  return vault
+/** The probe's vault: one note, the image beside it, and the record that makes it the last one opened. */
+function seedProbeVault() {
+  return seedVault({
+    dir: VAULT_DIR,
+    configHome: ENV.XDG_CONFIG_HOME,
+    files: {
+      // An image beside the note, referenced the ordinary way. Whatever the editor renders for it has to
+      // come through the host: the frontend asks for a media path, `commands/fs/media.rs` grants that one
+      // file on the asset scope, and the window fetches `asset://…`. Nothing in a browser test can prove
+      // that chain.
+      'probe-asset.svg':
+        '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="40"><rect width="64" height="40" fill="#3b82f6"/></svg>\n',
+      [NOTE]: `# ${NOTE_TITLE}\n\n![probe](probe-asset.svg)\n\nWritten by drive-app.mjs.\n`,
+    },
+  })
 }
 
 /** Progress on stderr as it happens: a probe that dies silently names nothing. */
@@ -182,7 +179,7 @@ async function request(port, method, suffix, body, timeoutMs = REQUEST_TIMEOUT_M
 
 async function main() {
   stage('seed the vault')
-  const vault = seedVault()
+  const vault = seedProbeVault()
 
   stage('ports')
   // A port that is free for Node to bind is not necessarily free for WebKitWebDriver, which binds
