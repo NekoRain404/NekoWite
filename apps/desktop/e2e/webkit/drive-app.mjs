@@ -29,11 +29,17 @@
  *     not be attributed — and the probe says so rather than reading green;
  *  4. a blob module import is refused — the assertion `docs/SECURITY.md` §2 rests on, measured here where
  *     it actually ships rather than on a synthetic page carrying the same policy string;
- *  5. the vault opened: the shell's status bar rendered and the note the probe planted is in the tree.
+ *  5. the vault opened: the shell's status bar rendered and the note the probe planted is in the tree;
+ *  6. the note opened by a native click, its image rendered through the host's asset protocol;
+ *  7. real key events reached the editor and `Ctrl+S` put them in the file on disk;
+ *  8. with `--print`: the export menu was opened by a native right-click, the PDF export reached a
+ *     **GTK print dialog** (visible only in the X tree), the document behind it carries the `@page`
+ *     rule and its `asset://` image resolved, and closing the dialog removed the export frame.
  *
  * Usage:
  *   xvfb-run -a -s "-screen 0 1280x800x24 -extension GLX" node e2e/webkit/drive-app.mjs
  *   node e2e/webkit/drive-app.mjs --app <path>          # a different build
+ *   node e2e/webkit/drive-app.mjs --print              # and drive the PDF export as far as its dialog
  *
  * Exit: 0 when every reading holds, 1 otherwise. It needs no window manager (nothing here reads
  * geometry) and it writes nothing outside the repository: the app's config, data and state all live in
@@ -44,6 +50,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:http'
+import { measurePrintDialog } from './drive-print.mjs'
 import { sleep, until } from './webdriver.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -75,6 +82,14 @@ const ENV = {
   XDG_CACHE_HOME: path.join(SCRATCH_ROOT, 'cache'),
   XDG_STATE_HOME: path.join(SCRATCH_ROOT, 'state'),
   XDG_CONFIG_HOME: path.join(SCRATCH_ROOT, 'config'),
+  // **The X11 backend, on purpose, and it is not a preference.** This machine is a Wayland session
+  // (`WAYLAND_DISPLAY` is set), and GTK prefers Wayland when it is offered — so the app's windows, and
+  // every GTK dialog it opens, would be compositor surfaces that `xwininfo` and `xdotool` cannot see.
+  // Measured while writing `--print`: `xwininfo -root -children` listed **zero** windows for a *running*
+  // app, which reads exactly like "no print dialog ever appeared". Forcing the app onto the probe's own
+  // `Xvfb` display is what makes the dialog observable at all; the cost is that the dialog reading is the
+  // X11 GTK backend's, and the print machinery behind it is WebKitGTK's either way.
+  GDK_BACKEND: 'x11',
 }
 
 const NOTE = 'probe-note.md'
@@ -90,6 +105,14 @@ const NOTE_TITLE = 'drive-probe-note'
 const TYPED_TOKEN = `probe-typed-${process.pid}`
 /** The scratch vault's directory name; the shell shows it, so the verdict can too. */
 const VAULT_DIR = path.join(REPO, 'apps/desktop/src-tauri/target/drive-app-vault')
+/**
+ * Whether this run also drives the PDF export. Off by default because that export ends in a **modal GTK
+ * print dialog**: the run has to open one and close it again, which is a heavier, more environment-bound
+ * reading than the rest — and one a machine with no print backend at all can only fail.
+ */
+const PRINT = process.argv.includes('--print')
+/** Where the dialog's own picture is written: the git-ignored target tree, beside the other probe output. */
+const PRINT_SHOT_DIR = path.join(REPO, 'apps/desktop/src-tauri/target/drive-app-print')
 
 /**
  * A port free on **both** loopback families, which is what the driver needs.
@@ -136,6 +159,36 @@ function seedVault() {
 
 /** Progress on stderr as it happens: a probe that dies silently names nothing. */
 const stage = (what) => console.error(`--- ${what}`)
+
+/**
+ * What the export frame is holding, read from the page while its dialog is up.
+ *
+ * The frame is `display: none` and its document is written by `renderForPrint`, so this reads the three
+ * things that decide whether the export is real: the document arrived, the `@page` rule the settings
+ * asked for is inside it, and its `asset://` image resolved (`naturalWidth > 0` — the failure a browser
+ * test with a stubbed host cannot have). It counts frames rather than assuming the export's is the only
+ * one, so the "was it cleaned up" reading afterwards is a difference and not a guess.
+ */
+const PRINT_FRAME_SCRIPT = `
+const frames = Array.from(document.querySelectorAll('iframe'))
+const srcdocFrames = frames.filter((f) => (f.getAttribute('srcdoc') ?? '').length > 0)
+const frame = srcdocFrames[0] ?? null
+if (!frame) return { frames: frames.length, srcdocFrames: 0 }
+const doc = frame.contentDocument
+const style = doc && doc.querySelector ? doc.querySelector('style[data-neko-export-page]') : null
+return {
+  frames: frames.length,
+  srcdocFrames: srcdocFrames.length,
+  docLength: doc && doc.documentElement ? doc.documentElement.innerHTML.length : -1,
+  pageRule: style ? (style.textContent ?? '').slice(0, 100) : null,
+  text: doc && doc.body ? doc.body.innerText.replace(/\\s+/g, ' ').slice(0, 100) : null,
+  images: Array.from((doc && doc.images) || []).map((img) => ({
+    src: (img.getAttribute('src') ?? '').slice(0, 48),
+    loaded: img.complete && img.naturalWidth > 0,
+    naturalWidth: img.naturalWidth,
+  })),
+}
+`
 
 async function request(port, method, suffix, body, timeoutMs = REQUEST_TIMEOUT_MS) {
   const res = await fetch(`http://127.0.0.1:${port}${suffix}`, {
@@ -432,6 +485,11 @@ async function main() {
       { timeout: 15_000, what: 'the token to reach the file on disk' },
     ).catch(() => false)
     readings.fileSize = fs.statSync(path.join(vault, NOTE)).size
+
+    if (PRINT) {
+      stage('export PDF: the menu, the dialog, and the document behind it')
+      await measurePrintDialog({ run, script, findElement, readings, shotDir: PRINT_SHOT_DIR })
+    }
   } finally {
     if (session.id) await run('DELETE', '').catch(() => undefined)
     for (const child of [driver]) {
@@ -471,6 +529,55 @@ async function main() {
   if (readings.noteVisible !== true) {
     problems.push(`the planted note titled "${NOTE_TITLE}" is not listed; the page reads: ${readings.pageTextSample}`)
   }
+  if (PRINT) {
+    if (readings.cardFound !== true) problems.push('no note card to right-click for the export menu')
+    if (readings.menuItemFound !== true) problems.push('the note menu never offered the PDF export')
+    // `window.print()` on a hidden `srcdoc` frame is the whole PDF export. If no dialog appears, the user
+    // pressed the item and nothing happened — there is no error to read, which is why this is measured as a
+    // window rather than as a result code. The two hand-made attempts (`drive-print.mjs`) are what attribute
+    // it: "this frame cannot print" and "printing reaches no dialog here at all" are different findings, and
+    // the print events say which side of the request failed.
+    const printedDialog = readings.dialogWindow ?? readings.exportFrameDialog ?? readings.mainFrameDialog
+    if (printedDialog == null) {
+      const opened = (readings.printWindows ?? [])
+        .map((w) => `${w.id} ${w.width}x${w.height} ${w._NET_WM_WINDOW_TYPE ?? 'no type'}`)
+        .join(', ')
+      problems.push(
+        `no print dialog appeared for the PDF export. Windows it did open: [${opened}]. A print repeated inside the app's own frame returned "${readings.exportFramePrint}" (events after: ${readings.exportFrameEventsAfter}), and one from the main frame returned "${readings.mainFramePrint}" (events after: ${readings.mainFrameEventsAfter})`,
+      )
+    }
+    const printFrame = readings.printFrame
+    if (printFrame === null || typeof printFrame !== 'object') {
+      problems.push(`the export frame could not be read (${printFrame})`)
+    } else if (printFrame.srcdocFrames === 0) {
+      problems.push('no srcdoc frame was attached: the export never rendered a document to print')
+    } else {
+      if (!(printFrame.docLength > 0)) problems.push('the export frame holds an empty document')
+      if (!printFrame.pageRule) problems.push('the exported document carries no @page rule from the settings')
+      const printImages = Array.isArray(printFrame.images) ? printFrame.images : []
+      if (printImages.length === 0) {
+        problems.push('the exported document references no image, though the note has one')
+      } else if (!printImages.every((i) => i.loaded)) {
+        problems.push(`an image did not resolve in the exported document: ${JSON.stringify(printImages)}`)
+      }
+    }
+    const closed = [readings.framesAfterWindowclose, readings.framesAfterEscape].some(
+      (n) => typeof n === 'number' && n >= 0,
+    )
+    if (!closed) {
+      // The cleanup is judged only when a close actually happened. A probe that could not dismiss the
+      // dialog has not measured the app's `afterprint` path, and reporting that as a defect would blame
+      // the app for the probe's own limitation — so the two cases are kept apart.
+      if (readings.dialogStillOpen === false) {
+        problems.push(
+          `the print dialog closed but the export frame stayed attached (frames ${readings.framesBefore} -> ${readings.windowsAfterClose?.length ?? '?'} windows, still ${readings.framesBefore !== 0 ? 'more' : 'one'}), so it lingers until the exporters' five-minute backstop`,
+        )
+      } else {
+        readings.printCleanupUnmeasured =
+          'the probe could not dismiss the print dialog, so `afterprint` and the frame cleanup were not measured'
+      }
+    }
+  }
   if (problems.length > 0) {
     console.error('FAIL:')
     for (const p of problems) console.error(`  - ${p}`)
@@ -494,6 +601,21 @@ async function main() {
   console.log(`      "${TYPED_TOKEN}" typed as real key events and saved to disk with Ctrl+S — and the`)
   console.log('      production CSP is in force inside it: `eval` refused (the control) and a blob module')
   console.log('      import refused with it.')
+  if (PRINT) {
+    const dialog = [readings.dialogWindow, readings.exportFrameDialog, readings.mainFrameDialog]
+      .filter(Boolean)
+      .map((w) => `"${w.name || w.id}" ${w.width}x${w.height}`)
+      .join(', ')
+    const printImages = Array.isArray(readings.printFrame?.images) ? readings.printFrame.images : []
+    const after = readings.framesAfterWindowclose >= 0 ? readings.framesAfterWindowclose : readings.framesAfterEscape
+    console.log(`      Its PDF export rendered the note into its print frame ("${String(readings.printFrame?.pageRule ?? '').trim().slice(0, 44)}", ${printImages.length} image(s) resolved)`)
+    if (dialog) {
+      console.log(`      and reached a real GTK print dialog (${dialog}); closing it left the frame count at ${after}.`)
+    } else {
+      console.log(`      but reached no print dialog (${readings.exportFramePrint} / ${readings.mainFramePrint});`)
+      console.log(`      its cleanup was therefore unmeasured: ${readings.printCleanupUnmeasured ?? 'no dialog to close'}`)
+    }
+  }
 }
 
 await main()
