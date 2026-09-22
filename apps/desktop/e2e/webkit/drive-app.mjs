@@ -41,6 +41,8 @@
  *   node e2e/webkit/drive-app.mjs --app <path>          # a different build
  *   node e2e/webkit/drive-app.mjs --print              # and drive the PDF export as far as its dialog
  *   node e2e/webkit/drive-app.mjs --settings           # and walk every page of the settings dialog
+ *   node e2e/webkit/drive-app.mjs --pet                # and read the desktop pet's own windows
+ *   node e2e/webkit/drive-app.mjs --keys               # and check the documented shortcuts
  *
  * Exit: 0 when every reading holds, 1 otherwise. It needs no window manager (nothing here reads
  * geometry) and it writes nothing outside the repository: the app's config, data and state all live in
@@ -51,6 +53,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { measurePrintDialog } from './drive-print.mjs'
+import { walkSettingsDialog } from './drive-settings.mjs'
 import { seedVault } from './drive-vault.mjs'
 import { freeDualPort, sleep, until } from './webdriver.mjs'
 
@@ -121,8 +124,22 @@ const PRINT = process.argv.includes('--print')
  * so each one is read for text and controls rather than assumed.
  */
 const SETTINGS = process.argv.includes('--settings')
-/** The page swap is a cross-fade (see `SettingsPanel.vue`), so the destination needs a moment to land. */
-const SETTINGS_SETTLE_MS = 500
+/**
+ * Whether this run also reads the desktop pet's own windows.
+ *
+ * They are pages of their own — the ball and the character are separate webviews — and nothing has ever
+ * read one: the session attaches to whichever the driver picks, and every other instrument switches away
+ * from them. A pet window whose page failed to render is invisible to a probe that only reads the shell.
+ */
+const PET = process.argv.includes('--pet')
+/**
+ * Whether this run also checks the shortcuts the guide documents on the shipping engine.
+ *
+ * `Ctrl+K` is the app's main navigation affordance and the guide documents it; a binding that a webview or a
+ * focus scope swallows looks exactly like a key nobody pressed. The palette is also the one documented
+ * shortcut whose *effect* is a real search over the vault, so it can be read rather than only observed.
+ */
+const KEYS = process.argv.includes('--keys')
 /** Where the dialog's own picture is written: the git-ignored target tree, beside the other probe output. */
 const PRINT_SHOT_DIR = path.join(REPO, 'apps/desktop/src-tauri/target/drive-app-print')
 
@@ -156,22 +173,24 @@ const stage = (what) => console.error(`--- ${what}`)
  * one, so the "was it cleaned up" reading afterwards is a difference and not a guess.
  */
 /**
- * What one settings page is showing.
+ * What one pet window's page is showing.
  *
- * `markers` reads the `data-test` attributes the pages already carry (the version row, the vault path, the
- * blocked-plugin notice, the agent profile), so the readings name the page's own landmarks rather than
- * whatever text happens to be first. `toasts` is the app's own report of a failure: a page that threw on
- * mount would put one there rather than leave a blank panel behind.
+ * The two windows draw different things: the ball is DOM (`.pet-ball` with its orb and face) and the
+ * character is a **canvas** (`PetSprite` paints into one), so a reading that only counted text would call a
+ * working character window empty. The canvas is therefore read by its backing size rather than by its
+ * pixels: `width: 0` is a canvas that was never laid out.
  */
-const SETTINGS_PAGE_SCRIPT = `
-const content = document.querySelector('.dialog-content')
-const text = (content ? content.innerText : '').replace(/\\s+/g, ' ').trim()
+const PET_WINDOW_SCRIPT = `
+const canvas = document.querySelector('canvas')
 return {
-  text: text.slice(0, 140),
-  textLength: text.length,
-  controls: content ? content.querySelectorAll('input, select, textarea, button').length : 0,
-  markers: Array.from((content && content.querySelectorAll('[data-test]')) || []).map((el) => el.getAttribute('data-test')),
-  toasts: Array.from(document.querySelectorAll('.toast')).map((t) => (t.textContent || '').trim()).join(' | '),
+  readyState: document.readyState,
+  title: document.title,
+  tauri: Boolean(window.__TAURI_INTERNALS__),
+  balls: document.querySelectorAll('.pet-ball').length,
+  sprites: document.querySelectorAll('.pet-sprite').length,
+  canvases: document.querySelectorAll('canvas').length,
+  canvasSize: canvas ? { width: canvas.width, height: canvas.height } : null,
+  text: (document.body.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 100),
 }
 `
 
@@ -275,23 +294,26 @@ async function main() {
     })
   }
 
-  /** Ctrl+S. `\uE009` is the WebDriver codepoint for the control key. */
-  async function pressCtrlS() {
+  /** One key press, optionally with Ctrl held. `\uE009` is the WebDriver codepoint for the control key. */
+  async function pressKey(value, { ctrl = false } = {}) {
     await run('POST', '/actions', {
       actions: [
         {
           type: 'key',
           id: 'keyboard',
           actions: [
-            { type: 'keyDown', value: '\uE009' },
-            { type: 'keyDown', value: 's' },
-            { type: 'keyUp', value: 's' },
-            { type: 'keyUp', value: '\uE009' },
+            ...(ctrl ? [{ type: 'keyDown', value: '\uE009' }] : []),
+            { type: 'keyDown', value },
+            { type: 'keyUp', value },
+            ...(ctrl ? [{ type: 'keyUp', value: '\uE009' }] : []),
           ],
         },
       ],
     })
   }
+
+  /** Ctrl+S, through the same helper: the sequence is unchanged, only spelled once. */
+  const pressCtrlS = () => pressKey('s', { ctrl: true })
 
   /** The W3C element key, and the element id behind it. */
   const ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf'
@@ -368,6 +390,31 @@ async function main() {
         import(url).then(() => done('allowed'), (e) => done('blocked:' + (e && e.message ? e.message : e)))`,
       args: [],
     })
+
+    if (PET) {
+      stage('the pet windows')
+      const petWindows = []
+      for (const handle of Array.isArray(readings.handles) ? readings.handles : []) {
+        await run('POST', '/window', { handle }).catch(() => undefined)
+        const url = await run('GET', '/url').catch(() => '')
+        const page = await run('POST', '/execute/sync', script(PET_WINDOW_SCRIPT)).catch(
+          (e) => `unreadable: ${String(e?.message ?? e).slice(0, 140)}`,
+        )
+        petWindows.push({
+          handle: String(handle).slice(5, 13),
+          url: String(url).slice(0, 80),
+          ...(page !== null && typeof page === 'object' ? page : { error: page }),
+        })
+      }
+      readings.petWindows = petWindows
+      // Back to the main window: every stage after this one reads the shell, and the driver's session is
+      // attached to one window at a time.
+      for (const handle of Array.isArray(readings.handles) ? readings.handles : []) {
+        await run('POST', '/window', { handle }).catch(() => undefined)
+        const url = await run('GET', '/url').catch(() => '')
+        if (!String(url).includes('desktop-pet')) break
+      }
+    }
 
     stage('open the vault')
     // The renderer's own key, then a reload: this is the path a returning user takes, and `recalled` in
@@ -492,60 +539,82 @@ async function main() {
     ).catch(() => false)
     readings.fileSize = fs.statSync(path.join(vault, NOTE)).size
 
+    if (KEYS) {
+      stage('the documented shortcuts: Ctrl+K, its search, Esc')
+      await pressKey('k', { ctrl: true })
+      readings.paletteOpened = await until(
+        async () =>
+          (await run(
+            'POST',
+            '/execute/sync',
+            script('return document.querySelector(".palette-overlay.is-open") ? true : null'),
+          ).catch(() => null))
+            ? true
+            : null,
+        { timeout: 8_000, what: 'the command palette to open on Ctrl+K' },
+      ).catch(() => false)
+      // The palette owns the keyboard while it is open, and typing into it is the driver's own key events.
+      readings.paletteFocused = await run(
+        'POST',
+        '/execute/sync',
+        script('return Boolean(document.activeElement && document.activeElement.classList.contains("palette-input"))'),
+      ).catch(() => false)
+      /**
+       * The query is the **file name**, and that is the app's contract rather than a convenience.
+       *
+       * `fileEntryOf` labels a file row with the basename (`command-palette-logic.ts`) and offers the
+       * directory as its hint and its other keyword — so the palette searches paths, while the note tree
+       * shows the note's *title* (its H1). The first version of this stage typed the title and read
+       * 「无匹配结果」, which is the app behaving as written and the probe expecting the wrong thing. Both
+       * readings are taken now: the file name is asserted, the title is recorded.
+       */
+      const paletteState = () =>
+        run(
+          'POST',
+          '/execute/sync',
+          script(`const input = document.querySelector('.palette-input')
+            const palette = document.querySelector('.palette')
+            return {
+              typed: input ? input.value : null,
+              text: (palette ? palette.innerText : '').replace(/\s+/g, ' ').slice(0, 200),
+            }`),
+        ).catch((e) => ({ unreadable: String(e?.message ?? e).slice(0, 140) }))
+      const fileName = NOTE.replace(/\.md$/, '')
+      await typeText(fileName)
+      readings.paletteFileNameSearch = await until(
+        async () => {
+          const seen = await paletteState()
+          return String(seen?.typed ?? '') === fileName && String(seen?.text ?? '').includes(fileName) ? seen.text : null
+        },
+        { timeout: 8_000, what: 'the palette to find the open file by its name' },
+      ).catch(() => null)
+      // Cleared with real backspaces and re-queried with the title, so the difference is the query alone.
+      for (let i = 0; i < fileName.length; i += 1) await pressKey('\uE003')
+      await typeText(NOTE_TITLE)
+      readings.paletteTitleSearch = await until(
+        async () => {
+          const seen = await paletteState()
+          return String(seen?.typed ?? '') === NOTE_TITLE ? seen.text : null
+        },
+        { timeout: 8_000, what: 'the palette to answer the title query' },
+      ).catch(() => null)
+      await pressKey('\uE00C')
+      readings.paletteClosed = await until(
+        async () =>
+          (await run(
+            'POST',
+            '/execute/sync',
+            script('return document.querySelector(".palette-overlay.is-open") ? null : true'),
+          ).catch(() => null))
+            ? true
+            : null,
+        { timeout: 8_000, what: 'the palette to close on Esc' },
+      ).catch(() => false)
+    }
+
     if (SETTINGS) {
       stage('the settings dialog, page by page')
-      // Opened the way a user opens it: the sidebar's own footer button, by its title. Matched on both
-      // languages because the app's language is a user setting, and `Settings` is the icon's name rather
-      // than the button's.
-      const opener = await findElement(
-        'xpath',
-        '//button[contains(@class, "footer-btn")][@title="设置" or @title="Settings"]',
-      )
-      readings.settingsOpenerFound = opener !== null
-      if (opener) {
-        await run('POST', `/element/${opener}/click`, {})
-        readings.settingsNavRows = await until(
-          async () => {
-            const count = await run('POST', '/execute/sync', script('return document.querySelectorAll(".nav-row").length'))
-            return Number(count) > 0 ? Number(count) : null
-          },
-          { timeout: 15_000, what: 'the settings dialog to open' },
-        ).catch(() => 0)
-        readings.settingsPages = []
-        for (let index = 0; index < (readings.settingsNavRows || 0); index += 1) {
-          // The nth row, clicked natively: the nav is rendered from one list, so its order is the app's.
-          const row = await findElement('xpath', `(//button[contains(@class, "nav-row")])[${index + 1}]`)
-          if (!row) continue
-          await run('POST', `/element/${row}/click`, {})
-          const settled = await until(
-            async () => {
-              const active = await run(
-                'POST',
-                '/execute/sync',
-                script(`const rows = Array.from(document.querySelectorAll('.nav-row'))
-                  return rows.findIndex((row) => row.classList.contains('active'))`),
-              )
-              return Number(active) === index ? true : null
-            },
-            { timeout: 10_000, what: `settings page ${index} to become active` },
-          ).catch(() => false)
-          await sleep(SETTINGS_SETTLE_MS)
-          const page = await run('POST', '/execute/sync', script(SETTINGS_PAGE_SCRIPT)).catch((e) => ({
-            unreadable: String(e?.message ?? e).slice(0, 160),
-          }))
-          readings.settingsPages.push({ index, active: settled === true, ...(page ?? {}) })
-        }
-        // Closed again, so a stage after this one is not reading through a dialog that owns the keyboard.
-        const close = await findElement('xpath', '//button[contains(@class, "settings-close")]')
-        if (close) await run('POST', `/element/${close}/click`, {})
-        readings.settingsClosed = await until(
-          async () => {
-            const open = await run('POST', '/execute/sync', script('return document.querySelectorAll(".settings-dialog").length'))
-            return Number(open) === 0 ? true : null
-          },
-          { timeout: 10_000, what: 'the settings dialog to close' },
-        ).catch(() => false)
-      }
+      await walkSettingsDialog({ run, script, findElement, readings })
     }
 
     if (PRINT) {
@@ -590,6 +659,28 @@ async function main() {
   }
   if (readings.noteVisible !== true) {
     problems.push(`the planted note titled "${NOTE_TITLE}" is not listed; the page reads: ${readings.pageTextSample}`)
+  }
+  if (KEYS) {
+    if (readings.paletteOpened !== true) problems.push('Ctrl+K did not open the command palette')
+    if (readings.paletteFocused !== true) problems.push('the palette opened without taking the keyboard')
+    if (readings.paletteFileNameSearch === null) {
+      problems.push('typing the open file\'s name into the palette did not list it')
+    }
+    if (readings.paletteClosed !== true) problems.push('Esc did not close the palette')
+  }
+  if (PET) {
+    const petWindows = Array.isArray(readings.petWindows) ? readings.petWindows : []
+    const petPages = petWindows.filter((window) => String(window.url).includes('desktop-pet'))
+    if (petPages.length < 2) problems.push(`expected at least two pet windows, read ${petPages.length} of ${petWindows.length}`)
+    for (const page of petPages) {
+      if (page.tauri !== true) problems.push(`pet window ${page.handle} (${page.url}) is not a Tauri page`)
+      if (page.readyState !== 'complete') problems.push(`pet window ${page.handle} never finished loading (${page.readyState})`)
+      if (page.canvasSize && !(page.canvasSize.width > 0 && page.canvasSize.height > 0)) {
+        problems.push(`pet window ${page.handle} has a canvas that was never laid out: ${JSON.stringify(page.canvasSize)}`)
+      }
+    }
+    if (!petPages.some((page) => Number(page.balls) >= 1)) problems.push('no pet window rendered the floating ball (.pet-ball)')
+    if (!petPages.some((page) => Number(page.sprites) >= 1)) problems.push('no pet window rendered the character (.pet-sprite)')
   }
   if (SETTINGS) {
     if (readings.settingsOpenerFound !== true) problems.push('the sidebar offered no settings button')
