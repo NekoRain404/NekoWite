@@ -91,7 +91,10 @@ NEKOWITE_REQUIRE_PROCESS_TESTS=1 cargo test --locked --no-fail-fast \
 - 编辑器实例的销毁是否单所有权（`destroy` 只发生一次），`runtime.dispose` 是否在 App 卸载时真的被调用。
 - Vault 注册失败时是否阻止切换（有测试，但仍值得在真机上看一次提示是否可读）。
 - 资源泄漏：ProseMirror、DOM、Worker、AbortController、timer、listener。
-- 图片 `asset://` scope（`_assets/`、`.tmp/`）在真机上是否都能显示。
+- 图片 `asset://` scope：**普通情况已经有真机读数**——`node apps/desktop/e2e/webkit/drive-app.mjs`
+  在真实应用里用原生点击打开一篇带图的笔记（2026-09-22：`src=asset://localhost/%2F…`、
+  `naturalWidth=64`），也就是「前端要路径 → `media.rs` 只放行这一个文件 → 窗口取回」这条链在发货的
+  应用里跑通了。仍然是人工的：图片先暂存在 `.tmp/`、保存后才移入 `<笔记名>_assets/` 的那一段。
 - 安全边界：插件是否真的隔离（架构级残留）、Key 不出现在 URL 或日志、路径逃逸被拒。
 
 ## 5. 怎么重新跑一遍
