@@ -66,7 +66,11 @@ put('bundle/appimage/${names[4]}',${JSON.stringify(extractor)});
     } else {
       check('success: publishes fresh portable', () => assert.equal(fs.readFileSync(path.join(root, 'release', names[0]), 'utf8'), 'new-portable'))
       const env = JSON.parse(fs.readFileSync(path.join(root, 'build-env.json'), 'utf8'))
-      for (const key of ['TMPDIR', 'XDG_CACHE_HOME', 'npm_config_cache']) check(`success: local ${key}`, () => assert.ok(env.env[key]?.startsWith(root + '/')))
+      // All three XDG directories, not only the cache: `pnpm` opens a database under
+      // `XDG_DATA_HOME`, and a packaging run that redirected only the cache died at
+      // step [2/7] with `[ERROR] unable to open database file` on a machine whose
+      // `$HOME` is not writable — which is the case this assertion now pins.
+      for (const key of ['TMPDIR', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'npm_config_cache']) check(`success: local ${key}`, () => assert.ok(env.env[key]?.startsWith(root + '/')))
       check('success: real rpm selected', () => assert.match(env.rpm, /^RPM version /))
       check('success: original HOME preserved', () => assert.equal(env.env.HOME, process.env.HOME))
       check('success: prior release backed up', () => assert.ok(fs.readdirSync(path.join(root, 'release/superseded')).some(dir => fs.existsSync(path.join(root, 'release/superseded', dir, names[0])))))

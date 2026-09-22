@@ -12,9 +12,15 @@ mkdir -p "$WORK_ROOT"
 exec 9>"$WORK_ROOT/build.lock"
 flock -n 9 || { echo "FAIL: another Linux packaging run is active" >&2; exit 1; }
 WORK="$(mktemp -d "$WORK_ROOT/run.XXXXXX")"
+# All three XDG directories, not just the cache. This script is run on machines where `$HOME` may not be
+# writable, and `pnpm` opens a database under `XDG_DATA_HOME` — with only the cache redirected it dies at
+# step [2/7] with `[ERROR] unable to open database file`, which reads as a broken repository rather than
+# as a caller who forgot to export two variables. (`scripts/gate.sh` sets all three for the same reason;
+# `npm_config_cache` stays because npm reads that name, not the XDG one.)
 export TMPDIR="$WORK/tmp" XDG_CACHE_HOME="$WORK_ROOT/cache"
+export XDG_DATA_HOME="$WORK_ROOT/data" XDG_STATE_HOME="$WORK_ROOT/state"
 export npm_config_cache="$XDG_CACHE_HOME/npm"
-mkdir -p "$TMPDIR" "$XDG_CACHE_HOME/tauri" "$WORK/tools" "$WORK/previous"
+mkdir -p "$TMPDIR" "$XDG_CACHE_HOME/tauri" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$WORK/tools" "$WORK/previous"
 echo "Packaging evidence and scratch: $WORK"
 
 # A command that only exits zero is not rpm. Pin the checked executable for Tauri too.
