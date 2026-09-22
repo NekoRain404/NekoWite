@@ -2157,3 +2157,53 @@ what makes the fix worth its two assertions in the packager's suite rather than 
 
 One run, all nine steps, exit 0. No bundles were rebuilt: this round changes a probe and three documents,
 and §21's bundles already carry this source.
+
+## 23. The round after that: real keystrokes, and the file they reached
+
+**The probe now types into the application and reads what the file says afterwards.** `drive-app.mjs`'s
+third phase sends **real key events** through the driver's actions endpoint — not a script dispatching a
+synthetic `KeyboardEvent`, which would prove that a listener works rather than that the editor accepts input
+from the window — then presses `Ctrl+S`, then reads the note **from disk**, because the filesystem is the
+ground truth and a save that only repainted the view would fail there.
+
+    editorFound   true
+    typed         true            ("probe-typed-<pid>")
+    savedToDisk   true
+    fileSize      88
+
+and the note afterwards holds the token exactly where the caret was put by a native click. The whole loop
+is therefore verified in the shipped application: click → caret → ten key events → the editor model →
+`Ctrl+S` → the save path → bytes in the vault. No other instrument in this repository can show that: the
+Playwright suite runs the same sources against a **memory** filesystem, so its saves are asserted against a
+fixture rather than against a file.
+
+**The token carries `process.pid`, and the first reason I wrote for that was wrong.** The comment claimed a
+fixed token "would already be in the editor and on disk before a key was pressed" — but `seedVault`
+rewrites the note on every run, so the *file* cannot carry a leftover. What can is the **editor**: a buffer
+from an earlier session, if the app were reused, would satisfy both readings without any typing having
+worked. The comment now says that instead, and the token stays unique, because the honest version of the
+reason is also the one that survives the next change to how the probe seeds.
+
+**And the plan now says where this probe lives and why it is not a gate step.** Our instrument table gained
+its row — page is a Tauri page, production CSP in force (`eval` control plus a refused `blob:` import), the
+vault opened, the note opened by a native click, the image rendered through `asset://`, the typed text on
+disk after `Ctrl+S` — and §4 states the reason it stays manual: it needs a built application,
+`WebKitWebDriver` and a display, and a gate step that skips on machines without them is the shape this
+programme keeps removing. The same edit corrected two stale counts in that table: the packager suite is 46
+assertions since §21 (45 + 46 = the 91 the gate prints) and the dead-export ceiling is 85 since §20.
+
+### The gate
+
+| Step | Result |
+|---|---|
+| `verify` | PASS — **5954 tests across 3 package runs** |
+| `fmt` | PASS |
+| `clippy` | PASS — 97 warning lines, under the 110 ceiling |
+| `instruments` | PASS — 85 of 1368 uncalled exports, at the ceiling |
+| `scripts` | PASS — 91 checks, 0 failed |
+| `harness` | PASS — 5 passed, 0 failed |
+| `build` | PASS |
+| `rust` | PASS — 79 targets, 1409 passed, 0 failed |
+| `e2e` (`--with-e2e`) | PASS — 297 passed |
+
+One run, all nine steps, exit 0. No bundles were rebuilt: the round changes a probe and three documents.
