@@ -109,7 +109,17 @@ function freeDualPort() {
 function seedVault() {
   const vault = VAULT_DIR
   fs.mkdirSync(vault, { recursive: true })
-  fs.writeFileSync(path.join(vault, NOTE), `# ${NOTE_TITLE}\n\nWritten by drive-app.mjs.\n`)
+  // An image beside the note, referenced the ordinary way. Whatever the editor renders for it has to come
+  // through the host: the frontend asks for a media path, `commands/fs/media.rs` grants that one file on
+  // the asset scope, and the window fetches `asset://…`. Nothing in a browser test can prove that chain.
+  fs.writeFileSync(
+    path.join(vault, 'probe-asset.svg'),
+    '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="40"><rect width="64" height="40" fill="#3b82f6"/></svg>\n',
+  )
+  fs.writeFileSync(
+    path.join(vault, NOTE),
+    `# ${NOTE_TITLE}\n\n![probe](probe-asset.svg)\n\nWritten by drive-app.mjs.\n`,
+  )
   const record = path.join(ENV.XDG_CONFIG_HOME, 'dev.nekowite.app', 'last-vault')
   fs.mkdirSync(path.dirname(record), { recursive: true })
   fs.writeFileSync(record, `${vault}\n`)
@@ -185,6 +195,12 @@ async function main() {
   const session = { id: null, port: driverPort }
   const run = (method, suffix, body) => request(session.port, method, `/session/${session.id}${suffix}`, body)
   const script = (source) => ({ script: source, args: [] })
+  /** The W3C element key, and the element id behind it. */
+  const ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf'
+  async function findElement(using, value) {
+    const found = await run('POST', '/element', { using, value })
+    return found?.[ELEMENT_KEY] ?? null
+  }
 
   const readings = {}
   try {
@@ -313,6 +329,41 @@ async function main() {
       script: 'return document.body.innerText.replace(/\s+/g, " ").slice(0, 200)',
       args: [],
     })
+    stage('open the note')
+    // A **native** click, through the driver's own element endpoint rather than a script's `.click()`:
+    // the point of this probe is the real application, so its inputs go through the real event path.
+    const row = await findElement('xpath', `//*[contains(text(), "${NOTE_TITLE}")]`)
+    readings.rowFound = row !== null
+    if (row) await run('POST', `/element/${row}/click`, {})
+
+    stage('the editor')
+    readings.editorText = await until(
+      async () => {
+        const text = await run(
+          'POST',
+          '/execute/sync',
+          script('return document.querySelector(".ProseMirror")?.innerText ?? ""'),
+        )
+        return String(text).includes(NOTE_TITLE) ? String(text).replace(/\s+/g, ' ').slice(0, 120) : null
+      },
+      { timeout: 20_000, what: 'the note to open in the editor' },
+    ).catch((e) => `TIMED-OUT: ${e.message}`)
+
+    stage('the image, through the asset protocol')
+    readings.images = await run(
+      'POST',
+      '/execute/sync',
+      // `.ProseMirror-separator` is ProseMirror's own inline separator — an `<img>` with no src that it
+      // puts beside a node view. The first version of this reading counted it and reported a broken image
+      // in a note whose image had loaded; the context fields below are what identified it, so they stay.
+      script(`return Array.from(document.querySelectorAll('.ProseMirror img:not(.ProseMirror-separator)')).map((img) => ({
+        src: (img.getAttribute('src') ?? '').slice(0, 48),
+        loaded: img.complete && img.naturalWidth > 0,
+        naturalWidth: img.naturalWidth,
+        parent: img.parentElement?.className?.toString().slice(0, 40) ?? null,
+        outer: img.outerHTML.slice(0, 120),
+      }))`),
+    )
   } finally {
     if (session.id) await run('DELETE', '').catch(() => undefined)
     for (const child of [driver]) {
@@ -334,6 +385,13 @@ async function main() {
   if (readings.readyState !== 'complete') problems.push(`the page never finished loading (${readings.readyState})`)
   if (readings.tauri !== true) problems.push('window.__TAURI_INTERNALS__ is absent: this is not a Tauri page')
   if (!(readings.railButtons >= 1)) problems.push('the shell did not render: no status bar after the vault was opened')
+  if (readings.rowFound !== true) problems.push('the note row was not found in the tree')
+  if (typeof readings.editorText !== 'string' || readings.editorText.startsWith('TIMED-OUT')) {
+    problems.push(`the note never opened in the editor (${readings.editorText})`)
+  }
+  const images = Array.isArray(readings.images) ? readings.images : []
+  if (images.length === 0) problems.push('the editor rendered no <img> for the note that references one')
+  else if (!images.every((i) => i.loaded)) problems.push(`an image did not render: ${JSON.stringify(images)}`)
   if (readings.vaultVisible !== true) {
     problems.push(`the vault (${path.basename(VAULT_DIR)}) is not named on the page; it reads: ${readings.pageTextSample}`)
   }
@@ -359,8 +417,9 @@ async function main() {
     return
   }
   console.log('PASS: the built app answered WebDriver with its own vault open — Tauri page, shell rendered,')
-  console.log('      note listed — and the production CSP is in force inside it: `eval` refused (the')
-  console.log('      control) and a blob module import refused with it.')
+  console.log('      the note listed and opened by a native click, its image rendered through the host\'s asset')
+  console.log('      protocol — and the production CSP is in force inside it: `eval` refused (the control)')
+  console.log('      and a blob module import refused with it.')
 }
 
 await main()
