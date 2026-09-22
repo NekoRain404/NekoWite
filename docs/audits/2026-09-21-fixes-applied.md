@@ -2574,3 +2574,63 @@ engine unchanged):
     AppImage   nekowite_1.0.0_amd64      b11a993749c2ad234f2af1beb865451d2005c328c74131e80208e7381cc2054d
 
 The superseded interim build is kept at `release/superseded/`, as that script does for every run.
+
+## 27. The round after that: one of each construct, and one AI run that was red
+
+**The formula defect was found by rendering a note and reading what came out. This round made that a
+checklist.** The render phase's note is now an `.mdx` file — the editor reads MDX syntax only from that
+extension (`editor-external-sync.ts`) — carrying one of each documented construct, and the verdict asserts a
+count for every one of them, from the DOM marker its own node view creates:
+
+    headings 1   headingAnchors 1   codeBlocks 1   codeCopyButtons 1
+    tables 1     taskItems 2       taskChecked 1  highlights 1
+    wikilinks 1  footnotes 1       mdxComponents 1  mdxPlaceholders 0
+    citeChips 1  mathNodes 1       images 2
+
+All of it renders on the shipping engine, and the `<Callout>` renders as the component rather than as the
+placeholder the MDX node view falls back to. A construct that silently does not render looks exactly like one
+that does — which is why these are assertions and not printouts, and why the citation is the one entry that is
+only *recorded*: its chip resolves against the vault's reference library, which this scratch vault has not got.
+
+**Two instrument defects were caught by the checklist before it could catch anything in the app.** The first
+run reported four of eleven constructs rendered — and that was the *probe*: the scratch vault still held the
+previous run's note under the same title, and a lookup by title opens whichever the tree lists. `seedVault`
+now empties the directory first, with the reason written down. The second: the task list counted
+`input[type=checkbox]`, and there is no input — the box is a pseudo-element and the toggle comes from a click
+zone inside the item (`task/checkbox.ts`). That was my expectation, not the app's defect, and the check now
+counts `li[data-item-type="task"]` and reads the checked state beside it.
+
+### The live AI reading, and the one red run
+
+**Nineteen runs of `scripts/verify-ai-live.sh` this round: eighteen passed, one failed.** The failure came
+first, and its text is **lost**: my invocation grepped three patterns and the log was then overwritten by the
+next run. That is a gap in the evidence-keeping, not a finding, and it is recorded as one — a red run whose
+message nobody kept cannot be diagnosed later. Every run after it wrote its log to a file before anything read
+it, so the next occurrence will survive.
+
+Eighteen consecutive runs then passed (6.15 s–12.19 s, paid turn 17 prompt + 2 completion every time, reasoning
+turn 89 prompt + 10–17 completion). The failing run overlapped the gate's `rust` step, so contention was the
+first hypothesis — it is **not supported**: three runs under four busy cores (this machine has 32) passed in
+3.88 s, 5.25 s and 5.48 s. Nothing else distinguishes that run, and no cause is claimed here.
+
+The reading for the record, from the last passing run: gateway listed the five models
+(`deepseek-v4-flash`, `deepseek-v4.1-flash`, `glm-5.2`, `mimo-v2.5`, `mimo-v2.5-pro`), the paid turn streamed
+through the app's own transport in four chunks to `data: [DONE]` and billed 17 + 2, the reasoning turn
+streamed 28 bytes of thinking in seven chunks and billed 89 + 10 with 7 of them `reasoning_tokens`; the key was
+written 0600 to `/tmp/nkw-test-key` and removed in the same command.
+
+### The gate
+
+| Step | Result |
+|---|---|
+| `verify` | PASS — **5962 tests across 3 package runs** (unchanged: no unit test this round) |
+| `fmt` | PASS |
+| `clippy` | PASS — 97 warning lines, under the 110 ceiling |
+| `instruments` | PASS — 85 of 1368 uncalled exports, at the ceiling |
+| `scripts` | PASS — 91 checks, 0 failed |
+| `harness` | PASS — 5 passed, 0 failed |
+| `build` | PASS |
+| `rust` | PASS — 79 targets, 1409 passed, 0 failed |
+
+One run, eight steps, exit 0. **No bundles were rebuilt, and none needed to be**: this round changed a probe
+and two documents, and §26's artifacts were built from these same application sources.
