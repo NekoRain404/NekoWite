@@ -85,27 +85,11 @@ export function permissionLabels(): AgentPermissionLabels {
 </script>
 
 <script setup lang="ts">
-/**
- * The permission section — §6.3, and §8.1's `permission` half.
- *
- * The acceptance clause is 「禁用真实生效」's neighbour, and it is the same rule read the other way:
- * a permission UI that displays a control the runtime does not honour is worse than one with no
- * control at all. So there are no controls here, and the page says why in three places:
- *
- *  - **The options belong to the engine.** §6.3: 「授权 UI 使用引擎提供的选项与 option ID，不能自行发明
- *    『永久允许』」. The engine's own P0 measurement is that it *does* offer one (`allow_always`, option
- *    id `always`) — so this app neither hides it nor invents it, and the page states that whatever is
- *    on offer came with the request.
- *  - **The settings belong to the engine.** What the engine asks about lives in its own configuration
- *    document, which §3.4.5 leaves to a verified adapter; this page reports where those settings come
- *    from instead of offering an editor for a format this task does not own.
- *  - **Nothing here is a sandbox.** §6.3's closing paragraph is the sentence this page exists to keep
- *    in front of a user: 「ACP 不是安全沙箱」, and 「此能力未完成前，UI 不能展示"已完全隔离"」. Both are
- *    drawn as limitations rather than as a footnote, because the failure mode they prevent — a user
- *    believing a workspace restriction is enforcement — is silent.
- */
-import { computed, onMounted, ref } from 'vue'
+// Configuration rules, process grants, and request options have independent authorities.
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import AgentPermissionGrants from './AgentPermissionGrants.vue'
+import AgentPermissionEditor from './AgentPermissionEditor.vue'
+import type { AgentConfigClient } from '../services/agent-config-ipc'
 import type { SettingOrigin } from '../index'
 import type { PermissionState } from '../services/agent-settings-policy'
 import type {
@@ -127,6 +111,8 @@ import type {
  */
 const props = defineProps<{
   client: AgentPermissionClient
+  configClient?: AgentConfigClient
+  verifiedOpenCode?: boolean
   labels?: AgentPermissionLabels
 }>()
 
@@ -190,17 +176,23 @@ function limitText(limit: PermissionLimitId): string {
   }
 }
 
+let generation = 0
 async function load(): Promise<void> {
+  const token = ++generation
+  const client = props.client
   state.value = 'loading'
   try {
-    readout.value = await props.client.read()
+    const answer = await client.read()
+    if (token !== generation || client !== props.client) return
+    readout.value = answer
     state.value = 'ready'
   } catch {
-    state.value = 'unreadable'
+    if (token === generation && client === props.client) state.value = 'unreadable'
   }
 }
 
-onMounted(load)
+watch(() => props.client, () => { void load() }, { immediate: true })
+onBeforeUnmount(() => { generation++ })
 </script>
 
 <template>
@@ -266,6 +258,12 @@ onMounted(load)
          other's read: an unreadable profile document is exactly when a user needs to see, and be
          able to take back, what the engine wrote down after they answered "always". Gating this
          block on the profile read is what hid the only lasting-permission control this app has. -->
+    <AgentPermissionEditor
+      v-if="configClient"
+      :client="configClient"
+      :verified-open-code="verifiedOpenCode ?? false"
+      @saved="load"
+    />
     <AgentPermissionGrants :client="props.client" />
 
     <!-- The rest of the rules half, in a branch of its own rather than a shared one — the gate is

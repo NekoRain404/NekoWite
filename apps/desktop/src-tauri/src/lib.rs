@@ -345,7 +345,9 @@ pub fn run() {
             // because the definitions a start reads and the definitions a settings page edits must
             // be one registry.
             commands::agent_registry::agent_registry_read,
+            commands::agent_registry::agent_registry_discover,
             commands::agent_registry::agent_registry_add,
+            commands::agent_registry::agent_registry_delete,
             commands::agent_registry::agent_registry_set_enabled,
             // The runtime page (§3.1.4): what this app's engine connection is — the negotiated
             // protocol version, the engine's own name for itself, the authentication it advertises,

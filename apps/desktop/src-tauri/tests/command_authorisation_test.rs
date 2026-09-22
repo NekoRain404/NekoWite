@@ -450,6 +450,7 @@ fn a_pet_window_cannot_stop_or_start_the_users_agent() {
         "agent_set_config_option",
         "agent_session_snapshot",
         "agent_registry_read",
+        "agent_registry_discover",
         "agent_profile_read",
         "agent_config_document",
         "agent_config_edit",

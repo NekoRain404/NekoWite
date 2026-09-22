@@ -50,7 +50,7 @@ use nekowite_lib::agent_runtime::secret::Secret;
 use nekowite_lib::agent_runtime::TransportError;
 use nekowite_lib::agent_runtime::VaultFiles;
 use nekowite_lib::commands::agent_registry::{
-    add_agent, read_registry, refusal_view, set_enabled, AgentDraft, RegistryReadout,
+    add_agent, delete_agent, read_registry, refusal_view, set_enabled, AgentDraft, RegistryReadout,
     RegistryRefusal,
 };
 use nekowite_lib::state::{edit_registry, AgentRuntimeState};
@@ -447,6 +447,10 @@ async fn a_live_engine_blocks_the_switch_off_and_shows_in_the_readout() {
     // Switching *on* has no precondition at all: §3.4.7's rule is about handling the active task
     // first, and nothing is being started or stopped by acknowledging that a row is already on.
     assert!(set_enabled(&mut registry, "acme", true).is_none());
+    assert_eq!(
+        refusal_json(&delete_agent(&mut registry, "acme").expect("live deletion refused")),
+        json!({ "kind": "instance-running", "agentId": "acme" })
+    );
 
     // Dropping the instance releases the epoch and asks the engine to exit, which is what makes the
     // switch-off possible — and the readout's answer is about *now*, not about what ever started.
@@ -457,6 +461,23 @@ async fn a_live_engine_blocks_the_switch_off_and_shows_in_the_readout() {
         json!([]),
         "a stopped instance is not a running engine"
     );
+}
+
+#[test]
+fn agent_registry_delete_refuses_default_unknown_and_in_flight() {
+    let managed = temp_dir("delete-refusals");
+    let state = state_with(AgentRegistry::with_bundled("/opt/nekowite/opencode"));
+    for (id, kind) in [("opencode", "is-default"), ("unknown", "unknown-agent")] {
+        let refusal = edit_registry(&state, &managed, |registry| delete_agent(registry, id))
+            .unwrap().unwrap();
+        assert_eq!(refusal_json(&refusal), json!({ "kind": kind, "agentId": id }));
+    }
+    edit_registry(&state, &managed, |registry| add_agent(registry, draft("acme"))).unwrap();
+    let held = state.registry.lock().unwrap().clone().unwrap();
+    assert!(edit_registry(&state, &managed, |registry| delete_agent(registry, "acme")).is_err());
+    assert!(held.get("acme").is_some());
+    drop(held);
+    assert!(edit_registry(&state, &managed, |registry| delete_agent(registry, "acme")).unwrap().is_none());
 }
 
 #[tokio::test]

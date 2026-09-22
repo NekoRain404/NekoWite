@@ -1,48 +1,12 @@
-/**
- * The registry settings page's rules: what an add form may submit, what a refusal means, and what
- * the page may say and do about where an engine came from.
- *
- * A pure module — no IPC, no storage, no DOM, no Vue. `R/src/agent_runtime/registry.rs` is the
- * authority (§3.4: 「后端是权威来源」), and this file never has the last word: it mirrors the
- * backend's answers so a form can point at the field that is wrong before a round trip, and so a
- * refusal the backend *did* return is said rather than shown as "failed". The backend validates
- * again on the way in (`register`, `set_enabled`) and again at `start`, because a definition can
- * be edited and the machine can change under it.
- *
- * Mirrored, not re-decided: every arm of {@link RegistryRefusal} is one arm of Rust's
- * `RegistryError` with the same facts, and this module adds no rule the backend does not have.
- * What it adds is *placement* (which form field a refusal belongs to) and the shape the page
- * renders. Where a name differs it is because the two sides are different things: Rust's `Id`
- * carries a `&'static str` field name, this one carries the form field, because the sentence a
- * user reads is about an input box.
- *
- * 不擅自更新 is surfaced here, not decided here. `InstallSource::update_policy` is a method in Rust
- * precisely so an external registration cannot claim a host-managed policy (registry.rs), and
- * {@link updateStanding} is that method's answer reaching the page: NekoWite may replace a bundled
- * or managed program, and may only *report* a version for one the user installed. Nothing in this
- * module — or in the page that reads it — performs an update; version and path selection are
- * `binary_registry`/`update` (T14), and the settings page's part is to say which of the two
- * applies.
- *
- * Redaction is a second lock, not the lock. The backend already scrubs `env_extra` on the way out
- * (`registry.rs`'s `redacted_env`), and {@link readEnvForDisplay} repeats the same rule by name so
- * a value that reached the renderer by any other path still cannot be printed. The suffix list is
- * ported verbatim, and the direction of a mistake matters: a list that is too *wide* masks a
- * variable called `MONKEY`, and one that is too narrow prints a credential.
- */
+/** Frontend validation mirrors Rust's registry, which remains authoritative at mutation/start.
+ * Credential redaction is repeated here so alternate renderer paths cannot expose secrets. */
 
 import type { AgentFailureCode } from '../../../platform/gateways/agent-contracts'
 
 /** The value a credential is replaced by, in both implementations. */
 export const REDACTED_ENV_VALUE = '<redacted>'
 
-/**
- * Rust's `MAX_ID_BYTES`, in JS string units rather than bytes.
- *
- * The two agree everywhere it can matter: an id that passes the charset below is ASCII, so its
- * length is its byte count — and an id that fails it is refused as an id either way, so a
- * multi-byte value longer in bytes than in units is already the answer it would have got.
- */
+/** Valid IDs are ASCII, so JS length and Rust's byte length agree. */
 const MAX_ID_BYTES = 64
 
 /** Rust's `validate_id` charset: what can be an identity *and* a directory name (§3.2). */
@@ -136,6 +100,18 @@ export interface AgentRegistryReadout {
   profileOwners: Readonly<Record<string, string>>
 }
 
+export type AgentDiscoveryKind = 'acp' | 'terminal'
+
+export interface AgentDiscoveryCandidate {
+  agentId: string
+  displayName: string
+  command: string
+  program: string
+  args: readonly string[]
+  kind: AgentDiscoveryKind
+  adapterId: string
+}
+
 /**
  * What the page calls. Implemented by whichever adapter sits behind it (T4 wires the real one),
  * and it is what E4 substitutes a fake for.
@@ -152,10 +128,12 @@ export interface AgentRegistryReadout {
  */
 export interface AgentRegistryClient {
   read(): Promise<AgentRegistryReadout>
+  discover?(): Promise<readonly AgentDiscoveryCandidate[]>
   /** `null` when the registration was accepted. */
   add(draft: AgentDraft): Promise<RegistryRefusal | null>
   /** `null` when the change was applied. */
   setEnabled(agentId: string, enabled: boolean): Promise<RegistryRefusal | null>
+  delete(agentId: string): Promise<RegistryRefusal | null>
 }
 
 /**

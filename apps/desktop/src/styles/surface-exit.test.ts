@@ -178,7 +178,7 @@ describe('a surface on its way out is not a target', () => {
     expect(shell, 'a leaving column does not take the click').toMatch(
       /\.col-leave-active[\s\S]{0,80}\.rail-leave-active\s*\{[^}]*pointer-events:\s*none/,
     )
-    expect(css('../features/settings/components/SettingsPanel.vue'), 'nor a leaving settings page').toMatch(
+    expect(css('../features/settings/components/settings-panel.css'), 'nor a leaving settings page').toMatch(
       /\.page-leave-active\s*\{[^}]*pointer-events:\s*none/,
     )
   })

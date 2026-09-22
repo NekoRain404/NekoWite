@@ -15,6 +15,40 @@ use crate::agent_runtime::profile::ProfileStore;
 use crate::agent_settings::refusal_message;
 use crate::support::{edit, scratch, write_config, CONFIG, RELATIVE};
 
+#[test]
+fn permission_editor_reads_jsonc_projection_and_preserves_complex_rules_over_ipc() {
+    let managed = scratch("permission-editor-jsonc");
+    let store = ProfileStore::new(&managed);
+    let profile = store.open("engine-alpha", "alpha").unwrap();
+    let text = "{ // keep\n\"permission\": {\"edit\": \"ask\", \"bash\": {\"git *\": \"allow\",},}, \"future\": true,}";
+    let path = write_config(profile.root(), RELATIVE, text);
+    let read = crate::agent_settings::read_document(&store, "engine-alpha", "alpha", RELATIVE).unwrap();
+    assert_eq!(read["permissionRules"], json!({"kind": "object", "rules": {"edit": "ask", "bash": null}}));
+    let edit: crate::agent_settings::EditSubmission = serde_json::from_value(json!({"path": ["permission", "edit"], "value": "deny"})).unwrap();
+    let answer = crate::agent_settings::submit_document(&store, "engine-alpha", "alpha", RELATIVE, read["revision"].as_str(), &[edit]).unwrap();
+    assert_eq!(answer["status"], "written");
+    assert_eq!(fs::read_to_string(path).unwrap(), text.replace("\"ask\"", "\"deny\""));
+}
+
+#[test]
+fn permission_editor_projection_refuses_ambiguous_or_complex_roots_over_ipc() {
+    let managed = scratch("permission-editor-shapes");
+    let store = ProfileStore::new(&managed);
+    let profile = store.open("engine-alpha", "alpha").unwrap();
+    for (text, kind) in [
+        ("{}", "absent"),
+        ("{\"permission\":\"deny\"}", "complex"),
+        ("{\"permission\":{}, \"permission\":{}}", "complex"),
+        ("{\"permission\":{\"edit\":\"ask\",\"edit\":\"allow\"}}", "complex"),
+        ("[]", "complex"),
+        ("{broken", "unreadable"),
+    ] {
+        write_config(profile.root(), RELATIVE, text);
+        let read = crate::agent_settings::read_document(&store, "engine-alpha", "alpha", RELATIVE).unwrap();
+        assert_eq!(read["permissionRules"]["kind"], kind, "{text}");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // JSONC 保留
 // ---------------------------------------------------------------------------

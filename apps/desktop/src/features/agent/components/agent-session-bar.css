@@ -1,0 +1,138 @@
+.agent-bar {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  /* §5.3's title bar: 36–40px, one rung, no second navigation row. */
+  min-height: 38px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--app-border);
+  flex: none;
+}
+.agent-bar-title {
+  flex: 1;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--app-text);
+  font-family: var(--app-font);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The strip is baseline-aligned for the title and the state word; a control has no baseline to
+   sit on, so it centres itself in the row instead. Quiet by default — this is a title bar, and
+   the one thing here that must draw the eye is the state it is reporting. */
+.agent-bar-history {
+  display: inline-flex;
+  align-self: center;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+  transition: background var(--app-motion-fast) var(--app-ease),
+              color var(--app-motion-fast) var(--app-ease);
+}
+.agent-bar-history:hover {
+  background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
+  color: var(--app-text);
+}
+/* Open, it reads as held: the list below belongs to this control. */
+.agent-bar-history[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--app-accent-soft) 82%, var(--app-elevated));
+  color: var(--app-accent);
+}
+.agent-bar-history:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
+/* The options control, restating the history one's box rather than sharing a class: the two are
+   different controls in different positions, and a shared name would make the next change to one
+   of them a change to both. */
+.agent-bar-menu {
+  display: inline-flex;
+  align-self: center;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+  transition: background var(--app-motion-fast) var(--app-ease),
+              color var(--app-motion-fast) var(--app-ease);
+}
+.agent-bar-menu:hover {
+  background: color-mix(in srgb, var(--app-elevated) 66%, transparent);
+  color: var(--app-text);
+}
+.agent-bar-menu[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--app-accent-soft) 82%, var(--app-elevated));
+  color: var(--app-accent);
+}
+.agent-bar-menu:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
+.agent-bar-state {
+  display: inline-flex;
+  flex: none;
+  max-width: 55%;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  color: var(--app-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+/* The last turn's numbers: quieter than the state word beside them and never elided — the title
+   gives way first, because a number cut in half is worse than no number. Tabular figures so the
+   strip does not jitter as the counters change width between turns. The clock is the same rung:
+   it is the second half of one fact (what the last turn cost, and what it took), so it is drawn
+   with the same weight rather than as a heading of its own. */
+.agent-bar-usage,
+.agent-bar-clock {
+  flex: none;
+  margin: 0;
+  color: var(--app-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.agent-bar-state-icon {
+  flex: none;
+}
+.agent-bar-state-icon.is-spinning {
+  animation: agent-bar-spin var(--app-motion-spin) linear infinite;
+}
+@keyframes agent-bar-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.agent-bar-state-word {
+  flex: none;
+}
+.agent-bar-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The two states worth a colour, and only as the second signal: the word beside each one
+   already says the same thing. */
+.agent-bar-state[data-state='failed'] {
+  color: var(--app-danger);
+}
+.agent-bar-state[data-state='waiting-permission'] {
+  color: var(--app-warn);
+}

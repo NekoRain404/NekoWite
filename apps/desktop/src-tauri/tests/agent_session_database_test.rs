@@ -185,17 +185,10 @@ fn a_registration_that_keeps_the_users_environment_names_no_root_at_all() {
     );
 }
 
-/// **The reachability half, and the reason this file is not merely descriptive.**
-///
-/// `EnvPolicy::UserEnvironment` is real code with a real producer — `agent_registry_add` writes one
-/// for every draft (`commands/agent_registry.rs`'s `registration_from`) — and no caller. The
-/// property that keeps the shared-database case out of this app is *which argument reaches
-/// `Registry::start`*, and that is a claim about the source rather than about a value any test can
-/// produce: the id comes from `default_agent_id()`, which has no setter, and this is where that is
-/// read back. It fails on the day a session can be started on a registration the user added, which
-/// is the day this question has to be answered instead of assumed.
+/// External engines now opt into their registered environment policy. Selection must pass
+/// through the ownership check before profile files or credentials are opened.
 #[test]
-fn the_only_engine_this_app_starts_is_the_one_whose_roots_it_injects() {
+fn selected_engine_ownership_is_checked_before_opening_profile_files() {
     let state = source("src/state/app_state/agent.rs");
     let caller = state
         .split_once("pub async fn start_session(")
@@ -208,11 +201,9 @@ fn the_only_engine_this_app_starts_is_the_one_whose_roots_it_injects() {
         .expect("start_session calls Registry::start")
         .0;
     assert!(
-        before.contains("registry.default_agent_id()"),
-        "start_session no longer takes the engine's id from `default_agent_id()`. If it now \
-         accepts one from a caller, this app can start a registration whose `env` is \
-         `UserEnvironment` — and that engine writes the user's own session database, the one their \
-         own `opencode` has open"
+        before.find("start_selection::selected_registry").unwrap()
+            < before.find("ProfileStore::new").unwrap(),
+        "selected ownership must be validated before opening credential files"
     );
     // The receiver, so the assertion above is about *this* call and not about some other
     // `default_agent_id()` read in the same function body.
@@ -225,9 +216,7 @@ fn the_only_engine_this_app_starts_is_the_one_whose_roots_it_injects() {
 /// Adding a registration does not move the default, which is the other half of the same property.
 ///
 /// `with_bundled` is the registry's only constructor and `register` cannot touch `default_agent`.
-/// A user who adds their own engine therefore gets an entry in a list and no session on it — which
-/// is what makes the arm above unreachable rather than merely unused, and what would have to change
-/// deliberately for it to become otherwise.
+/// A user who adds their own engine still gets the bundled engine on an unspecified start.
 #[test]
 fn registering_another_engine_does_not_move_which_one_a_session_starts_on() {
     let mut registry = AgentRegistry::with_bundled("/opt/nekowite/binaries/opencode");

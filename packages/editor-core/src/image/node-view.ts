@@ -167,6 +167,10 @@ export const makeImageNodeView: NodeViewConstructor = (node, view, getPos) => {
     void resolveImageSrc(src).then((display) => {
       if (version !== mine) return
       expectedSrc = display
+      // A same-path replacement can resolve to the same display URL. Removing
+      // it first forces the webview to request the newly written bytes instead
+      // of treating the unchanged URL as an already-loaded image.
+      if (img.getAttribute('src') === display) img.removeAttribute('src')
       img.setAttribute('src', display)
     })
   }

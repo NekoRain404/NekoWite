@@ -83,6 +83,7 @@ pub mod binary_registry;
 pub mod capabilities;
 pub mod catalogue;
 pub mod config_edit;
+pub mod discovery;
 pub mod driver;
 pub mod events;
 pub mod fs_capability;

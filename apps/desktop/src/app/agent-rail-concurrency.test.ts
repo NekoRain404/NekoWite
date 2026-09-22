@@ -24,6 +24,7 @@ async function fixture() {
     registry: {
       read: async () => { throw new Error('unavailable') },
       add: async () => { throw new Error('unused') },
+      delete: async () => null,
       setEnabled: async () => { throw new Error('unused') },
     },
   }

@@ -92,6 +92,12 @@ function client(answers: Parameters<typeof wire>[0]) {
 }
 
 describe('the document read', () => {
+  it('preserves the backend permission projection beside raw JSONC and its revision', async () => {
+    const permissionRules = { kind: 'object', rules: { edit: 'ask', bash: null } }
+    const { port } = client({ document: documentReadout({ permissionRules }) })
+    const answer = await port.read()
+    expect(answer.state === 'document' && answer.document.permissionRules).toEqual(permissionRules)
+  })
   it('the wire shape the backend sends, with the path the profile named', async () => {
     const { port, parts } = client({})
     const answer = await port.read()

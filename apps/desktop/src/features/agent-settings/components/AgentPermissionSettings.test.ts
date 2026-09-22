@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createApp, nextTick, type App as VueApp } from 'vue'
 import { setLocale } from '../../../i18n'
 import AgentPermissionSettings from './AgentPermissionSettings.vue'
+import type { AgentConfigClient } from '../services/agent-config-ipc'
 import type {
   AgentPermissionClient,
   GrantsReadout,
@@ -96,13 +97,13 @@ function stub(answers: {
 }
 
 /** Mount one page, replacing whatever this test mounted before it. */
-async function mount(client: AgentPermissionClient): Promise<void> {
+async function mount(client: AgentPermissionClient, configClient?: AgentConfigClient): Promise<void> {
   mounted.forEach((app) => app.unmount())
   mounted = []
   document.body.innerHTML = ''
   const host = document.createElement('div')
   document.body.appendChild(host)
-  const app = createApp(AgentPermissionSettings, { client })
+  const app = createApp(AgentPermissionSettings, { client, configClient, verifiedOpenCode: true })
   mounted.push(app)
   app.mount(host)
   await flush()
@@ -127,6 +128,31 @@ async function flush(): Promise<void> {
 
 const el = (dataTest: string): HTMLElement | null =>
   document.querySelector<HTMLElement>(`[data-test="${dataTest}"]`)
+
+it('refreshes the profile summary after saving permission rules', async () => {
+  let action = 'ask'
+  const { client, calls } = stub({
+    read: async () => ({ ...READOUT, rules: [{ ...READOUT.rules[0]!, action }] }),
+    grants: async () => LISTED,
+  })
+  await mount(client, {
+    read: async () => ({ state: 'document', document: {
+      path: 'opencode.json', resolved: '/profile/opencode.json', revision: 'r1',
+      exists: true, text: '{}', editable: true,
+      permissionRules: { kind: 'object', rules: { edit: 'ask' } },
+    } }),
+    edit: async () => { action = 'deny'; return { status: 'written', revision: 'r2' } },
+  })
+  const select = el('permission-editor-edit') as HTMLSelectElement
+  select.value = 'deny'
+  select.dispatchEvent(new Event('change', { bubbles: true }))
+  await flush()
+  el('permission-editor-save')?.click()
+  await flush()
+  expect(el('permission-rule-edit')?.textContent).toContain('deny')
+  expect(calls.read).toBe(2)
+  expect(calls.grants).toBe(1)
+})
 
 describe('the rules half when the profile cannot be read', () => {
   it('still draws the grants the engine holds, and the control that takes one back', async () => {

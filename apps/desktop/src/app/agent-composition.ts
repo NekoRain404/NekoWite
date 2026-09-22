@@ -118,8 +118,7 @@ export interface AgentCompositionDeps {
    * refuses elsewhere.
    */
   environment?: 'tauri' | 'browser'
-  /** The identity the double publishes as its own; required by it and unused by the real one,
-   *  which is told its identity by the host. */
+  /** Requested identity; the host validates registration and profile ownership. */
   agentId?: string
   profileId?: string
   /** The IPC port, for a test that wants to drive the real adapter without a window. */
@@ -210,7 +209,12 @@ export function createAgentComposition(deps: AgentCompositionDeps): AgentComposi
   const environment = deps.environment ?? detectEnvironment()
   const gateway: AgentGateway =
     environment === 'tauri'
-      ? createTauriAgentGateway({ vaultId: deps.vaultId, ...(deps.ipc ? { ipc: deps.ipc } : {}) })
+      ? createTauriAgentGateway({
+          vaultId: deps.vaultId,
+          ...(deps.agentId !== undefined ? { agentId: deps.agentId } : {}),
+          ...(deps.profileId !== undefined ? { profileId: deps.profileId } : {}),
+          ...(deps.ipc ? { ipc: deps.ipc } : {}),
+        })
       : createMemoryAgentGateway({
           agentId: deps.agentId ?? 'memory',
           profileId: deps.profileId ?? 'default',

@@ -1,42 +1,8 @@
 <script lang="ts">
-/**
- * What the rail draws for each state the rail's lifecycle can be in, and the words it
- * draws them with.
- *
- * The words are here rather than in the shell because this is the component that shows them,
- * which is the shape the agent settings pages already use: a labels tree built from the
- * catalogue (`agent.rail.*`, `agent.panel.*`) in the file that renders it. `AgentPanel` has no
- * copy of its own (`AgentPanelLabels`), so this file is the caller that supplies it — and it is
- * the only caller, which is why the builder lives beside the markup instead of in a shared
- * module.
- *
- * Three states, and the difference between them is the point:
- *
- *  - **live** — the session, drawn by the panel itself.
- *  - **refused** — the backend's own sentence, verbatim, over the two ways out: ask again, or
- *    go back to the chat panel. §12's rollback is a decision the user takes from here, so it
- *    has to be one click away from the failure rather than buried in settings, and nothing on
- *    this branch may describe the failure as a fault of the app.
- *  - **waiting** — one line, and it is a real state rather than a placeholder: the engine is
- *    being started, or there is no folder open yet for it to work in.
- */
+
 import { t } from '../i18n'
 import type { AgentPanelLabels } from '../features/agent'
 
-/**
- * The catalogue, read into the panel's labels tree.
- *
- * One key per sentence and no fallbacks: the panel's copy is required, so a missing key would
- * be a blank word in the transcript rather than an English one — which is why the catalogue's
- * `state`, `result` and `status` records are keyed by the contract's own unions and a new arm
- * there fails to compile here instead.
- *
- * `engineName` is the live arm's own name ({@link AgentRailState} carries it, and it falls back
- * to the agent id). The two sentences that name the engine take it as a slot rather than being
- * assembled from parts here, so a translator sees the whole line. The arms that never mount the
- * panel pass the empty string: their sentences are the rail's own, and the alternative — a name
- * guessed on this side — is the one thing the registry read exists to avoid.
- */
 export function agentPanelLabels(engineName: string): AgentPanelLabels {
   return {
     empty: {
@@ -130,58 +96,31 @@ export function agentPanelLabels(engineName: string): AgentPanelLabels {
 import { computed } from 'vue'
 import { AgentPanel } from '../features/agent'
 import type { AgentRailState } from './agent-rail'
+import AgentPicker from './AgentPicker.vue'
+import type { AgentRegistryClient } from '../features/agent-settings/services/agent-registry-policy'
 
 const props = defineProps<{
-  /** Which state the rail's host is in. */
+
   state: AgentRailState
-  /** Whether a folder is open. The agent works inside one, so "no vault yet" is a sentence
-   *  rather than a spinner that would never stop. */
+
   vaultOpen: boolean
+  registry?: AgentRegistryClient
 }>()
 
 const emit = defineEmits<{
-  /**
-   * Take the engine down and bring it back up — `agent-rail.ts`'s `retry()`, which tears the
-   * runtime down and composes a fresh one with a new `runtimeEpoch`.
-   *
-   * One event for two controls, and that is the point rather than a shortcut: the refused block
-   * below has drawn a 重试 button since this rail was built, and the live panel's options menu now
-   * draws a row for the same call. A second event would be a second thing for the shell to keep
-   * in step with the first, and the two would drift the first time one of them grew an argument.
-   */
+
   (e: 'retry'): void
   (e: 'use-chat'): void
-  /** A session the reader picked out of the engine's history. The reopen itself belongs to the
-   *  rail (`agent-rail.ts`'s `resume`), which is the layer that owns the vault it is made for. */
+
   (e: 'resume', sessionId: string): void
-  /**
-   * The reader asked for a new session on the runtime that is up. `agent-rail.ts`'s `newSession`
-   * is what opens one — the panel cannot, because the session it is mounted on is the rail's to
-   * replace.
-   *
-   * Declared here and handled by the shell, and the one hop between them is the panel's: the entry
-   * that asks for this is drawn by the list the panel mounts, so `AgentPanel` is where the gesture
-   * crosses from the popup to this component (it forwards `AgentSessionHistoryMenu`'s `open` as
-   * `new-session`). That hop landed with row 10, and the entry's own gate is what keeps it honest
-   * in the other direction: `AgentSessionHistoryMenu.vue` draws nothing until its caller says the
-   * call can be made, and this file is the caller that says so.
-   */
-  (e: 'new-session'): void
-  /**
-   * The reader asked for the agent settings from the panel's options menu (row 43).
-   *
-   * Declared here and handled by the shell, which is the layer that owns the dialog — the same
-   * hop `new-session` takes, and for the same reason: the gesture is drawn by a component this
-   * file mounts, and the thing it asks for belongs to a layer above it.
-   */
-  (e: 'open-settings'): void
+
+  (e: 'new-session', agentId?: string): void
+
+  (e: 'open-settings', page?: 'registry' | 'catalogue'): void
 }>()
 
-/** The engine's own name, and only while a session is live — the one arm that mounts the panel. */
 const engineName = computed(() => (props.state.kind === 'live' ? props.state.engineName : ''))
 
-/** Rebuilt when the locale changes: `t` reads the shared i18n instance, so a computed is what
- *  makes the language switch in General settings reach a panel that is already on screen. */
 const labels = computed(() => agentPanelLabels(engineName.value))
 </script>
 
@@ -202,7 +141,18 @@ const labels = computed(() => agentPanelLabels(engineName.value))
     @open-settings="emit('open-settings')"
     @use-chat="emit('use-chat')"
     @restart="emit('retry')"
-  />
+  >
+    <template #actions="{ busy }">
+      <AgentPicker
+        v-if="registry"
+        :client="registry"
+        :current-agent-id="state.session.agentId"
+        :busy="busy"
+        @select="emit('new-session', $event)"
+        @manage="emit('open-settings', $event)"
+      />
+    </template>
+  </AgentPanel>
   <div
     v-else-if="state.kind === 'refused'"
     class="agent-rail-block"
@@ -216,6 +166,12 @@ const labels = computed(() => agentPanelLabels(engineName.value))
       {{ state.reason }}
     </p>
     <div class="agent-rail-actions">
+      <AgentPicker
+        v-if="registry"
+        :client="registry"
+        @select="emit('new-session', $event)"
+        @manage="emit('open-settings', $event)"
+      />
       <button
         class="agent-rail-btn"
         type="button"

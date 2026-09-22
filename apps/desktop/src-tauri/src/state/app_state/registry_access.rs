@@ -9,6 +9,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::agent_runtime::registry::persistence::RegistryStorage;
 use crate::agent_runtime::registry::AgentRegistry;
 
 use super::agent::AgentRuntimeState;
@@ -57,16 +58,13 @@ pub fn edit_registry<T>(
         // Not built yet: this is the first thing to ask for it, and the build is the same one a
         // start would have done — a settings page that could not read before a session started
         // would be a page that only worked in one order.
-        None => Arc::new(AgentRegistry::with_bundled(program_to_launch(
-            managed,
-            &executable_dir(),
-        )?)),
+        None => Arc::new(load_registry(managed)?),
     };
     match Arc::try_unwrap(registry) {
         Ok(mut owned) => {
-            let answer = change(&mut owned);
+            let answer = owned.edit_persisted(&RegistryFile(managed), change);
             *slot = Some(Arc::new(owned));
-            Ok(answer)
+            answer
         }
         Err(shared) => {
             // An engine start is in flight and holds a share of this registry. Reported as a
@@ -97,10 +95,45 @@ pub(super) fn registry_for(
     if let Some(registry) = slot.as_ref() {
         return Ok(Arc::clone(registry));
     }
-    let registry = Arc::new(AgentRegistry::with_bundled(program_to_launch(
-        managed,
-        &executable_dir(),
-    )?));
+    let registry = Arc::new(load_registry(managed)?);
     *slot = Some(Arc::clone(&registry));
     Ok(registry)
+}
+
+fn load_registry(managed: &Path) -> Result<AgentRegistry, String> {
+    let mut registry = AgentRegistry::with_bundled(program_to_launch(managed, &executable_dir())?);
+    registry.load_persisted(&RegistryFile(managed))?;
+    Ok(registry)
+}
+
+struct RegistryFile<'a>(&'a Path);
+
+impl RegistryStorage for RegistryFile<'_> {
+    fn read(&self) -> Result<Option<String>, String> {
+        match std::fs::read_to_string(self.0.join("agent-registry.json")) {
+            Ok(document) => Ok(Some(document)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(format!("cannot read agent registry: {error}")),
+        }
+    }
+
+    fn write(&self, document: &str) -> Result<(), String> {
+        let path = self.0.join("agent-registry.json");
+        let _guard = crate::storage::atomic_write::write_lock()
+            .lock()
+            .map_err(|_| "the storage write lock was poisoned".to_string())?;
+        match crate::storage::atomic_write::atomic_write(&path, document) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                // The shared writer can fail its directory fsync *after* rename committed.
+                // Keep memory aligned with that committed file instead of claiming rollback.
+                if std::fs::read_to_string(&path).ok().as_deref() == Some(document) {
+                    eprintln!("nekowite: registry committed but directory sync failed: {error}");
+                    Ok(())
+                } else {
+                    Err(error)
+                }
+            }
+        }
+    }
 }

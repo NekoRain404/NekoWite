@@ -49,6 +49,8 @@ export interface ConfigEdit {
 
 /** What the backend said about the document, before the user touched it. */
 export interface ConfigRead {
+  /** JSONC permission projection from the backend; missing on older hosts. */
+  permissionRules?: unknown
   /**
    * The path an edit is submitted with: the document's location *inside the profile root*, which is
    * what `agent_config_document` and `agent_config_edit` take and what `decideConfigWrite` compares.

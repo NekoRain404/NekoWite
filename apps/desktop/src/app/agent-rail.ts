@@ -9,28 +9,9 @@
  * test that can drive it without a window. The half that does need one — the two `watch`es and
  * the unmount that attach this lifecycle to a component — is `agent-rail-attachment.ts`.
  *
- * ## The five rules it is written to
- *
- *  - **The switch is off, nothing happens.** No composition is built, no process is asked
- *    for, and the rail keeps the chat panel it has always had (§12's 新旧功能开关可回退
- *    applies to the work as well as to the pixels: a rollback that left an engine running
- *    would be a rollback in name only).
- *  - **The engine starts on demand and the panel does not own it.** Opening the rails starts
- *    it; closing the rail does not stop it (§3.1.3「关闭面板不终止任务」, §5.1). What stops it
- *    is a different vault, the switch going off, or the window going away.
- *  - **A vault change is a new runtime.** A runtime instance is per (agent, profile, vault)
- *    (§6.2, enforced by the Rust registry's epoch claim), so the previous one is torn down
- *    before the next is started rather than left running behind it.
- *  - **A refusal is data, not an exception.** `agent_start` refuses in sentences — no
- *    bundled program beside the executable, a profile that belongs to another engine, an
- *    engine already running for this vault — and every one of them is shown as it was
- *    received, over the two ways out (try again, or go back to the chat). A rollback that
- *    looks like a crash is not a rollback.
- *  - **A session this runtime serves is shown, not loaded.** The rail holds the handles it
- *    minted ({@link createAgentRail}'s `serving`), so a move between two sessions of one runtime
- *    is a remount for the one the window already holds and a `loadSession` for one it does not —
- *    the engine refuses a load of a session it is serving, and that refusal is right. This is the
- *    rule the pet's task link and the panel's history list both arrive through.
+ * Engines start on demand and survive panel closure. Vault changes replace the runtime;
+ * agent selection first verifies every served session is inactive. Served session handles
+ * are reused rather than loaded twice, and startup refusals remain retryable UI state.
  *
  * ## Latest-wins, by a queue and a generation
  *
@@ -48,61 +29,13 @@ import type { AgentSession } from '../platform/gateways/agent-contracts'
 import { createAgentComposition, type AgentComposition } from './agent-composition'
 import { t } from '../i18n'
 import type { AgentRail, AgentRailDeps, AgentRailState } from './agent-rail-contracts'
+import { engineNameFor, failureSentence, railKey } from './agent-rail-presentation'
+export { failureSentence, railKey } from './agent-rail-presentation'
 export type { AgentRail, AgentRailDeps, AgentRailState } from './agent-rail-contracts'
 
-/**
- * The panel's mount key: a session change is a remount, never a re-point.
- *
- * The epoch is half of it because two engines can name a session the same thing (§3.4's
- * multi-agent boundary), and a panel mounted for the previous engine's session id would
- * subscribe to an identity that engine never minted.
- */
-export function railKey(session: AgentSession): string {
-  return `${session.runtimeEpoch}:${session.sessionId}`
-}
-
-/**
- * The name to put in front of the user for the engine a session runs on (§3.4: the name is the
- * backend's fact, so no component carries one of its own).
- *
- * Read from the registry's own registration for the agent the session reports, because that is
- * where the name the user sees lives — `AgentRegistration::display_name` on the Rust side, which
- * the settings list and the new-session chooser already show. Falling back to the **agent id**,
- * not to a word this file chose: an id is a fact and is always drawable, which is what keeps the
- * panel's title available without inventing an engine. The same fallback covers a registry that
- * cannot be read at all, and that is deliberate — the session is already open and everything else
- * the panel needs is here, so a registry call that failed must not turn a live session into a
- * refusal.
- *
- * A blank display name counts as absent for the reason the fallback exists: a registration whose
- * name is empty would otherwise put a hole in the middle of a sentence.
- */
-async function engineNameFor(composition: AgentComposition, agentId: string): Promise<string> {
-  try {
-    const readout = await composition.registry.read()
-    const name = readout.entries.find((entry) => entry.agentId === agentId)?.displayName
-    return name !== undefined && name.trim() !== '' ? name : agentId
-  } catch {
-    return agentId
-  }
-}
-
-/**
- * The backend's own sentence for a refusal.
- *
- * The IPC rejects with a string (the Rust commands answer `Result<_, String>`), and §6.2's
- * failure codes are for the stream rather than for a call that never opened a session —
- * so what is shown is what was received, with a fallback for the case where something other
- * than the backend rejected (a bug in the window, or a `stop` on a runtime that is gone).
- */
-export function failureSentence(error: unknown): string {
-  if (typeof error === 'string' && error.trim().length > 0) return error
-  if (error instanceof Error && error.message.trim().length > 0) return error.message
-  return t('agent.rail.unknownFailure')
-}
-
 export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
-  const compose = deps.compose ?? ((vaultId: string) => createAgentComposition({ vaultId }))
+  const compose = deps.compose ?? ((vaultId: string, agentId?: string) =>
+    createAgentComposition({ vaultId, ...(agentId !== undefined ? { agentId } : {}) }))
   const onStopFailed =
     deps.onStopFailed ??
     ((error: unknown) => {
@@ -131,24 +64,11 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
    *  is in another subtree and reaches this file through the shell. Written wherever `live` is, so
    *  the two cannot describe different moments. */
   const composition = shallowRef<AgentComposition | null>(null)
-  /**
-   * Every session this runtime instance has served, by the engine's own id — the handles this
-   * window would otherwise have dropped.
-   *
-   * It exists for one question a caller cannot answer for itself: *is this session one this window
-   * already holds?* The engine refuses a load of a session a runtime is serving (`session-open`),
-   * so without this table a session the reader left — a task still running, a conversation from
-   * ten seconds ago — could not be brought back on screen at all, by the history list or by the
-   * pet's task link, even though this window holds a working handle for it. A table rather than a
-   * second state field: nothing draws it, and what is on screen is still the one `live` arm.
-   *
-   * Cleared with the runtime, and that is what keeps an id honest: a session id outlives a runtime
-   * instance (the engine's own table is on its disk), so the handle under an id is only the right
-   * one for the instance that minted it — a new runtime re-adopts the session as a new handle.
-   */
+  // Retain offscreen handles because loading an already-served session is refused by ACP.
+  // The table is runtime-scoped: teardown clears handles before a new epoch can use them.
   const serving = new Map<string, AgentSession>()
   /** The last request, so `retry` has something to repeat. */
-  let asked: { vaultId: string; cwd: string } | null = null
+  let asked: { vaultId: string; cwd: string; agentId?: string; switching?: boolean } | null = null
   /** Bumped by every request and by `close`; a step older than the current value is dropped. */
   let generation = 0
   /** The one queue: at most one start, stop or open in flight, in the order they were asked. */
@@ -189,8 +109,11 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
     composition.value = composition_
   }
 
-  async function teardown(): Promise<void> {
+  async function teardown(strict = false): Promise<void> {
     const held = live
+    // A switch cannot forget ownership until stop succeeds: otherwise retry could launch a
+    // second engine while the first still owns live sessions or permissions.
+    if (strict && held !== null) await held.composition.stop()
     live = null
     // Published first, so a surface that asked during the teardown gets nothing rather than a
     // binding to a runtime this call is on its way to stopping.
@@ -198,7 +121,7 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
     // The handles go with the runtime: they were minted by it, and a new one re-adopts every
     // session it serves as a handle of its own (see `serving`).
     serving.clear()
-    if (held === null) return
+    if (held === null || strict) return
     try {
       await held.composition.stop()
     } catch (error) {
@@ -208,19 +131,39 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
     }
   }
 
-  function request(vaultId: string, cwd: string, force: boolean): Promise<void> {
-    asked = { vaultId, cwd }
+  function request(vaultId: string, cwd: string, force: boolean, agentId?: string, switching = false): Promise<void> {
     const now = state.value
     if (!force && now.kind !== 'idle' && now.vaultId === vaultId) return Promise.resolve()
+    asked = { vaultId, cwd, ...(agentId !== undefined ? { agentId } : {}), switching }
     const mine = ++generation
     return enqueue(async () => {
       if (mine !== generation) return
-      await teardown()
+      try {
+        if (switching && live !== null) {
+          for (const session of serving.values()) {
+            const snapshot = await live.composition.gateway.snapshot(session)
+            if (mine !== generation) return
+            if (!['idle', 'ready', 'completed', 'cancelled', 'failed'].includes(snapshot.state)
+              || snapshot.permissions.length > 0) {
+              throw new Error(t('agent.rail.switchBusy'))
+            }
+          }
+        }
+        if (mine !== generation) return
+        if (switching) state.value = { kind: 'starting', vaultId }
+        await teardown(switching)
+      } catch (error) {
+        if (mine === generation) {
+          state.value = now
+          onNewSessionFailed(error)
+        }
+        return
+      }
       if (mine !== generation) return
       state.value = { kind: 'starting', vaultId }
       let compositionOrThrow: AgentComposition
       try {
-        compositionOrThrow = compose(vaultId)
+        compositionOrThrow = agentId === undefined ? compose(vaultId) : compose(vaultId, agentId)
       } catch (error) {
         // A composition that could not even be built is the same kind of answer as a runtime
         // that would not start, and it goes to the same place rather than out of the promise.
@@ -335,9 +278,15 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
    * Successful acquisition always enters serving; only the latest request publishes the UI.
    * Teardown clears those handles before the next runtime starts.
    */
-  function newSession(): Promise<void> {
+  function newSession(agentId?: string): Promise<void> {
     const now = state.value
+    if (now.kind === 'refused' && agentId !== undefined && asked !== null) {
+      return request(asked.vaultId, asked.cwd, true, agentId, true)
+    }
     if (now.kind !== 'live') return Promise.resolve()
+    if (agentId !== undefined && agentId !== now.session.agentId) {
+      return request(now.vaultId, now.cwd, true, agentId, true)
+    }
     // The pair an `AgentOpenRequest` needs, read from the runtime that is up rather than from
     // `asked`: those are the same values, and the state is the one that is true *now*.
     const target = { vaultId: now.vaultId, cwd: now.cwd }
@@ -379,7 +328,7 @@ export function createAgentRail(deps: AgentRailDeps = {}): AgentRail {
     retry() {
       const last = asked
       if (last === null) return Promise.resolve()
-      return request(last.vaultId, last.cwd, true)
+      return request(last.vaultId, last.cwd, true, last.agentId, last.switching)
     },
     close() {
       // Bumped before the queue runs, not inside it: a start that is already queued behind

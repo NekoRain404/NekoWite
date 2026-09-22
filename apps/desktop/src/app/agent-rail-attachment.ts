@@ -28,7 +28,7 @@ export interface AgentRailInputs {
   vaultPath: () => string | null
   /** Whether the rail is on screen. */
   railOpen: () => boolean
-  compose?: (vaultId: string) => AgentComposition
+  compose?: (vaultId: string, agentId?: string) => AgentComposition
   onStopFailed?: (error: unknown) => void
   onResumeFailed?: (error: unknown) => void
   onNewSessionFailed?: (error: unknown) => void
@@ -61,7 +61,7 @@ export interface AttachedAgentRail {
    * "new session" entry leads to. Here for the same reason `resume` is: the gesture arrives from
    * the panel, and the shell is the layer that holds both the rail and the folder.
    */
-  newSession(): Promise<void>
+  newSession(agentId?: string): Promise<void>
 }
 
 /**
@@ -125,7 +125,6 @@ export function attachAgentRail(inputs: AgentRailInputs): AttachedAgentRail {
     composition: rail.composition,
     retry: () => rail.retry(),
     resume: (sessionId) => rail.resume(sessionId),
-    newSession: () => rail.newSession(),
+    newSession: (agentId) => rail.newSession(agentId),
   }
 }
-

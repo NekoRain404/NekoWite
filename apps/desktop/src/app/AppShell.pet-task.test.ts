@@ -82,6 +82,7 @@ function fakeComposition(agentId = 'opencode') {
       add: () => {
         throw new Error('the registry is not part of this test')
       },
+      delete: async () => null,
       setEnabled: () => {
         throw new Error('the registry is not part of this test')
       },
@@ -265,6 +266,7 @@ describe('a click on a pet task this window cannot show', () => {
         add: () => {
           throw new Error('the registry is not part of this test')
         },
+        delete: async () => null,
         setEnabled: () => {
           throw new Error('the registry is not part of this test')
         },

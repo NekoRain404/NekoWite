@@ -113,6 +113,7 @@ const COMMANDS: &[&str] = &[
     "agent_cancel_run",
     // The engine registry.
     "agent_registry_read",
+    "agent_registry_discover",
     "agent_registry_add",
     "agent_registry_set_enabled",
     // The runtime page (§3.1.4): the protocol state and the capability report for a caller with no

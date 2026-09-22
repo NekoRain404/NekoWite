@@ -34,6 +34,43 @@ pub struct ConfigDocument {
 }
 
 impl ConfigDocument {
+    /// Only expose scalar permission actions; complex values remain opaque to the simple editor.
+    pub fn permission_rules(&self) -> Result<Value, ConfigError> {
+        let root = scan(&self.text, &self.path)?;
+        let Some(object) = root.object.as_ref() else {
+            return Ok(serde_json::json!({ "kind": "complex" }));
+        };
+        let entries: Vec<_> = object
+            .entries
+            .iter()
+            .filter(|entry| entry.key == "permission")
+            .collect();
+        if entries.is_empty() {
+            return Ok(serde_json::json!({ "kind": "absent" }));
+        }
+        // Duplicate members have ambiguous engine precedence and cannot be safely edited here.
+        if entries.len() != 1 {
+            return Ok(serde_json::json!({ "kind": "complex" }));
+        }
+        let Some(rules) = entries[0].value.object.as_ref() else {
+            return Ok(serde_json::json!({ "kind": "complex" }));
+        };
+        let mut result = serde_json::Map::new();
+        for entry in &rules.entries {
+            if result.contains_key(&entry.key) {
+                return Ok(serde_json::json!({ "kind": "complex" }));
+            }
+            let action =
+                serde_json::from_str::<String>(&self.text[entry.value.start..entry.value.end]).ok();
+            let value = match action.as_deref() {
+                Some("ask" | "allow" | "deny") => Value::String(action.unwrap()),
+                _ => Value::Null,
+            };
+            result.insert(entry.key.clone(), value);
+        }
+        Ok(serde_json::json!({ "kind": "object", "rules": result }))
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }

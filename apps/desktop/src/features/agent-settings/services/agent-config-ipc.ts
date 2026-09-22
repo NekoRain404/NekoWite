@@ -177,6 +177,7 @@ function document(value: unknown, relative: string): ConfigRead {
     // `creatable` arm rather than in an editor drawing text that never arrived.
     text: asNullableString(record['text'], 'the document.text'),
     editable: asBoolean(record['editable'], 'the document.editable'),
+    ...(record['permissionRules'] === undefined ? {} : { permissionRules: record['permissionRules'] }),
   }
 }
 

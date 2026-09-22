@@ -14,14 +14,18 @@ use tauri::Manager;
 use crate::agent_runtime::driver::{self, Session};
 use crate::agent_runtime::events::{AgentEventEnvelope, AgentIdentity};
 use crate::agent_runtime::profile::ProfileStore;
-use crate::agent_runtime::registry::{AgentInstance, AgentRegistry, DEFAULT_PROFILE};
+use crate::agent_runtime::registry::{AgentInstance, AgentRegistry};
 use crate::state::desktop_pet_state::DesktopPetState;
 use crate::state::live_note_windows::live_notes;
 use crate::storage::agent_files::AgentVaultFiles;
 use crate::storage::key_store::data_dir;
 
 use super::launch::{profile_refusal, start_refusal};
-use super::registry_access::registry_for;
+
+#[path = "start_lifecycle.rs"]
+mod start_lifecycle;
+#[path = "start_selection.rs"]
+mod start_selection;
 
 // ---------------------------------------------------------------------------
 // Agent runtime state
@@ -48,6 +52,9 @@ use super::registry_access::registry_for;
 /// first time a start failed between the claim and the runtime.
 #[derive(Default)]
 pub struct AgentRuntimeState {
+    pub lifecycle: start_lifecycle::StartLifecycle,
+    /// Serializes asynchronous starts so two selections cannot replace each other's instance.
+    starting: tokio::sync::Mutex<()>,
     /// Which engines this app knows and which profile belongs to which — the
     /// definitions, not the processes. `Mutex` because adding, disabling and
     /// removing a definition all take `&mut`; starting one takes `&self`.
@@ -166,8 +173,16 @@ pub async fn start_session(
     state: &AgentRuntimeState,
     app: &tauri::AppHandle,
     vault_id: &str,
+    agent_id: Option<&str>,
+    profile_id: Option<&str>,
     sink: impl Fn(AgentEventEnvelope) + Send + 'static,
+    install: impl FnOnce(Session) -> Result<(), String>,
 ) -> Result<Session, String> {
+    let _starting = state
+        .starting
+        .try_lock()
+        .map_err(|_| "an agent is already being started".to_string())?;
+    let generation = state.lifecycle.begin()?;
     // The pet hears the runtime's own frames from *this* point rather than from a subscription of
     // its own: §6.1's single task fact source is the stream the driver reads, and a second reader
     // would see half of it (its own doc says so). The projection is fed before the window's sink
@@ -194,8 +209,6 @@ pub async fn start_session(
         }
     };
     let managed = data_dir(app)?;
-    let registry = registry_for(state, &managed)?;
-    let agent_id = registry.default_agent_id().to_string();
     // Before anything is composed, the slot is emptied of an engine that is no longer there: the
     // registry refuses a second engine per (agent, profile, vault) §3.4, and that refusal must be
     // about a process rather than about a claim the host never let go of. An engine that exited on
@@ -221,15 +234,25 @@ pub async fn start_session(
             }
         }
     }
+    if state
+        .instance
+        .lock()
+        .map_err(|_| "the agent runtime state was poisoned by a panic".to_string())?
+        .is_some()
+    {
+        return Err("an agent is already running; stop it before starting another".to_string());
+    }
+    let (registry, agent_id, profile_id) =
+        start_selection::selected_registry(state, &managed, agent_id, profile_id)?;
     // §8.1: opening the profile is what creates and binds it on first use, and
     // its root is the engine's `HOME` and its XDG roots.
     let profile = ProfileStore::new(&managed)
-        .open(&agent_id, DEFAULT_PROFILE)
+        .open(&agent_id, &profile_id)
         .map_err(|error| profile_refusal(&error))?;
     let mut instance = registry
         .start(
             &agent_id,
-            DEFAULT_PROFILE,
+            &profile_id,
             vault_id,
             profile.root(),
             // §8.1: the profile is where an engine's authorization lives, and this is the moment it
@@ -259,24 +282,27 @@ pub async fn start_session(
     // tears the engine down when it goes — so it is stored *after* the session
     // is built. A previous instance, if one was still there, is dropped by the
     // assignment, which is the same teardown `agent_stop` performs.
-    let mut slot = state
-        .instance
-        .lock()
-        .map_err(|_| "the agent runtime state was poisoned by a panic".to_string())?;
-    // The epoch is installed *before* the instance is stored, so the first frame of the new
-    // incarnation is never refused as foreign while the old one is still on the feed. Installing
-    // a different epoch is the projection's proof that the previous one is over, which is what
-    // restates anything it had in flight as `interrupted` (§6.2's last row) — so a restart is a
-    // reminder about work that was cut off, and never a run left saying `working` for ever.
-    if let Some(pet) = app.try_state::<DesktopPetState>() {
-        match pet.tasks.install(&session.identity) {
-            Ok(Some(tasks)) => crate::desktop_pet::publish_tasks(app, &tasks),
-            Ok(None) => {}
-            Err(detail) => {
-                eprintln!("nekowite: the pet's task list did not follow a start: {detail}")
+    state.lifecycle.finish(generation, || {
+        let mut slot = state
+            .instance
+            .lock()
+            .map_err(|_| "the agent runtime state was poisoned by a panic".to_string())?;
+        // The epoch is installed *before* the instance is stored, so the first frame of the new
+        // incarnation is never refused as foreign while the old one is still on the feed. Installing
+        // a different epoch is the projection's proof that the previous one is over, which is what
+        // restates anything it had in flight as `interrupted` (§6.2's last row) — so a restart is a
+        // reminder about work that was cut off, and never a run left saying `working` for ever.
+        install(session.clone())?;
+        if let Some(pet) = app.try_state::<DesktopPetState>() {
+            match pet.tasks.install(&session.identity) {
+                Ok(Some(tasks)) => crate::desktop_pet::publish_tasks(app, &tasks),
+                Ok(None) => {}
+                Err(detail) => {
+                    eprintln!("nekowite: the pet's task list did not follow a start: {detail}")
+                }
             }
         }
-    }
-    *slot = Some(instance);
-    Ok(session)
+        *slot = Some(instance);
+        Ok(session)
+    })
 }

@@ -33,6 +33,7 @@ export interface AgentRegistryLabels {
   update: Record<UpdatePolicy, string>
   programState: Record<ProgramState, string>
   control: { enable: string; disable: string }
+  deletion: { title: string; confirm: string; cancel: string; hint: string }
   fields: { agentId: string; displayName: string; program: string; args: string; argsHint: string; adapter: string }
   add: { title: string; submit: string; added: string }
   action: { failed: string }
@@ -78,6 +79,7 @@ export function registryLabels(): AgentRegistryLabels {
       'not-executable': template('agent.registry.programState.notExecutable', 'path'),
     },
     control: { enable: t('agent.registry.control.enable'), disable: t('agent.registry.control.disable') },
+    deletion: { title: t('agent.registry.deletion.title'), confirm: t('agent.registry.deletion.confirm'), cancel: t('agent.registry.deletion.cancel'), hint: t('agent.registry.deletion.hint') },
     fields: {
       agentId: t('agent.registry.fields.agentId'), displayName: t('agent.registry.fields.displayName'),
       program: t('agent.registry.fields.program'), args: t('agent.registry.fields.args'),

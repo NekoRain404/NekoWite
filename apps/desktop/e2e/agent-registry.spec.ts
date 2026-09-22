@@ -44,7 +44,7 @@ const PROFILE_ID = 'prof-e2e'
 /** What the page records, and what the spec can change underneath it. */
 interface RegistryHarness {
   readout: AgentRegistryReadout
-  calls: { add: AgentDraft[]; setEnabled: Array<[string, boolean]> }
+  calls: { add: AgentDraft[]; setEnabled: Array<[string, boolean]>; delete: string[] }
   emitted: string[]
   /** Answered on the next `add`; `null` accepts. */
   addRefusal: RegistryRefusal | null
@@ -136,7 +136,7 @@ async function open(
 
       const state: RegistryHarness = {
         readout: first,
-        calls: { add: [], setEnabled: [] },
+        calls: { add: [], setEnabled: [], delete: [] },
         emitted: [],
         addRefusal: null,
         setEnabledRefusal: null,
@@ -170,6 +170,11 @@ async function open(
               },
             ],
           }
+          return null
+        },
+        delete: async (agentId) => {
+          state.calls.delete.push(agentId)
+          state.readout = { ...state.readout, entries: state.readout.entries.filter(entry => entry.agentId !== agentId) }
           return null
         },
         setEnabled: async (agentId, enabled) => {
@@ -239,7 +244,7 @@ async function arrange(
 }
 
 const calls = (page: Page) =>
-  page.evaluate(() => window.__agentRegistry?.calls ?? { add: [], setEnabled: [] })
+  page.evaluate(() => window.__agentRegistry?.calls ?? { add: [], setEnabled: [], delete: [] })
 
 const emitted = (page: Page) => page.evaluate(() => window.__agentRegistry?.emitted ?? [])
 
@@ -416,7 +421,7 @@ test.describe('updating a program', () => {
     // The version is a fact about the user's own installation, shown as a fact: no control in the
     // row acts on it, and there is no update anywhere in the section for one to act with.
     await expect(row(page, 'acme').locator('.registry-version')).toContainText('0.9.0')
-    await expect(row(page, 'acme').locator('button')).toHaveCount(0)
+    await expect(row(page, 'acme').locator('button:not([data-test="registry-delete-acme"])')).toHaveCount(0)
     await expect(row(page, 'bundled-engine').locator('.registry-version')).toContainText('1.18.29')
   })
 })

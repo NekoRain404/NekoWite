@@ -43,7 +43,6 @@ export const agents = {
            a shelf life of about one commit; these two reached it. */
         commands: 'Commands — the list an engine publishes for a session. It reaches the agent panel as it arrives and belongs to that one session, and there is no read of it a settings page can make.',
         mcp: 'MCP servers — the list, the configuration and the transports. Nothing was built for MCP in this build at all.',
-        engine: 'Choosing the engine a new session starts on. Engines can be added and switched off above, but a session always starts on the default one: the backend’s start call takes a folder and nothing else, so nothing in this window opens a session on another engine yet.',
         other: 'This section needs a host half this build does not have.',
       },
     },
@@ -68,7 +67,6 @@ export const agents = {
         intro: '下面每一条本来都会是独立的一页设置。它们需要的那一半还不存在，而一个只能失败的控件不会被画出来：',
         commands: '命令——引擎为某个会话发布的列表。它随发布到达智能体面板，且只属于那一个会话，设置页没有可以调用的读取。',
         mcp: 'MCP 服务器——列表、配置与传输方式。当前构建里完全没有为 MCP 实现任何东西。',
-        engine: '选择新会话使用哪个引擎。上面已经可以添加引擎、停用引擎，但会话总是启动在默认引擎上：后端的启动调用只接收一个文件夹，因此这个窗口目前无法在另一个引擎上打开会话。',
         other: '这一节需要的后端一半，当前构建还没有。',
       },
     },

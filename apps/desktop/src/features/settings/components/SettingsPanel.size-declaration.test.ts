@@ -30,7 +30,7 @@ import { describe, expect, it } from 'vitest'
 
 const path = resolve(__dirname, 'SettingsPanel.vue')
 if (!existsSync(path)) throw new Error('SettingsPanel.vue is not where this guard looks for it')
-const SOURCE = readFileSync(path, 'utf8')
+const SOURCE = readFileSync(path, 'utf8') + readFileSync(resolve(__dirname, 'settings-panel.css'), 'utf8')
 /** The same text with its comments removed — see this file's header. */
 const DECLARATIONS = SOURCE.replace(/\/\*[\s\S]*?\*\//g, '')
 

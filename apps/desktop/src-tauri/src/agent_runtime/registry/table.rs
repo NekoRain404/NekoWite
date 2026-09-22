@@ -28,12 +28,13 @@ use super::validation::validate_id;
 use super::DEFAULT_PROFILE;
 
 /// The agent definitions this app has, and the runtimes started from them.
+#[derive(Clone)]
 pub struct AgentRegistry {
     /// Keyed by id: the settings list renders in a stable order, and a collision is a refusal
     /// rather than a last-write-wins.
-    registrations: BTreeMap<String, AgentRegistration>,
+    pub(super) registrations: BTreeMap<String, AgentRegistration>,
     /// Which agent each profile belongs to (§3.4's Profile row).
-    profiles: BTreeMap<String, String>,
+    pub(super) profiles: BTreeMap<String, String>,
     live: Arc<Mutex<LiveInstances>>,
     default_agent: String,
 }

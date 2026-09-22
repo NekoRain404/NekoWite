@@ -84,22 +84,25 @@ const ICONS: Record<AgentPageId, typeof Activity> = {
    dialog stacks the rows rather than clipping the last one — measured clean at the product's own
    860x560 minimum in `settings-density.spec.ts`. */
 .agents-rail {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 2px;
-  padding-top: 10px;
-  border-top: 1px solid var(--app-border);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 3px;
+  margin-top: 8px;
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--app-border) 78%, transparent);
+  border-radius: var(--app-radius-md);
+  background: color-mix(in srgb, var(--app-panel) 48%, transparent);
   user-select: none;
 }
 .agents-tab {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 26px;
-  padding: 0 9px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
   border: 1px solid transparent;
-  border-radius: var(--app-radius-lg);
+  border-radius: var(--app-radius-sm);
   background: transparent;
   color: color-mix(in srgb, var(--app-text) 72%, var(--app-muted));
   font-family: var(--app-font);
@@ -119,9 +122,13 @@ const ICONS: Record<AgentPageId, typeof Activity> = {
   outline-offset: 1px;
 }
 .agents-tab.active {
-  border-color: color-mix(in srgb, var(--app-accent) 45%, var(--app-border));
-  background: color-mix(in srgb, var(--app-accent-soft) 76%, var(--app-elevated));
+  border-color: color-mix(in srgb, var(--app-accent) 52%, var(--app-border));
+  background: color-mix(in srgb, var(--app-accent-soft) 68%, var(--app-elevated));
   color: var(--app-text);
   font-weight: 600;
+}
+
+@media (max-width: 520px) {
+  .agents-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 </style>

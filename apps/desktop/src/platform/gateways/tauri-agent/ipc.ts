@@ -170,7 +170,7 @@ export interface AgentPermissionAnswerWire {
  * and a test hands the gateway its own.
  */
 export interface AgentIpc {
-  start(vaultId: string): Promise<AgentRuntimeHandle>
+  start(vaultId: string, agentId?: string, profileId?: string): Promise<AgentRuntimeHandle>
   stop(): Promise<void>
   openSession(vaultId: string, cwd: string): Promise<AgentHostSession>
   /**
@@ -238,7 +238,11 @@ export interface AgentIpc {
 
 export function createTauriAgentIpc(): AgentIpc {
   return {
-    start: (vaultId) => call<AgentRuntimeHandle>('agent_start', { vaultId }),
+    start: (vaultId, agentId, profileId) => call<AgentRuntimeHandle>('agent_start', {
+      vaultId,
+      ...(agentId !== undefined ? { agentId } : {}),
+      ...(profileId !== undefined ? { profileId } : {}),
+    }),
     stop: () => call<void>('agent_stop'),
     openSession: (vaultId, cwd) =>
       call<AgentHostSession>('agent_open_session', { vaultId, cwd }),

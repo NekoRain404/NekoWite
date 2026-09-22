@@ -76,6 +76,7 @@ function wire(answers: {
       read: async () => answers.read ?? readout(),
       add,
       setEnabled,
+      delete: async () => null,
     },
     add,
     setEnabled,
@@ -238,6 +239,7 @@ describe('an answer this window cannot read', () => {
       add: async () => {
         throw ipcFailure
       },
+      delete: async () => null,
       setEnabled: async () => {
         throw ipcFailure
       },

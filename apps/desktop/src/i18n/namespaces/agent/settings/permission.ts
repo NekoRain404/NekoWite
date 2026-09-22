@@ -13,7 +13,7 @@ export const permission = {
          engine may ask anything — an empty list that reads as "nothing to see" is the one
          answer worse than no page. */
       states: {
-        written: 'This app wrote the rules below into the engine’s own configuration, so the engine asks before it changes your files or runs a command.',
+        written: 'The rules below are stored in this profile’s configuration. Configuration changes apply when the Agent starts; this is not a report of the running process’s effective permissions.',
         engineOwn: 'The engine’s own configuration already carries permission rules, so this app wrote none and does not override them. What those rules ask about cannot be read from here; the document below is where they are.',
         notThisHost: 'This profile reuses your own engine installation, so this app wrote no permission rules for it and cannot say what the engine will ask.',
       },
@@ -63,7 +63,7 @@ export const permission = {
       loading: '正在读取权限配置……',
       unreadable: '未能从后端读取权限配置。',
       states: {
-        written: '本应用把下面的规则写进了引擎自己的配置，因此引擎在改动你的文件或执行命令之前会先询问。',
+        written: '以下规则保存在该配置档案中。配置修改在 Agent 启动时加载，不代表运行中进程当前的有效权限。',
         engineOwn: '引擎自己的配置里已经有权限规则，因此本应用没有写入，也不会覆盖它们。那些规则问了什么，这里读不到；它们就在下面这个文件里。',
         notThisHost: '该配置档案复用你自己的引擎安装，因此本应用没有为它写入任何权限规则，也无法说明引擎会问什么。',
       },

@@ -41,6 +41,7 @@ export type SettingsSectionId =
 export interface SettingsOpenTarget {
   section: SettingsSectionId
   page?: PetSettingsPage
+  agentPage?: AgentPageId
 }
 
 /**

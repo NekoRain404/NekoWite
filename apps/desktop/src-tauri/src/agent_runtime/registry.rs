@@ -42,6 +42,7 @@
 // when its subject does.
 mod error;
 mod instances;
+pub mod persistence;
 mod registration;
 mod table;
 mod taxonomy;

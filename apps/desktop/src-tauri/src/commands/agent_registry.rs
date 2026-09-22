@@ -37,6 +37,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 use crate::agent_runtime::adapters;
+use crate::agent_runtime::discovery::{discover_known_agents, DiscoveryCandidate};
 use crate::agent_runtime::events::AgentFailureCode;
 use crate::agent_runtime::registry::{
     self, AgentRegistration, AgentRegistry, EnvPolicy, InstallSource, RegistryError,
@@ -216,6 +217,11 @@ pub fn set_enabled(
     }
 }
 
+/// Deletes only the registration; program, profiles and history stay owned by the user.
+pub fn delete_agent(registry: &mut AgentRegistry, agent_id: &str) -> Option<RegistryRefusal> {
+    registry.remove(agent_id).err().map(refusal_view)
+}
+
 /// The definition an add form becomes — §3.4's registration row with the three fields a form may
 /// not choose filled in.
 ///
@@ -328,6 +334,13 @@ pub fn agent_registry_read(
     let registry = registry_of(&runtime, &managed)?;
     Ok(read_registry(&registry))
 }
+
+/// Reports known Linux agent commands found on PATH. This is read-only; a candidate is not
+/// registered until the settings page sends it through `agent_registry_add`.
+#[tauri::command]
+pub fn agent_registry_discover() -> Result<Vec<DiscoveryCandidate>, String> {
+    Ok(discover_known_agents(std::env::var("PATH").ok().as_deref()))
+}
 /// Adds a local executable as an engine.
 ///
 /// `Ok(None)` is an accepted registration, `Ok(Some(refusal))` is the backend saying no with the
@@ -362,4 +375,17 @@ pub fn agent_registry_set_enabled(
 /// is the only thing that needs it on this surface.
 fn managed_dir(app: &AppHandle) -> Result<PathBuf, String> {
     crate::storage::key_store::data_dir(app)
+}
+
+/// Removes a registration with the same refusal and transport channels as adding one.
+#[tauri::command]
+pub fn agent_registry_delete(
+    app: AppHandle,
+    runtime: State<'_, AgentRuntimeState>,
+    agent_id: String,
+) -> Result<Option<RegistryRefusal>, String> {
+    let managed = managed_dir(&app)?;
+    edit_registry(&runtime, &managed, |registry| {
+        delete_agent(registry, &agent_id)
+    })
 }

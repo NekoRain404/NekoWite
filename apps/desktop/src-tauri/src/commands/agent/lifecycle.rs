@@ -75,28 +75,28 @@ pub async fn agent_start(
     runtime_state: tauri::State<'_, AgentRuntimeState>,
     ipc: tauri::State<'_, AgentIpcState>,
     vault_id: String,
+    agent_id: Option<String>,
+    profile_id: Option<String>,
 ) -> Result<AgentRuntimeHandle, AgentFailure> {
     let handle = {
         // The sink is the window's half of this: one channel, every session (see
         // [`AGENT_EVENT_CHANNEL`](super::AGENT_EVENT_CHANNEL)). `emit` failing means no window is
         // listening, which is the shutdown path rather than an error to report.
         let emit = app.clone();
-        let session =
-            crate::state::start_session(&runtime_state, &app, &vault_id, move |envelope| {
+        let session = crate::state::start_session(
+            &runtime_state,
+            &app,
+            &vault_id,
+            agent_id.as_deref(),
+            profile_id.as_deref(),
+            move |envelope| {
                 crate::commands::agent_events::publish(&emit, &envelope);
-            })
-            .await
-            .map_err(AgentFailure::unavailable)?;
+            },
+            |session| ipc.install(session).map_err(|failure| failure.message),
+        )
+        .await
+        .map_err(AgentFailure::unavailable)?;
         let handle = AgentRuntimeHandle::of(&session.identity);
-        if let Err(failure) = ipc.install(session) {
-            // The engine is up and nothing can address it — the slot that every other command reads
-            // is poisoned. Taking it down again before refusing is the difference between a start
-            // that failed and a process the app can never stop: `stop_running_engine` below reaches
-            // the runtime's own slot even when the session slot refuses (see its docblock), and the
-            // instance's `Drop` is what ends the engine.
-            let _ = stop_running_engine(&app, &runtime_state, &ipc);
-            return Err(failure);
-        }
         handle
     };
     Ok(handle)
@@ -147,6 +147,7 @@ pub fn stop_running_engine<R: tauri::Runtime>(
     runtime_state: &AgentRuntimeState,
     ipc: &AgentIpcState,
 ) -> Result<(), AgentFailure> {
+    let _lifecycle = runtime_state.lifecycle.stop();
     // The prompts first, then the engine: a pending request belongs to a turn that is about to
     // end, and the engine is blocking on it — so it is answered `cancelled` while there is still
     // a connection to answer on (§6.2's 旧授权按钮失效, on the process-exit route).

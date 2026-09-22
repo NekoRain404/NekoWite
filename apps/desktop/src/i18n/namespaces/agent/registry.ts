@@ -37,6 +37,8 @@ export const registry = {
         notExecutable: 'The file at {path} has no executable bit, so it cannot be started.',
       },
       control: { enable: 'Switch on', disable: 'Switch off' },
+      picker: { title: 'New agent session', current: 'Current', add: 'Add ACP agent', manage: 'Manage ACP agents', busy: 'Stop active tasks and answer pending permissions before switching agents.' },
+      deletion: { title: 'Delete registration', confirm: 'Delete', cancel: 'Cancel', hint: 'Delete this ACP registration? The program, configuration, credentials and session history will be kept.' },
       fields: {
         agentId: 'Id',
         displayName: 'Name',
@@ -113,6 +115,8 @@ export const registry = {
         notExecutable: '{path} 处的文件没有可执行权限，无法启动。',
       },
       control: { enable: '启用', disable: '停用' },
+      picker: { title: '新建 Agent 会话', current: '当前', add: '添加 ACP', manage: '管理 ACP', busy: '请先停止运行中的任务并处理待授权请求，再切换 Agent。' },
+      deletion: { title: '删除注册', confirm: '删除', cancel: '取消', hint: '删除此 ACP 注册？程序、配置、凭据和会话历史将保留。' },
       fields: {
         agentId: '标识',
         displayName: '名称',

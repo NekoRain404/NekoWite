@@ -13,6 +13,7 @@ export const rail = {
       useChat: 'Back to the chat panel',
       unknownFailure: 'The request was refused without a reason this app could read.',
       stopFailed: 'The agent engine could not be stopped: {reason}',
+      switchBusy: 'Stop active tasks and resolve pending permissions before switching agents.',
       /* A session the user picked out of the engine's history and the engine would not hand
          back. The rail keeps the session that is open — a failed load is not a reason to take a
          live conversation off the screen — so this sentence is the only place the refusal can be
@@ -49,6 +50,7 @@ export const rail = {
       useChat: '回到聊天面板',
       unknownFailure: '请求被拒绝，且没有给出本应用能读到的原因。',
       stopFailed: '智能体引擎未能停止：{reason}',
+      switchBusy: '请先停止运行中的任务并处理待授权请求，再切换 Agent。',
       resumeFailed: '未能重新打开该会话：{reason}',
       newSessionFailed: '未能打开新会话：{reason}',
       taskUnavailable: {

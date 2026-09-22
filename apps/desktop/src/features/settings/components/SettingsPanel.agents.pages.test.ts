@@ -40,7 +40,7 @@ describe('the agents section in the settings dialog', () => {
     expect(el('provider-credential-ANTHROPIC_API_KEY')).not.toBeNull()
     // And the permission page, mounted on the same pair: its rules readout is drawn, and its
     // grants half drew the backend's own "no engine is running" rather than an empty list.
-    expect(el('permission-state')?.textContent).toContain('asks before it changes your files')
+    expect(el('permission-state')?.textContent).toContain('Configuration changes apply when the Agent starts')
     expect(el('grants-not-running')).not.toBeNull()
     expect(el('grants-empty')).toBeNull()
     // The engine's own configuration: the document's text, drawn as the engine wrote it, with a

@@ -4,6 +4,7 @@ import {
   clearImageSelection,
   deleteImageNode,
   getImageAttrs,
+  invalidateImageResolution,
   onImageSelectionChange,
   restoreImageSize,
   updateImageAttrs,
@@ -298,6 +299,9 @@ export function useImagePanelForm(options: ImagePanelFormOptions): ImagePanelFor
     const view = editor.getView()
     const src = link.value.trim()
     if (src) {
+      // Replacing a file at the same vault path must invalidate the display
+      // URL memo; otherwise the node keeps showing the previous file bytes.
+      invalidateImageResolution()
       updateImageAttrs(view, sel.pos, { src })
       reselectImage(view, sel.pos)
     }

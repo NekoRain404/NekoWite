@@ -119,7 +119,7 @@ export const MOTION_SURFACE = [
   '../ui/DiffView.vue',
   '../ui/TemplatePicker.vue',
   '../features/notes/components/NoteListPanel.vue',
-  '../features/settings/components/SettingsPanel.vue',
+  '../features/settings/components/settings-panel.css',
   // `../features/sidebar/components/SidebarGroup.vue` was listed a second time
   // here and is not any more. A path that appears twice is the milder end of the
   // same failure this list keeps producing: the entry buys nothing the first one

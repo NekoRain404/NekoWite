@@ -8,6 +8,7 @@ import { catalogue } from './agent/catalogue'
 import { settings } from './agent/settings'
 import { note } from './agent/note'
 import { changes } from './agent/changes'
+import { permissionEditor } from './agent/permission-editor'
 
 export const agent = {
   en: {
@@ -21,6 +22,7 @@ export const agent = {
       ...settings.en,
       ...note.en,
       ...changes.en,
+      ...permissionEditor.en,
     },
   },
   zh: {
@@ -34,6 +36,7 @@ export const agent = {
       ...settings.zh,
       ...note.zh,
       ...changes.zh,
+      ...permissionEditor.zh,
     },
   },
 } as const

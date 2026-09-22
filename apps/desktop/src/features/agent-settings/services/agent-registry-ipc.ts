@@ -41,6 +41,8 @@ import {
 } from './agent-wire-narrowing'
 import type {
   AgentDraft,
+  AgentDiscoveryCandidate,
+  AgentDiscoveryKind,
   AgentRegistryClient,
   AgentRegistryEntry,
   AgentRegistryReadout,
@@ -61,8 +63,10 @@ import type {
  */
 export interface AgentRegistryWire {
   read(): Promise<unknown>
+  discover?(): Promise<unknown>
   add(draft: AgentDraft): Promise<unknown>
   setEnabled(agentId: string, enabled: boolean): Promise<unknown>
+  delete(agentId: string): Promise<unknown>
 }
 
 /** The three vocabularies the wire uses, listed once each so a new arm is a compile error here. */
@@ -103,13 +107,34 @@ export function createAgentRegistryClient(wire: AgentRegistryWire): AgentRegistr
     async read(): Promise<AgentRegistryReadout> {
       return readout(await wire.read())
     },
+    async discover(): Promise<readonly AgentDiscoveryCandidate[]> {
+      return wire.discover === undefined ? [] : discovery(await wire.discover())
+    },
     async add(draft: AgentDraft): Promise<RegistryRefusal | null> {
       return nullableRefusal(await wire.add(draft))
     },
     async setEnabled(agentId: string, enabled: boolean): Promise<RegistryRefusal | null> {
       return nullableRefusal(await wire.setEnabled(agentId, enabled))
     },
+    async delete(agentId: string): Promise<RegistryRefusal | null> {
+      return nullableRefusal(await wire.delete(agentId))
+    },
   }
+}
+
+function discovery(value: unknown): readonly AgentDiscoveryCandidate[] {
+  return asList(value, 'discovery').map((candidate, index) => {
+    const record = asRecord(candidate, `discovery[${index}]`)
+    return {
+      agentId: asString(record['agentId'], `discovery[${index}].agentId`),
+      displayName: asString(record['displayName'], `discovery[${index}].displayName`),
+      command: asString(record['command'], `discovery[${index}].command`),
+      program: asString(record['program'], `discovery[${index}].program`),
+      args: asStringList(record['args'], `discovery[${index}].args`),
+      kind: oneOf(record['kind'], ['acp', 'terminal'] as readonly AgentDiscoveryKind[], `discovery[${index}].kind`),
+      adapterId: asString(record['adapterId'], `discovery[${index}].adapterId`),
+    }
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -225,4 +250,3 @@ function refusal(value: unknown): RegistryRefusal {
   // refusal with no sentence.
   return malformed('kind')
 }
-

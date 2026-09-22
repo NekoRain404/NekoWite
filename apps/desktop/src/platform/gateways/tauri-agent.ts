@@ -44,6 +44,8 @@ export interface TauriAgentOptions {
    * to arrive with the gateway. The composition site is the only place that knows it.
    */
   vaultId: string
+  agentId?: string
+  profileId?: string
   /** The IPC port. Defaults to the window's; a test hands in its own. */
   ipc?: AgentIpc
   /**
@@ -94,6 +96,9 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
   })
 
   const turns = createAgentTurns(ipc, channel)
+  // Host snapshots can still say ready while a prompt awaits IPC acceptance.
+  // Count by handle so late completion from an older runtime cannot clear a new session.
+  const pendingPrompts = new Map<AgentSession, number>()
 
   /**
    * Move one of the session's own options, whichever one it is.
@@ -124,7 +129,9 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
       // A redundant start is a no-op, like the double's: it must not invalidate the handles a
       // window is already holding.
       if (runtime !== null) return
-      runtime = await ipc.start(options.vaultId)
+      runtime = await (options.agentId === undefined && options.profileId === undefined
+        ? ipc.start(options.vaultId)
+        : ipc.start(options.vaultId, options.agentId, options.profileId))
     },
 
     async stop(): Promise<void> {
@@ -246,7 +253,14 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
       attachments: readonly AgentPromptAttachment[] = [],
     ) {
       const record = book.recordFor(session)
-      return turns.prompt(record.identity, text, attachments)
+      pendingPrompts.set(session, (pendingPrompts.get(session) ?? 0) + 1)
+      try {
+        return await turns.prompt(record.identity, text, attachments)
+      } finally {
+        const remaining = (pendingPrompts.get(session) ?? 1) - 1
+        if (remaining === 0) pendingPrompts.delete(session)
+        else pendingPrompts.set(session, remaining)
+      }
     },
 
     async recoverChange(session: AgentSession, path: string): Promise<AgentChangeRecovery> {
@@ -315,9 +329,10 @@ export function createTauriAgentGateway(options: TauriAgentOptions): AgentGatewa
       const record = book.recordFor(session)
       const host = await ipc.snapshot(session.sessionId)
       checkSnapshot(record, host)
+      const hostState = readHostState(host.state)
       return {
         identity: record.identity,
-        state: readHostState(host.state),
+        state: pendingPrompts.has(session) && hostState !== 'waiting-permission' ? 'running' : hostState,
         runId: host.runId,
         sequence: host.sequence,
         events: mapAll(host.events, tools, report),

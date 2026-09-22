@@ -36,7 +36,7 @@ export type AgentRailState =
 
 export interface AgentRailDeps {
   /** How a runtime for one vault is built. Injected by a test; the app builds the real one. */
-  compose?: (vaultId: string) => AgentComposition
+  compose?: (vaultId: string, agentId?: string) => AgentComposition
   /** A `stop` that failed. Reported rather than swallowed: an engine that would not go away
    *  is a fact about the machine, and it is the one failure the next start will meet again. */
   onStopFailed?: (error: unknown) => void
@@ -108,8 +108,8 @@ export interface AgentRail {
    */
   resume(sessionId: string): Promise<void>
   /**
-   * Open a session that has never existed before, on the runtime that is already up, and put it on
-   * screen — a *new* conversation rather than an old one.
+   * Open a fresh session. An omitted or matching agent id keeps the current runtime;
+   * a different id checks every served session before stopping and replacing it.
    *
    * `resume`'s sibling and deliberately not a restart. A new session is one more `session/new` on
    * the engine that is serving this one, so the session the reader was in is left open on it and
@@ -119,11 +119,11 @@ export interface AgentRail {
    * for a folder the user opened.
    *
    * Resolves when the attempt has settled and never rejects, like the rest of this file: nothing
-   * happens for a rail that is not `live` (there is no runtime to open one on), and a refusal is
+   * happens for an idle rail. An explicit selection can recover a refused startup. A refusal is
    * reported through {@link AgentRailDeps.onNewSessionFailed} with the session that was open left
    * exactly where it was.
    */
-  newSession(): Promise<void>
+  newSession(agentId?: string): Promise<void>
   /** Ask again after a refusal: a fresh composition, which is a fresh `runtimeEpoch`. */
   retry(): Promise<void>
   /** Take the runtime down and go back to `idle`. */

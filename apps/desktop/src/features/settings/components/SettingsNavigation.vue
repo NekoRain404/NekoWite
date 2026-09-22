@@ -43,7 +43,7 @@ const SECTIONS = computed<Array<{ id: SettingsSectionId; label: string; icon: ty
       v-for="s in SECTIONS"
       :key="s.id"
       class="nav-row"
-      :class="{ active: activeSection === s.id }"
+      :class="{ active: activeSection === s.id, 'nav-row-major': s.id === 'agents' }"
       role="tab"
       :aria-selected="activeSection === s.id"
       :aria-current="activeSection === s.id ? 'true' : undefined"
@@ -65,9 +65,10 @@ const SECTIONS = computed<Array<{ id: SettingsSectionId; label: string; icon: ty
   display: flex;
   flex-direction: column;
   gap: 1px;
-  width: 152px;
+  width: 176px;
   flex: none;
-  padding: 10px 8px;
+  padding: 14px 10px;
+  background: color-mix(in srgb, var(--app-panel) 42%, transparent);
   border-right: 1px solid color-mix(in srgb, var(--app-border) 60%, transparent);
   overflow-y: auto;
   user-select: none;
@@ -78,10 +79,11 @@ const SECTIONS = computed<Array<{ id: SettingsSectionId; label: string; icon: ty
   align-items: center;
   gap: 8px;
   width: 100%;
-  height: 32px;
-  padding: 0 10px;
+  min-height: 36px;
+  height: 36px;
+  padding: 0 11px;
   border: none;
-  border-radius: var(--app-radius-lg);
+  border-radius: var(--app-radius-md);
   background: transparent;
   color: color-mix(in srgb, var(--app-text) 72%, var(--app-muted));
   font-family: var(--app-font);
@@ -97,12 +99,15 @@ const SECTIONS = computed<Array<{ id: SettingsSectionId; label: string; icon: ty
   color: var(--app-text);
   background: color-mix(in srgb, var(--app-panel) 62%, transparent);
 }
+.nav-row-major { margin-top: 10px; }
 .nav-row:focus-visible {
   outline: 2px solid var(--app-accent);
   outline-offset: 1px;
 }
 .nav-row.active {
-  background: color-mix(in srgb, var(--app-accent-soft) 76%, var(--app-elevated));
+  border-left: 2px solid var(--app-accent);
+  padding-left: 9px;
+  background: color-mix(in srgb, var(--app-accent-soft) 58%, transparent);
   color: var(--app-text);
   font-weight: 600;
 }
@@ -111,5 +116,27 @@ const SECTIONS = computed<Array<{ id: SettingsSectionId; label: string; icon: ty
 }
 .nav-row-icon {
   color: color-mix(in srgb, var(--app-accent) 82%, var(--app-text));
+}
+
+@media (max-width: 760px) {
+  .dialog-nav {
+    width: auto;
+    flex-direction: row;
+    gap: 4px;
+    padding: 8px;
+    border-right: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--app-border) 60%, transparent);
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .nav-row {
+    width: auto;
+    min-width: max-content;
+    height: 32px;
+    min-height: 32px;
+    padding: 0 10px;
+    grid-template-columns: 15px auto;
+  }
+  .nav-row.active { padding-left: 8px; }
 }
 </style>

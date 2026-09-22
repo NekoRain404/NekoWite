@@ -55,7 +55,7 @@ describe('the agents section in the settings dialog', () => {
     // page was mounted and from three-plus-two when the runtime page was, and each time the sentence
     // that was here went with it, because the claim it made had stopped being true: the runtime's
     // said the state of a running engine was answered nowhere, and `agent_runtime_read` answers it.
-    expect(gaps).toHaveLength(2 + 1)
+    expect(gaps).toHaveLength(2)
     for (const gap of gaps) expect(gap.textContent?.trim().length ?? 0).toBeGreaterThan(0)
     // The Skills row is *not* here, and the assertion is that the page replaced it rather than
     // that the sentence was deleted: a stale gap sentence would be a claim about a mount point
