@@ -2002,3 +2002,104 @@ happened here.
 
 One run, all nine steps, exit 0. No bundles were rebuilt: the round deletes four functions nothing called,
 adds six names to a test's list, and edits three documents.
+
+## 21. The round after that: the application itself, driven
+
+**The repository can now drive its own application.** Every instrument in `apps/desktop/e2e/webkit/` until
+this round drove MiniBrowser — the same engine family, but not the app: no Tauri IPC, no `asset:` protocol,
+no `tauri.conf.json` CSP, no window built by `wry`. `drive-app.mjs` starts the **built application** under
+`tauri-driver`, whose WebDriver proxy hands sessions to the WebView inside it, opens a real vault in it and
+reads the shipped page. Three runs in a row:
+
+| Reading | Value | What it settles |
+|---|---|---|
+| `readyState` / `title` | `complete` / `NekoWite` | the packaged build boots far enough to have a page |
+| `url` | `tauri://localhost` | the session is on the **main** window, selected from three handles |
+| `handles` | three `page-…` | the app really has three pages: editor, pet ball, pet character |
+| `tauri` | `true` | it is a Tauri page, not the browser demo built from the same sources |
+| `evalAllowed` | `blocked` | **the control**: the policy is in force in the script context that reads next |
+| `blobImport` | `blocked:Importing a module script failed.` | §2's assertion, measured inside the application |
+| `railButtons` | `2` | the shell rendered with the vault open |
+| `vaultVisible` / `noteVisible` | `true` / `true` | the vault opened and the planted note is listed |
+
+§19 measured the same CSP claim on a synthetic page carrying the policy string as a `<meta>` tag. This
+measures it where it ships — as a header on the app's own page — and with the control that makes the
+reading attributable rather than incidental. Where the control fails the probe reports INCONCLUSIVE and
+exits 1, because an engine may exempt injected scripts from the page's policy, and a green that cannot say
+why is the thing this programme keeps removing.
+
+**A vault opens without a folder dialog, using the app's own design.** `open_file.rs` states that a path
+from the command line is a fact the renderer cannot manufacture (vouched for like a dialog pick) while a
+path from the session bus never creates a root. The probe uses the other half of that design: it writes the
+backend's `last-vault` record into a scratch config directory and the renderer's `nekowite.vault` key, so
+`VaultRegistry::register` accepts a root it remembers (`vault_confinement.rs`'s `recalled`). No dialog and
+no test-only back door.
+
+**Four obstacles, and the first one was self-inflicted.** (1) `tauri-driver` starts the native driver
+itself; the probe also spawned one, so two WebKitWebDriver instances raced for one port — the loser wrote
+`Unable to listen for HTTP server at host local and port N` into the **inherited** log, and every session
+then hung until the client gave up (`hyper::Error(IncompleteMessage)` in tauri-driver's own log). The first
+two runs won that race, which is what made it look like a port-privacy problem; fixing it meant deleting
+code, not adding any. (2) The session attaches to one of the app's three pages and on this build it is the
+pet ball (`tauri://localhost/desktop-pet-ball.html`), whose page has no shell at all — so every editor
+reading must switch to the main window through `/window/handles` first, or it measures a pet window and
+reports the app broken. (3) WebKitWebDriver rejects a script without `args` ("Missing args parameter") and a
+POST with no body ("Invalid JSON in request body"), so `/refresh` needs `{}`. (4) The note appears only
+after the vault's index pass, so the reading is polled; the first version read once, landed just before the
+row existed, and reported failure while the page text it now samples said the opposite. That sample is
+permanent: a reading of `false` is worth nothing without the text it was read from.
+
+**And the round's other piece of work found a real defect in the packager.** The goal asks for the
+executables to be refreshed periodically, so this round ran `scripts/package-linux.sh` — and it died at
+step `[2/7]` with `[ERROR] unable to open database file`, because the script redirects `XDG_CACHE_HOME`
+into its own scratch (and `npm_config_cache` with it) but not `XDG_DATA_HOME` or `XDG_STATE_HOME`, and
+`pnpm` opens a database under the former. On a machine whose `$HOME` is not writable — the case the
+redirect exists for — packaging could not run at all, and the failure named neither the variable nor the
+script. All three are exported now, the packager's own suite asserts locality for all three
+(`package-linux.test.sh`, 91 checks), and the run that proves it was started with **no** XDG variable in
+the environment.
+
+**And it published.** The proof run — started with `env -u XDG_DATA_HOME -u XDG_STATE_HOME -u
+XDG_CACHE_HOME`, the state the failing run was in — went through all seven steps and published a fresh
+generation, with the previous one retained beside it:
+
+| Artifact | SHA-256 |
+|---|---|
+| `nekowite_1.0.0_x64` | `698ecf37735e3cd079b3f91f77688c8710f9b203c50de0b7774c9dedc816561b` |
+| `opencode` | `ca6c0e1f42be3120595bf6848937e7586ec862c87fa7aa111e89c7cc6e9a4650` |
+| `nekowite_1.0.0_amd64.deb` | `0d7af78de27813e88296cc8bfec5ac9a1197063fb16a219c037dca1aacd3b2e8` |
+| `nekowite-1.0.0-1.x86_64.rpm` | `323b1be3f20bc5ef739091fc7d7fff0d1e7499a705e1298afce25a97023e70c0` |
+| `nekowite_1.0.0_amd64.AppImage` | `ed72734f12d0280a07ff50bb88541ee7e7fadc39edeb5bc757ad7a0731eaf98b` |
+
+The prior generation is at `release/superseded/build.jmZDk8`. These are the first bundles built from a tree
+that includes the round-16 deletions, so the portable binary's hash differs from §13's — not because
+anything the application does changed (nothing called the deleted functions), but because the source it was
+built from did. The packager's steps 2 and 3 also re-ran the desktop suite, typecheck and lint on this
+tree as part of publishing, which is a second verification of the round's changes.
+
+### The gate
+
+| Step | Result |
+|---|---|
+| `verify` | PASS — **5954 tests across 3 package runs** |
+| `fmt` | PASS |
+| `clippy` | PASS — 97 warning lines, under the 110 ceiling |
+| `instruments` | PASS — 85 of 1368 uncalled exports, at the §20 ceiling |
+| `scripts` | PASS — **91 checks, 0 failed**: 89 before, plus the two locality assertions the packager fix added |
+| `harness` | PASS — 5 passed, 0 failed |
+| `build` | PASS |
+| `rust` | PASS — 79 targets, 1409 passed, 0 failed |
+| `e2e` (`--with-e2e`) | PASS — 297 passed |
+
+One run, all nine steps, exit 0 — after the bundles were rebuilt from this tree, which means the run's
+`build` step and the packager's `[4/7]` produced the same sources twice.
+
+### What remains, after the application itself became testable
+
+The audit is closed except §3's file-size row and §5's read-only ledgers. Three things are now *possible*
+that were not, and they are the natural next work rather than notes: `drive-app.mjs` can open a vault and
+read the shipped page, so the questions that needed the real application — what the print preview does with
+`asset://` images, whether the pet windows behave, how the editor responds to real input events — are
+answerable instead of deferred; the packager can run on a machine whose `$HOME` is not writable; and the
+`spec=0` class of dead exports is empty, so the next entry in that list is a regression rather than a
+backlog.
