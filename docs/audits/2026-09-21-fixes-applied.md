@@ -2192,6 +2192,14 @@ disk after `Ctrl+S` — and §4 states the reason it stays manual: it needs a bu
 programme keeps removing. The same edit corrected two stale counts in that table: the packager suite is 46
 assertions since §21 (45 + 46 = the 91 the gate prints) and the dead-export ceiling is 85 since §20.
 
+**The live AI reading, re-measured this round** (`bash scripts/verify-ai-live.sh`, key written 0600 and
+removed in the same command): **3 passed, 0 failed**, exit 0, 5.8 s. Same five models
+(`deepseek-v4-flash`, `deepseek-v4.1-flash`, `glm-5.2`, `mimo-v2.5`, `mimo-v2.5-pro`); the paid turn
+streamed through the app's own transport and reached `[DONE]` after three chunks; the reasoning turn billed
+**89 prompt + 9 completion, 6 of them `reasoning_tokens`**. The prompt side has read 89 on every run of this
+script so far; the completion side has now read 30, 16 and 9 across three rounds, which is the movement the
+script's own header documents — it follows how long the model thinks before answering a one-word request.
+
 ### The gate
 
 | Step | Result |
