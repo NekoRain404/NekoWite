@@ -51,6 +51,15 @@
     10 秒内没有 `beforeprint` 就明确告诉用户，并给出「导出 HTML → 浏览器打印」的替代路径。
     CSP 那一侧的同类问题在 `node apps/desktop/e2e/webkit/probe-csp-frame.mjs`：`frame-src 'none'` 会拦下
     网络帧（`violations=frame-src<-http`），但**不拦**三个功能用的 `srcdoc` 帧，所以导出帧不是被策略清空的。
+  - **应用到底连了谁**：`node apps/desktop/e2e/webkit/probe-egress.mjs`（`xvfb-run` + 已构建的应用）。
+    它在应用前面放一个本地代理（只记录、故意不代理成功——读数要的是「尝试」，而不是「成功」），通过
+    `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` 罩住应用，然后分段量：空闲十秒、注册表新鲜缓存、注册表陈旧缓存、
+    宠物形象库。`NO_PROXY` 里必须放 `ipc.localhost`/`asset.localhost`/`tauri.localhost`，否则量到的是被代理
+    弄坏的应用，而不是安静的应用。2026-09-22 两连跑读数一致：空闲零连接、新鲜缓存零连接（这一条同时是仪器
+    自己的对照——没有它，「没有请求」分不清是缓存答的还是这个命令根本不发请求）、陈旧缓存恰好一条
+    `cdn.agentclientprotocol.com:443`、形象库恰好一条 `pets.thenightwatcher.online:443`，两条答复都点名了
+    连不上的 URL。第一次写这个探针时我把「请求失败后再读一次会命中缓存」当成期望，那是错的：失败的抓取不写
+    缓存条目，所以再问一次本来就该再发一次。
   - **测试面全景**（哪些测试真的会跑、每个功能域由哪些文件守着、哪里还没有证据）见
     `docs/test-plan.md`。
 
