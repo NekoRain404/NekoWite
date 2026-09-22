@@ -40,6 +40,7 @@
  *   xvfb-run -a -s "-screen 0 1280x800x24 -extension GLX" node e2e/webkit/drive-app.mjs
  *   node e2e/webkit/drive-app.mjs --app <path>          # a different build
  *   node e2e/webkit/drive-app.mjs --print              # and drive the PDF export as far as its dialog
+ *   node e2e/webkit/drive-app.mjs --settings           # and walk every page of the settings dialog
  *
  * Exit: 0 when every reading holds, 1 otherwise. It needs no window manager (nothing here reads
  * geometry) and it writes nothing outside the repository: the app's config, data and state all live in
@@ -111,6 +112,17 @@ const VAULT_DIR = path.join(REPO, 'apps/desktop/src-tauri/target/drive-app-vault
  * reading than the rest — and one a machine with no print backend at all can only fail.
  */
 const PRINT = process.argv.includes('--print')
+/**
+ * Whether this run also opens the settings dialog and walks every page in it.
+ *
+ * The dialog is eight pages of the app's own surface, and none of them had ever been rendered by an
+ * instrument that runs the shipping engine: the Playwright suite runs Chromium against a stubbed host, and
+ * nothing else opens this dialog at all. A page that throws on mount looks like a page with nothing in it,
+ * so each one is read for text and controls rather than assumed.
+ */
+const SETTINGS = process.argv.includes('--settings')
+/** The page swap is a cross-fade (see `SettingsPanel.vue`), so the destination needs a moment to land. */
+const SETTINGS_SETTLE_MS = 500
 /** Where the dialog's own picture is written: the git-ignored target tree, beside the other probe output. */
 const PRINT_SHOT_DIR = path.join(REPO, 'apps/desktop/src-tauri/target/drive-app-print')
 
@@ -143,6 +155,26 @@ const stage = (what) => console.error(`--- ${what}`)
  * test with a stubbed host cannot have). It counts frames rather than assuming the export's is the only
  * one, so the "was it cleaned up" reading afterwards is a difference and not a guess.
  */
+/**
+ * What one settings page is showing.
+ *
+ * `markers` reads the `data-test` attributes the pages already carry (the version row, the vault path, the
+ * blocked-plugin notice, the agent profile), so the readings name the page's own landmarks rather than
+ * whatever text happens to be first. `toasts` is the app's own report of a failure: a page that threw on
+ * mount would put one there rather than leave a blank panel behind.
+ */
+const SETTINGS_PAGE_SCRIPT = `
+const content = document.querySelector('.dialog-content')
+const text = (content ? content.innerText : '').replace(/\\s+/g, ' ').trim()
+return {
+  text: text.slice(0, 140),
+  textLength: text.length,
+  controls: content ? content.querySelectorAll('input, select, textarea, button').length : 0,
+  markers: Array.from((content && content.querySelectorAll('[data-test]')) || []).map((el) => el.getAttribute('data-test')),
+  toasts: Array.from(document.querySelectorAll('.toast')).map((t) => (t.textContent || '').trim()).join(' | '),
+}
+`
+
 const PRINT_FRAME_SCRIPT = `
 const frames = Array.from(document.querySelectorAll('iframe'))
 const srcdocFrames = frames.filter((f) => (f.getAttribute('srcdoc') ?? '').length > 0)
@@ -460,6 +492,62 @@ async function main() {
     ).catch(() => false)
     readings.fileSize = fs.statSync(path.join(vault, NOTE)).size
 
+    if (SETTINGS) {
+      stage('the settings dialog, page by page')
+      // Opened the way a user opens it: the sidebar's own footer button, by its title. Matched on both
+      // languages because the app's language is a user setting, and `Settings` is the icon's name rather
+      // than the button's.
+      const opener = await findElement(
+        'xpath',
+        '//button[contains(@class, "footer-btn")][@title="设置" or @title="Settings"]',
+      )
+      readings.settingsOpenerFound = opener !== null
+      if (opener) {
+        await run('POST', `/element/${opener}/click`, {})
+        readings.settingsNavRows = await until(
+          async () => {
+            const count = await run('POST', '/execute/sync', script('return document.querySelectorAll(".nav-row").length'))
+            return Number(count) > 0 ? Number(count) : null
+          },
+          { timeout: 15_000, what: 'the settings dialog to open' },
+        ).catch(() => 0)
+        readings.settingsPages = []
+        for (let index = 0; index < (readings.settingsNavRows || 0); index += 1) {
+          // The nth row, clicked natively: the nav is rendered from one list, so its order is the app's.
+          const row = await findElement('xpath', `(//button[contains(@class, "nav-row")])[${index + 1}]`)
+          if (!row) continue
+          await run('POST', `/element/${row}/click`, {})
+          const settled = await until(
+            async () => {
+              const active = await run(
+                'POST',
+                '/execute/sync',
+                script(`const rows = Array.from(document.querySelectorAll('.nav-row'))
+                  return rows.findIndex((row) => row.classList.contains('active'))`),
+              )
+              return Number(active) === index ? true : null
+            },
+            { timeout: 10_000, what: `settings page ${index} to become active` },
+          ).catch(() => false)
+          await sleep(SETTINGS_SETTLE_MS)
+          const page = await run('POST', '/execute/sync', script(SETTINGS_PAGE_SCRIPT)).catch((e) => ({
+            unreadable: String(e?.message ?? e).slice(0, 160),
+          }))
+          readings.settingsPages.push({ index, active: settled === true, ...(page ?? {}) })
+        }
+        // Closed again, so a stage after this one is not reading through a dialog that owns the keyboard.
+        const close = await findElement('xpath', '//button[contains(@class, "settings-close")]')
+        if (close) await run('POST', `/element/${close}/click`, {})
+        readings.settingsClosed = await until(
+          async () => {
+            const open = await run('POST', '/execute/sync', script('return document.querySelectorAll(".settings-dialog").length'))
+            return Number(open) === 0 ? true : null
+          },
+          { timeout: 10_000, what: 'the settings dialog to close' },
+        ).catch(() => false)
+      }
+    }
+
     if (PRINT) {
       stage('export PDF: the menu, the dialog, and the document behind it')
       await measurePrintDialog({ run, script, findElement, readings, shotDir: PRINT_SHOT_DIR })
@@ -502,6 +590,30 @@ async function main() {
   }
   if (readings.noteVisible !== true) {
     problems.push(`the planted note titled "${NOTE_TITLE}" is not listed; the page reads: ${readings.pageTextSample}`)
+  }
+  if (SETTINGS) {
+    if (readings.settingsOpenerFound !== true) problems.push('the sidebar offered no settings button')
+    const settingsPages = Array.isArray(readings.settingsPages) ? readings.settingsPages : []
+    if (settingsPages.length === 0) problems.push('the settings dialog opened no pages')
+    for (const page of settingsPages) {
+      if (page.active !== true) problems.push(`settings page ${page.index} never became the active one`)
+      // A page that threw on mount leaves nothing to read, which is the failure this walks for.
+      if (!(Number(page.textLength) > 20)) {
+        problems.push(`settings page ${page.index} rendered nothing to read: ${JSON.stringify(page)}`)
+      }
+      if (page.toasts) problems.push(`settings page ${page.index} reported a failure: ${page.toasts}`)
+    }
+    // Recorded exactly, asserted as a floor: a page that disappeared is a defect, a new one is a change to
+    // document — and `docs/USER-GUIDE.md` says eight.
+    if (!(Number(readings.settingsNavRows) >= 8)) {
+      problems.push(`the settings rail has ${readings.settingsNavRows} rows; the guide documents eight`)
+    }
+    const markers = new Set(settingsPages.flatMap((page) => (Array.isArray(page.markers) ? page.markers : [])))
+    if (!markers.has('app-version')) problems.push('the general page rendered no app-version row')
+    if (!markers.has('plugins-blocked')) {
+      problems.push('the plugins page rendered no blocked-plugin notice, which the guide documents')
+    }
+    if (readings.settingsClosed !== true) problems.push('the settings dialog did not close again')
   }
   if (PRINT) {
     if (readings.cardFound !== true) problems.push('no note card to right-click for the export menu')
