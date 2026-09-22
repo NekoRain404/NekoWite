@@ -2800,3 +2800,43 @@ documents.
 two chunks to `data: [DONE]` and billed **17 prompt + 2 completion**; the reasoning turn billed **89 prompt + 31
 completion, 28 of them `reasoning_tokens`**. The key was written 0600 to `/tmp/nkw-test-key` and removed in the
 same command.
+
+## 30. The round after that: the executable, and three traps inside one command
+
+**The user asked for the executable to be packaged. It failed, for three independent reasons, and all three
+are now absorbed by the script.** Each was measured before anything was changed:
+
+1. **`/dev/fuse` does not exist here.** `linuxdeploy` — the tool that produces an AppImage — *is* an AppImage,
+   and one normally mounts itself to run. The failure was `fuse: device not found, try 'modprobe fuse' first`
+   / `Cannot mount AppImage`, reported by the bundler as the much less specific `failed to run linuxdeploy`.
+   `APPIMAGE_EXTRACT_AND_RUN=1` is the runtime's own answer and is now exported by the script.
+2. **Its bundled `strip` predates `.relr.dyn`.** Once linuxdeploy ran, it died stripping libraries it had just
+   deployed: `ERROR: Strip call failed: …/usr/bin/strip: … unknown type [0x13] section '.relr.dyn'` on
+   `libyuv.so` and `libzstd.so.1`. `NO_STRIP=1` is its escape hatch. Measured cost: the AppImage is
+   168,696,312 bytes against 167,737,848 with stripping — **0.9 MB**.
+3. **Tauri's relinking makes the bundled engine unrunnable.** This was the one that took the longest to see,
+   because the symptom is one line: `Failed to run ldd: exited with code 1`. The AppDir's copy of the 176 MB
+   sidecar had **4** LOAD segments against the pinned engine's 3 — tauri appends one for
+   `RUNPATH=$ORIGIN/../lib` — and that copy core-dumps on `--version` and makes `ldd` exit 1 *silently*. The
+   same file relinked by `patchelf --set-rpath` runs (`1.18.29`) and `ldd`s clean, so the script's existing
+   AppImage-recovery path now stages the **pristine** pinned engine — the artefact `[1/7]` has just verified —
+   relinks it, checks that it runs, and only then builds the AppImage itself.
+
+That last one is worth stating plainly: the previous AppImage in `release/` was built at 11:31 today and its own
+checks passed, so this is not a long-standing defect in the repository — it is what the toolchain does on a
+machine where the cached tools had to be re-downloaded, and it would have hit the next maintainer exactly the
+same way. Nothing about the application changed.
+
+    portable   nekowite_1.0.0_x64        72bc2cac9e5d3ac8b8ced6119617e7926d55f48dcf9565d2529ca214896b1807
+    engine     opencode                  ca6c0e1f42be3120595bf6848937e7586ec862c87fa7aa111e89c7cc6e9a4650
+    deb        nekowite_1.0.0_amd64.deb  31daf94c122f251fb591e5ce1a5217bb592dce88a3e7f508d75400a6cf526d33
+    rpm        nekowite-1.0.0-1.x86_64    f787f73743d13cd3b9014f545575849a2d4972b1eb230329187ac53029923276
+    AppImage   nekowite_1.0.0_amd64       c17769e46b6c5f5663f9980a81af069a2d5f70ae500739f108e688bf5a1401f6
+    prior files kept at `release/superseded/build.H84C0F`
+
+Every one of the three bundles was verified by the script itself to carry the pinned engine — each ran
+`--version: 1.18.29` **in an empty environment**, which is also the check that proves the relinked sidecar
+inside the published AppImage works.
+
+`scripts/package-linux.test.sh` gained the assertion for the first trap (47 assertions, from 46), and
+`docs/RELEASING.md`'s step `[4/7]` now names all three with what absorbs each.
