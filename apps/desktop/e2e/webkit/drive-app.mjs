@@ -44,6 +44,7 @@
  *   node e2e/webkit/drive-app.mjs --pet                # and read the desktop pet's own windows
  *   node e2e/webkit/drive-app.mjs --keys               # and check the documented shortcuts
  *   node e2e/webkit/drive-app.mjs --conflict           # and change the file underneath the app
+ *   node e2e/webkit/drive-app.mjs --trash              # and delete the note through its menu, then restore it
  *
  * Exit: 0 when every reading holds, 1 otherwise. It needs no window manager (nothing here reads
  * geometry) and it writes nothing outside the repository: the app's config, data and state all live in
@@ -55,6 +56,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { measurePrintDialog } from './drive-print.mjs'
 import { driveConflict } from './drive-conflict.mjs'
+import { driveTrash } from './drive-trash.mjs'
 import { checkDocumentedShortcuts } from './drive-keys.mjs'
 import { readPetWindows } from './drive-pet.mjs'
 import { walkSettingsDialog } from './drive-settings.mjs'
@@ -152,6 +154,13 @@ const KEYS = process.argv.includes('--keys')
  * open changes.
  */
 const CONFLICT = process.argv.includes('--conflict')
+/**
+ * Whether this run also deletes the open note through its own menu and puts it back.
+ *
+ * Deletion and restore are the two operations a user cannot undo by hand, and the suites test the trash store
+ * against a memory filesystem; this is the instrument that reads the vault's `.nekowite-trash/` afterwards.
+ */
+const TRASH = process.argv.includes('--trash')
 /** Where the dialog's own picture is written: the git-ignored target tree, beside the other probe output. */
 const PRINT_SHOT_DIR = path.join(REPO, 'apps/desktop/src-tauri/target/drive-app-print')
 
@@ -523,6 +532,18 @@ async function main() {
       })
     }
 
+    if (TRASH) {
+      stage('delete a note through its own menu, then restore it')
+      await driveTrash({
+        run,
+        findElement,
+        readings,
+        vault,
+        notePath: path.join(vault, NOTE),
+        noteName: NOTE,
+      })
+    }
+
     if (KEYS) {
       stage('the documented shortcuts: Ctrl+K, its search, Esc')
       await checkDocumentedShortcuts({
@@ -598,6 +619,21 @@ async function main() {
     arm('keep the local', conflict.dialogB != null, 'the second external change produced no dialog')
     arm('keep the local', conflict.keptLocal === true, 'the dialog offered no 「保留本地」 button to click')
     arm('keep the local', conflict.diskAfterKeepLocalSave != null, `saving after 「保留本地」 did not write the local text (disk: ${conflict.diskFileAfter})`)
+  }
+  if (TRASH) {
+    const trash = readings.trash ?? {}
+    const arm = (ok, detail) => {
+      if (!ok) problems.push(`delete and restore: ${detail}`)
+    }
+    arm(trash.cardFound === true, 'the note card was not found to open its menu on')
+    arm(trash.deleteItemFound === true, `the note menu offered no delete item (right-click: ${trash.rightClick})`)
+    arm(trash.confirmFound === true, 'the delete asked for no confirmation')
+    arm(trash.goneFromDisk === true, 'the note stayed in the vault after the confirmed delete')
+    arm(Number(trash.trashBefore) < (trash.trashAfterDelete ?? []).length, `the trash did not grow: ${JSON.stringify(trash.trashAfterDelete)}`)
+    arm(trash.restoreFound === true, 'the sidebar listed no restore button for the deleted note')
+    arm(trash.restored === true, 'the note did not come back to its path')
+    arm(trash.after != null && trash.after === trash.before, `the restored note holds different text (before: ${trash.before} / after: ${trash.after})`)
+    arm((trash.trashAfterRestore ?? []).length < (trash.trashAfterDelete ?? []).length, 'the trash did not shrink after the restore')
   }
   if (KEYS) {
     if (readings.paletteOpened !== true) problems.push('Ctrl+K did not open the command palette')

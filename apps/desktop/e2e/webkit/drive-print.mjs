@@ -18,6 +18,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { rightClickElement } from './drive-pointer.mjs'
 import { until } from './webdriver.mjs'
 import { closeWindow, pressKeyAt, screenshotWindow, windowGeometry, windowProperties, xWindows } from './x-windows.mjs'
 
@@ -35,13 +36,6 @@ const PRINT_DIALOG_TIMEOUT_MS = 45_000
  * both clocks — a dialog can take most of the timeout below to be built on a machine with a slow CUPS.
  */
 const PRINT_OUTCOME_TIMEOUT_MS = 60_000
-
-const ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf'
-
-/** The card's own in-view centre, and the viewport it has to be inside for a viewport-origin pointer move. */
-const CARD_RECT_SCRIPT = `const r = arguments[0].getBoundingClientRect()
-return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height),
-         innerWidth: window.innerWidth, innerHeight: window.innerHeight }`
 
 /**
  * What the export frame is holding, read from the page while its dialog is up.
@@ -135,49 +129,16 @@ export async function measurePrintDialog({ run, script, findElement, readings, s
   if (!card.ok) readings.cardError = card.error
   if (!readings.cardFound) return
 
-  // The pointer goes to the card's own in-view coordinates with `origin: 'viewport'`, which is how every
-  // other pointer instrument in this directory drives WebKitGTK. An element origin was tried first and
-  // **hangs** — the request never answers and the driver times out — so this is a measured property of the
-  // driver rather than a preference.
-  const rect = await attempt('the card rect', () =>
-    run('POST', '/execute/sync', { script: CARD_RECT_SCRIPT, args: [{ [ELEMENT_KEY]: card.value }] }),
-  )
-  readings.cardRect = rect.ok ? rect.value : rect.error
-  const point =
-    rect.ok && rect.value
-      ? {
-          x: rect.value.x + Math.min(5, Math.max(0, rect.value.w - 1)),
-          y: rect.value.y + Math.min(5, Math.max(0, rect.value.h - 1)),
-        }
-      : null
-  readings.cardPoint = point
-  const inside =
-    point !== null &&
-    point.x > 0 &&
-    point.y > 0 &&
-    point.x < (rect.value.innerWidth ?? 0) &&
-    point.y < (rect.value.innerHeight ?? 0)
-  if (!inside) {
-    readings.rightClickError = `the card is not inside the viewport (${JSON.stringify(rect.ok ? rect.value : null)})`
-    return
+  // A **native** right-click at the card's own in-view coordinates: the app records which note the menu acts
+  // on from that event, so a script's `.click()` would test the handler's listener instead of the path a
+  // mouse takes. `drive-pointer.mjs` owns the coordinates and the two traps in them.
+  const rightClick = await rightClickElement({ run, elementId: card.value })
+  readings.cardRect = rightClick.rect ?? rightClick.error
+  readings.cardPoint = rightClick.point
+  if (!rightClick.ok) {
+    readings.rightClickError = rightClick.error
+    if (!rightClick.rect) return
   }
-  const clicked = await attempt('the right-click', () =>
-    run('POST', '/actions', {
-      actions: [
-        {
-          type: 'pointer',
-          id: 'mouse',
-          parameters: { pointerType: 'mouse' },
-          actions: [
-            { type: 'pointerMove', duration: 0, origin: 'viewport', x: point.x, y: point.y },
-            { type: 'pointerDown', button: 2 },
-            { type: 'pointerUp', button: 2 },
-          ],
-        },
-      ],
-    }),
-  )
-  if (!clicked.ok) readings.rightClickError = clicked.error
 
   // Found by its label rather than by its index: the menu is built from the note's state, so the order is
   // not this probe's business. Case is folded because the app's language is a user setting.
