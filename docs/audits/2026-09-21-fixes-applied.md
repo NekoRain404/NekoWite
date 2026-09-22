@@ -2722,3 +2722,81 @@ completion**; the reasoning turn billed **89 prompt + 130 completion, 126 of the
 widest this has been (the completion side has now read 30, 16, 9, 15, 16, 17, 130), which is the model
 thinking for longer rather than a change in the gateway. The key was written 0600 to `/tmp/nkw-test-key` and
 removed in the same command.
+
+## 29. The round after that: the two operations a user cannot undo, and 355 GB of build cache
+
+**Deletion and restore, and the external-change conflict, are now driven on the shipping engine.** Both are
+`docs/RECOVERY.md` paths whose tests all hand the logic a fixture; these are the instruments that keep the file
+system in the loop.
+
+`--conflict` changes the open note's file **underneath the running application** and reads what it does, in two
+arms because the two promises differ:
+
+    A  take the disk   dialog 「文件已在外部被修改」 with its three documented buttons and the path
+                       → 「以磁盘为准」 → the editor shows the disk's text, the dialog leaves the tree
+    B  keep the local  a real typed edit → the file changes again → 「保留本地」
+                       → the editor keeps the user's text → Ctrl+S writes **that** to disk
+
+`--trash` deletes a real note through the card's own menu (a native right-click, the menu's 删除 item, the app's
+inline confirmation) and restores it from the sidebar's 回收站 group, asserting the **filesystem** rather than
+the panel:
+
+    before "# drive-probe-note ![probe](probe-asset.svg)probe-typed-35 …"
+    trashBefore 0 → goneFromDisk true → trashAfterDelete ["probe-note.md"]
+    restore → restored true → after (the same text) → trashAfterRestore []
+
+**One assertion of mine was wrong again, and the same trap as the palette's.** I read the conflict dialog
+immediately after the choice and reported it as still up; it lives inside `<Transition name="dialog">` with
+`v-if`, so the element stays in the tree for its leave animation. The reading is polled now, and the second arm
+waits for no dialog before its own write so the dialog it reads can only be the one that write caused.
+
+**The probe went back under budget by splitting rather than trimming.** It reached 843 lines with four stages
+inside it; `--pet` and `--keys` are `drive-pet.mjs` (60) and `drive-keys.mjs` (86), and the right-click moved
+into `drive-pointer.mjs` — two stages need it, and it carries the two measured traps (the element's in-view
+centre with `origin: 'viewport'`; an **element** origin never answers on this driver). `drive-app.mjs` is 779
+lines.
+
+### The disk
+
+**The repository was 364 GB, and all but ~1.5 GB of it was generated.** Every one of these is rebuilt on demand;
+none of them is tracked, and `git status` is clean after the sweep:
+
+| removed | size |
+|---|---|
+| `apps/desktop/src-tauri/target/` per-test profiles (`acp-session-lifecycle`, `agent-update-test`, `acp-wire-frames`, `acp-session-replay`, `audit_backend_probe*`, `package-linux/run.*`, … ) | **~250 GB** |
+| `apps/desktop/src-tauri/target/debug` (the debug profile and its incremental cache) | 85 GB |
+| `.tmp-isolation*`, `.tmp-fs-write`, `.tmp-permission-grants`, `.tmp-p0`, `.tmp-review-pnpm` and the other root scratch dirs | 11 GB |
+| `target/release/{deps,build,bundle}` and the `libnekowite_lib.*` intermediates | 7.1 GB |
+| `release/superseded/*` (older published builds; `bash scripts/package-linux.sh` keeps the newest by itself) | 5.6 GB |
+| `test-results/`, `target/*.log`, stray build outputs and `nekowite-bin` (an untracked Sep-4 build at the root) | ~1 GB |
+
+Two dead `gvfsd-fuse` mounts left over from an earlier sandboxed run survive inside `test-results/` and
+`target/n.czF2OS/` (their `gvfsd` is gone, so nothing can unmount them from inside the sandbox); they are
+unreachable and cost nothing. **What remains**: `release/` (521 MB of published bundles), `apps` (308 MB of
+source plus the built binary), `node_modules` (302 MB), `.git` (133 MB), and the `zed-main`/`references`
+checkouts (159 MB together) which are reference material rather than build output.
+
+The cost is one slow build: the next `bash scripts/gate.sh` rebuilds the debug profile for `cargo test` and the
+release profile for `build`, where before it started warm. Verified after the sweep: the kept
+`target/release/nekowite` still drives the app — `drive-app.mjs` passes, exit 0.
+
+### The gate
+
+| Step | Result |
+|---|---|
+| `verify` | PASS — **5962 tests across 3 package runs** |
+| `fmt` | PASS |
+| `clippy` | PASS — 97 warning lines, under the 110 ceiling |
+| `instruments` | PASS — 85 of 1368 uncalled exports, at the ceiling |
+| `scripts` | PASS — 91 checks, 0 failed |
+| `harness` | PASS — 5 passed, 0 failed |
+| `build` | PASS |
+| `rust` | PASS — 79 targets, 1409 passed, 0 failed |
+
+One run, eight steps, exit 0, taken before the sweep. **No bundles were rebuilt**: this round changed probes and
+documents.
+
+**The live AI reading, re-measured after the cleanup**: **3 passed, 0 failed**, 6.25 s. The paid turn streamed in
+two chunks to `data: [DONE]` and billed **17 prompt + 2 completion**; the reasoning turn billed **89 prompt + 31
+completion, 28 of them `reasoning_tokens`**. The key was written 0600 to `/tmp/nkw-test-key` and removed in the
+same command.
