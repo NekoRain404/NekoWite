@@ -43,6 +43,7 @@
  *   node e2e/webkit/drive-app.mjs --settings           # and walk every page of the settings dialog
  *   node e2e/webkit/drive-app.mjs --pet                # and read the desktop pet's own windows
  *   node e2e/webkit/drive-app.mjs --keys               # and check the documented shortcuts
+ *   node e2e/webkit/drive-app.mjs --conflict           # and change the file underneath the app
  *
  * Exit: 0 when every reading holds, 1 otherwise. It needs no window manager (nothing here reads
  * geometry) and it writes nothing outside the repository: the app's config, data and state all live in
@@ -53,6 +54,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { measurePrintDialog } from './drive-print.mjs'
+import { driveConflict } from './drive-conflict.mjs'
+import { checkDocumentedShortcuts } from './drive-keys.mjs'
+import { readPetWindows } from './drive-pet.mjs'
 import { walkSettingsDialog } from './drive-settings.mjs'
 import { seedVault } from './drive-vault.mjs'
 import { freeDualPort, sleep, until } from './webdriver.mjs'
@@ -140,6 +144,14 @@ const PET = process.argv.includes('--pet')
  * shortcut whose *effect* is a real search over the vault, so it can be read rather than only observed.
  */
 const KEYS = process.argv.includes('--keys')
+/**
+ * Whether this run also changes the open note's file underneath the app and drives the conflict dialog.
+ *
+ * `docs/USER-GUIDE.md` promises that dialog and `docs/RECOVERY.md` §3 is its contract, but every test of it
+ * hands the logic a fixture; this is the one instrument that has an application running while the file it has
+ * open changes.
+ */
+const CONFLICT = process.argv.includes('--conflict')
 /** Where the dialog's own picture is written: the git-ignored target tree, beside the other probe output. */
 const PRINT_SHOT_DIR = path.join(REPO, 'apps/desktop/src-tauri/target/drive-app-print')
 
@@ -172,28 +184,6 @@ const stage = (what) => console.error(`--- ${what}`)
  * test with a stubbed host cannot have). It counts frames rather than assuming the export's is the only
  * one, so the "was it cleaned up" reading afterwards is a difference and not a guess.
  */
-/**
- * What one pet window's page is showing.
- *
- * The two windows draw different things: the ball is DOM (`.pet-ball` with its orb and face) and the
- * character is a **canvas** (`PetSprite` paints into one), so a reading that only counted text would call a
- * working character window empty. The canvas is therefore read by its backing size rather than by its
- * pixels: `width: 0` is a canvas that was never laid out.
- */
-const PET_WINDOW_SCRIPT = `
-const canvas = document.querySelector('canvas')
-return {
-  readyState: document.readyState,
-  title: document.title,
-  tauri: Boolean(window.__TAURI_INTERNALS__),
-  balls: document.querySelectorAll('.pet-ball').length,
-  sprites: document.querySelectorAll('.pet-sprite').length,
-  canvases: document.querySelectorAll('canvas').length,
-  canvasSize: canvas ? { width: canvas.width, height: canvas.height } : null,
-  text: (document.body.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 100),
-}
-`
-
 const PRINT_FRAME_SCRIPT = `
 const frames = Array.from(document.querySelectorAll('iframe'))
 const srcdocFrames = frames.filter((f) => (f.getAttribute('srcdoc') ?? '').length > 0)
@@ -393,27 +383,7 @@ async function main() {
 
     if (PET) {
       stage('the pet windows')
-      const petWindows = []
-      for (const handle of Array.isArray(readings.handles) ? readings.handles : []) {
-        await run('POST', '/window', { handle }).catch(() => undefined)
-        const url = await run('GET', '/url').catch(() => '')
-        const page = await run('POST', '/execute/sync', script(PET_WINDOW_SCRIPT)).catch(
-          (e) => `unreadable: ${String(e?.message ?? e).slice(0, 140)}`,
-        )
-        petWindows.push({
-          handle: String(handle).slice(5, 13),
-          url: String(url).slice(0, 80),
-          ...(page !== null && typeof page === 'object' ? page : { error: page }),
-        })
-      }
-      readings.petWindows = petWindows
-      // Back to the main window: every stage after this one reads the shell, and the driver's session is
-      // attached to one window at a time.
-      for (const handle of Array.isArray(readings.handles) ? readings.handles : []) {
-        await run('POST', '/window', { handle }).catch(() => undefined)
-        const url = await run('GET', '/url').catch(() => '')
-        if (!String(url).includes('desktop-pet')) break
-      }
+      await readPetWindows({ run, script, readings })
     }
 
     stage('open the vault')
@@ -539,77 +509,31 @@ async function main() {
     ).catch(() => false)
     readings.fileSize = fs.statSync(path.join(vault, NOTE)).size
 
+    if (CONFLICT) {
+      stage('the external-change conflict, both arms')
+      await driveConflict({
+        run,
+        script,
+        findElement,
+        typeText,
+        pressCtrlS,
+        readings,
+        notePath: path.join(vault, NOTE),
+        token: TYPED_TOKEN,
+      })
+    }
+
     if (KEYS) {
       stage('the documented shortcuts: Ctrl+K, its search, Esc')
-      await pressKey('k', { ctrl: true })
-      readings.paletteOpened = await until(
-        async () =>
-          (await run(
-            'POST',
-            '/execute/sync',
-            script('return document.querySelector(".palette-overlay.is-open") ? true : null'),
-          ).catch(() => null))
-            ? true
-            : null,
-        { timeout: 8_000, what: 'the command palette to open on Ctrl+K' },
-      ).catch(() => false)
-      // The palette owns the keyboard while it is open, and typing into it is the driver's own key events.
-      readings.paletteFocused = await run(
-        'POST',
-        '/execute/sync',
-        script('return Boolean(document.activeElement && document.activeElement.classList.contains("palette-input"))'),
-      ).catch(() => false)
-      /**
-       * The query is the **file name**, and that is the app's contract rather than a convenience.
-       *
-       * `fileEntryOf` labels a file row with the basename (`command-palette-logic.ts`) and offers the
-       * directory as its hint and its other keyword — so the palette searches paths, while the note tree
-       * shows the note's *title* (its H1). The first version of this stage typed the title and read
-       * 「无匹配结果」, which is the app behaving as written and the probe expecting the wrong thing. Both
-       * readings are taken now: the file name is asserted, the title is recorded.
-       */
-      const paletteState = () =>
-        run(
-          'POST',
-          '/execute/sync',
-          script(`const input = document.querySelector('.palette-input')
-            const palette = document.querySelector('.palette')
-            return {
-              typed: input ? input.value : null,
-              text: (palette ? palette.innerText : '').replace(/\s+/g, ' ').slice(0, 200),
-            }`),
-        ).catch((e) => ({ unreadable: String(e?.message ?? e).slice(0, 140) }))
-      const fileName = NOTE.replace(/\.md$/, '')
-      await typeText(fileName)
-      readings.paletteFileNameSearch = await until(
-        async () => {
-          const seen = await paletteState()
-          return String(seen?.typed ?? '') === fileName && String(seen?.text ?? '').includes(fileName) ? seen.text : null
-        },
-        { timeout: 8_000, what: 'the palette to find the open file by its name' },
-      ).catch(() => null)
-      // Cleared with real backspaces and re-queried with the title, so the difference is the query alone.
-      for (let i = 0; i < fileName.length; i += 1) await pressKey('\uE003')
-      await typeText(NOTE_TITLE)
-      readings.paletteTitleSearch = await until(
-        async () => {
-          const seen = await paletteState()
-          return String(seen?.typed ?? '') === NOTE_TITLE ? seen.text : null
-        },
-        { timeout: 8_000, what: 'the palette to answer the title query' },
-      ).catch(() => null)
-      await pressKey('\uE00C')
-      readings.paletteClosed = await until(
-        async () =>
-          (await run(
-            'POST',
-            '/execute/sync',
-            script('return document.querySelector(".palette-overlay.is-open") ? null : true'),
-          ).catch(() => null))
-            ? true
-            : null,
-        { timeout: 8_000, what: 'the palette to close on Esc' },
-      ).catch(() => false)
+      await checkDocumentedShortcuts({
+        run,
+        script,
+        typeText,
+        pressKey,
+        readings,
+        noteTitle: NOTE_TITLE,
+        fileName: NOTE.replace(/\.md$/, ''),
+      })
     }
 
     if (SETTINGS) {
@@ -659,6 +583,21 @@ async function main() {
   }
   if (readings.noteVisible !== true) {
     problems.push(`the planted note titled "${NOTE_TITLE}" is not listed; the page reads: ${readings.pageTextSample}`)
+  }
+  if (CONFLICT) {
+    const conflict = readings.conflict ?? {}
+    const arm = (name, ok, detail) => {
+      if (!ok) problems.push(`the external-change conflict, ${name}: ${detail}`)
+    }
+    arm('take the disk', conflict.dialogA != null, `the dialog never appeared for a file changed underneath the app (${JSON.stringify(conflict.dialogA)})`)
+    arm('take the disk', conflict.tookDisk === true, 'the dialog offered no 「以磁盘为准」 button to click')
+    arm('take the disk', conflict.afterTakingDisk != null, 'the editor did not show the disk text after 「以磁盘为准」')
+    arm('take the disk', conflict.dialogClosedAfterA === true, 'the dialog stayed up after the choice')
+    arm('take the disk', conflict.dialogGoneBeforeB !== false, 'a conflict dialog was still up before the second write')
+    arm('keep the local', conflict.localTyped === true, 'the typed edit never reached the editor')
+    arm('keep the local', conflict.dialogB != null, 'the second external change produced no dialog')
+    arm('keep the local', conflict.keptLocal === true, 'the dialog offered no 「保留本地」 button to click')
+    arm('keep the local', conflict.diskAfterKeepLocalSave != null, `saving after 「保留本地」 did not write the local text (disk: ${conflict.diskFileAfter})`)
   }
   if (KEYS) {
     if (readings.paletteOpened !== true) problems.push('Ctrl+K did not open the command palette')
