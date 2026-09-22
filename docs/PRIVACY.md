@@ -81,7 +81,7 @@ NekoWite 不收集遥测、不需要账号、不会主动联网。只有你亲�
   - **桌面宠物的形象库**：打开设置 → 桌面宠物 → 形象库时，会去 `pets.thenightwatcher.online` 取清单（`desktop_pet/resources.rs` 的 `LIBRARY_ENDPOINT`）。它不经过 AI 设置，也不带任何凭据。
   - **智能体注册表**：打开智能体目录时，会去 `cdn.agentclientprotocol.com` 取注册表（`commands/agent_catalogue.rs` 的 `REGISTRY_URL`），同样不带凭据。
   - **另外要说清的一条**：随包内置的 `opencode` 引擎是一个**独立进程**，你在智能体设置里为它配置的服务商由它自己直连——这条不经过 NekoWite 的请求层，也不受 AI 总开关管。
-  - 断网时前三条会失败并如实报错，编辑、搜索、图谱、导出、历史、回收站都不受影响（见本页最后一条）。**2026-09-22 实测过**：用一个只记录、不代理成功的本地代理罩住应用跑四个阶段，空闲十秒没有任何连接；形象库那一条恰好是 `CONNECT pets.thenightwatcher.online:443`，注册表（缓存过期时）恰好是 `CONNECT cdn.agentclientprotocol.com:443`，两者的答复都点名了自己连不上的那个 URL（`status: unreachable` / `freshness: stale` + note）。缓存新鲜时注册表**一条请求都不发**。复现：`node apps/desktop/e2e/webkit/probe-egress.mjs`（需 `xvfb-run` 与已构建的应用）。
+  - 断网时前三条会失败并如实报错，编辑、搜索、图谱、导出、历史、回收站都不受影响（见本页最后一条）。**2026-09-22 实测过**：用一个只记录、不代理成功的本地代理罩住应用跑完全程（启动、空闲十秒、注册表新鲜/陈旧缓存、形象库、渲染一篇带远程图片的笔记），并以**从页面发起的一次导航**作为对照证明这个代理确实看得到 WebView 自己的网络栈；启动与空闲都没有任何连接；形象库那一条恰好是 `CONNECT pets.thenightwatcher.online:443`，注册表（缓存过期时）恰好是 `CONNECT cdn.agentclientprotocol.com:443`，两者的答复都点名了自己连不上的那个 URL（`status: unreachable` / `freshness: stale` + note）。缓存新鲜时注册表**一条请求都不发**。复现：`node apps/desktop/e2e/webkit/probe-egress.mjs`（需 `xvfb-run` 与已构建的应用）。
 - 文档里的**远程图片不会被加载**（受安全策略限制，界面显示「远程图片未加载」），因此渲染笔记不会顺带发起网络请求。
 - 应用只在自己的目录里写文件：你的知识库，以及上面那个 `dev.nekowite.app` 数据目录（Windows 在 `%APPDATA%` 下，Linux 在 `~/.local/share` 下）。
 
