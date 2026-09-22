@@ -2215,3 +2215,163 @@ script's own header documents — it follows how long the model thinks before an
 | `e2e` (`--with-e2e`) | PASS — 297 passed |
 
 One run, all nine steps, exit 0. No bundles were rebuilt: the round changes a probe and three documents.
+
+## 24. The round after that: what the export actually reaches, and what it does when it reaches nothing
+
+**§4's fourth item is now measured, and the answer is not the one the code assumes.** `DOC-AUDIT.md` §4
+kept two things unverified: "The PDF export dialog under WebKitGTK, and whether `asset://` images resolve in
+print preview." Both halves now have readings, taken on the built application
+(`apps/desktop/e2e/webkit/drive-app.mjs --print`), which drives the export the way a user does — a **native
+right-click** on the note card, then the menu's 「导出 PDF」.
+
+What lands in the hidden print frame is right, every time:
+
+    srcdocFrames  1
+    docLength     2928
+    pageRule      "@page{size:A4 portrait;margin:20mm;}body{margin:0;padding:0;max-width:none;}"
+    text          "drive-probe-note probe-typed-36 Written by drive-app.mjs."
+    images        [ asset://localhost/%2Fhome%2F… , loaded true, naturalWidth 64 ]
+
+So the long-standing second half — **`asset://` images do resolve in the print document** — is answered
+yes, through the same host chain the editor uses. The first half is answered no: **no print dialog ever
+appears.** `window.print()` returns without throwing, `beforeprint` never fires, and the only window the
+export opens is a 639x66 `_NET_WM_WINDOW_TYPE_TOOLTIP` that the right-click left behind. With no
+`afterprint`, the export frame stays attached until the exporters' five-minute backstop.
+
+**Four instrument lessons are in the code now, because each of them produced a wrong reading first.**
+
+- **A window is not a dialog.** The first version waited for *any* new window, caught the tooltip, and
+  reported a dialog 66 pixels tall. The reading that fixed it is `xprop`: `_NET_WM_WINDOW_TYPE` plus size
+  plus map state, and a screenshot written to `target/drive-app-print/` — which is what I looked at to be
+  sure. `x-windows.mjs` is that instrument, split out for the reason below.
+- **Wayland hides every GTK window from `xwininfo`.** This session runs on Wayland, so a *running*
+  application listed **zero** windows and `xdotool` found only the root. That reads exactly like "no dialog
+  ever appeared", which is the conclusion being tested — so the probe now forces `GDK_BACKEND=x11` and says
+  why in the environment it hands the app.
+- **A pointer action with an element origin hangs in this driver.** `POST /actions` with
+  `origin: {element-…}` never answers; the probe died on a 15 s request timeout with a stack trace and no
+  readings at all. It now clicks at the card's own in-view coordinates with `origin: 'viewport'` — the way
+  every other pointer instrument here drives WebKitGTK — and every driver call in the stage is *reported*
+  rather than thrown, because that first death said nothing about which of three things had gone wrong.
+- **`window.open()` is not a control.** MiniBrowser's popup policy refused it while the script still
+  returned `"opened"`, so the control window never existed and the run was inconclusive rather than wrong.
+  The control is now an `xmessage` window started by the probe itself.
+
+**And the engine half is measured too, with the control that makes it attributable.**
+`apps/desktop/e2e/webkit/probe-print-dialog.mjs` makes the same calls in **MiniBrowser**, WebKitGTK's own
+browser: `window.print()` from the page and from a hidden `srcdoc` frame loaded exactly as `export.ts`
+loads its print frame. Readings: `mainEvents none`, `frameEvents none`, no dialog either time — while the
+`xmessage` control was seen at 382x60. Re-run under `kwin_x11` on the same Xvfb (a real window manager, in
+case a WM-less display was the cause): identical. WebKitGTK 2.52.6 exports the print APIs
+(`webkit_print_operation_run_dialog` is in the library), GTK's `cups` and `file` print backends are both
+installed, and `lpstat` reaches a CUPS server with no destinations.
+
+**What that finding is *not*.** It is not "the app's PDF export is broken": on this build and this machine
+DOM printing reaches no dialog for **anyone** embedding WebKitGTK, which is weaker than an app defect and is
+recorded as weaker. Whether a desktop session with printers configured behaves the same is **not**
+established here — that would need a machine with a printer, and this one has none. Both readings are
+therefore reported as what they are: a silent no-op *here*, measured, with the engine controlled for.
+
+**What *is* the app's business is the silence.** Whatever the cause, the user pressed a menu item and
+nothing happened — no dialog, no error, no notice; `window.print()` returning normally is
+indistinguishable from success from inside the renderer. That is fixed at the source of the export:
+`exportToPdf` now returns `{ outcome }`, which resolves `printed` when the frame reports `beforeprint` (or
+finishes with `afterprint`) and `no-print-started` when a **ten-second deadline** passes first. The
+deadline is armed when the export starts, not when `onload` fires, so a frame that never loads also
+answers. Both callers report it — the note menu and the settings page — through a new
+`error.exportNoPrintDialog` that also names the way out (「导出 HTML」, then print from a browser).
+
+    RED    export.test.ts       Cannot destructure property 'outcome' of '(intermediate value)' as it is undefined
+    RED    use-note-export      expected [] to deeply equal [ 'error.exportNoPrintDialog' ]
+    GREEN  68 tests, 4 files    (services/export, use-note-export, use-export-settings, NoteListPanel.noteMenu)
+    GREEN  pnpm typecheck       clean; eslint on the eight changed files: clean
+
+Two details are deliberate rather than incidental. The notice is a **deadline and not a platform error**,
+because a slow print must not be reported as a failed one; and the case next to it — "says nothing extra
+when the print did start" — is its control, so the silence on the working path is pinned by a test and not
+by the absence of one. `NoteListPanel.noteMenu.test.ts`'s mock needed the same shape: a mock that answers
+`undefined` would have failed every case in that file on a destructuring error rather than on its subject.
+
+**One more question was asked of the CSP while the instrument was in hand, and answered in the negative.**
+Three shipped features put documents into `<iframe srcdoc>` frames — the print frame, the long-image
+exporter, the settings preview — and the shipped policy carries `frame-src 'none'`. If WebKitGTK applied
+that directive to local-scheme frames, all three would render nothing in a packaged build, and nothing in
+the repository could see it: the unit tests assert against the `srcdoc` **attribute** with a fake document,
+and the Playwright suite is Chromium with a stubbed `__TAURI_INTERNALS__`, so it runs without the policy at
+all. `probe-csp-frame.mjs` measured it with the controls that make it attributable:
+
+    control-network-with-csp   who=none    len=26    violations=frame-src<-http
+    control-network-no-csp     who=child   len=51
+    srcdoc-with-csp            who=srcdoc  len=128   violations=
+    srcdoc-no-csp              who=srcdoc  len=128
+
+The directive is enforced — it refuses a network frame and names itself — and it does **not** refuse the
+`srcdoc` frame. The hypothesis that the policy was emptying the export frames is falsified, `SECURITY.md` §2
+now records the reading next to the `blob:` one, and the probe exits 0 saying so rather than leaving the
+risk unmeasured.
+
+**Four documents carried claims this round measured.** `test-plan.md` gained the three instrument rows, a
+coverage row naming the new outcomes and their two call sites, and a rewritten §3 entry — the dialog is
+still not automatable, but whether it appears *here* is now a reading, and a negative one. `debug.md`
+records what `--print` does, the two environment preconditions it discovered, the tooltip that was mistaken
+for a dialog, and the sibling probe for the engine half. `USER-GUIDE.md`'s PDF row keeps its Windows
+framing and gains the Linux behaviour, the message the user now gets and the way out. `SECURITY.md` §2
+carries the `frame-src` measurement beside the `blob:` one.
+
+**Two files were split out, and the reason is the budget.** `drive-app.mjs` was at 823 lines with the print
+stage inside it, past the 800-line test budget; the X-tree instrument is now `x-windows.mjs` (117 lines) and
+the print stage `drive-print.mjs` (319), and the probe that owns the session is back to 624. The engine
+control is `probe-print-dialog.mjs` (207) and the CSP question `probe-csp-frame.mjs` (223).
+
+**And the fix is verified where it counts — in the built application, from outside it.** The gate's own
+`build` step rebuilt the binary, and `drive-app.mjs --print` then read the app's sentence out of the toast
+stack:
+
+    exportNotice  "系统没有打开打印对话框——这个 WebView 没有开始打印。可以改用「导出 HTML」，再在浏览器里打印成 PDF。"
+    dialogWindow  null
+    probe exit    0
+
+Before the fix, the same probe failed on exactly this: no dialog **and** nothing said. The first attempt at
+this reading was wrong in an instructive way — the probe waited the dialog's full 45 seconds and only then
+looked for a toast that had been written ten seconds in and dismissed, so it reported silence from an
+application that had spoken. One poll now returns whichever of the two arrives first, and each window is
+described once rather than once per iteration.
+
+### The gate
+
+| Step | Result |
+|---|---|
+| `verify` | PASS — **5959 tests across 3 package runs** (5954 + the round's five new cases) |
+| `fmt` | PASS |
+| `clippy` | PASS — 97 warning lines, under the 110 ceiling |
+| `instruments` | PASS — 85 of 1368 uncalled exports, at the ceiling |
+| `scripts` | PASS — 91 checks, 0 failed |
+| `harness` | PASS — 5 passed, 0 failed |
+| `build` | PASS |
+| `rust` | PASS — 79 targets, 1409 passed, 0 failed |
+| `e2e` (`--only e2e`) | PASS — 297 passed |
+
+Two runs on this tree: the eight-step gate (exit 0), then `--only e2e` (exit 0) — a plain `gate.sh` does not
+include the Playwright suite, which is why the second run exists rather than being assumed.
+
+**And the bundles were rebuilt**, because this round changed shipped code (the export's outcome and its
+notice) rather than only probes and documents.
+
+**The bundles, rebuilt because shipped code changed** (`bash scripts/package-linux.sh`, exit 0; the engine
+is the same pinned build as last time, so its digest is unchanged):
+
+    portable   nekowite_1.0.0_x64        938f1c02a9fccc305214e64722783a3b4796e24fb5176c376935786375d4a426
+    engine     opencode                  ca6c0e1f42be3120595bf6848937e7586ec862c87fa7aa111e89c7cc6e9a4650
+    deb        nekowite_1.0.0_amd64.deb  7a9f2b2d0de43ca2401a59eafc26a62949bc1e3a27d29603b4f05be9f8dae005
+    rpm        nekowite-1.0.0-1.x86_64   6be312d6d37243ded5e8f7c8a60a75ddf1e31c42a3546a5f3fccf6c6b1f223de
+    AppImage   nekowite_1.0.0_amd64      34b6924cadb64e1ce6126e29dcdcd10564c0129831ec21eddf97634adef065cd
+    prior build kept at `release/superseded/build.1addCN`
+
+**The live AI reading, re-measured this round** (`bash scripts/verify-ai-live.sh`; the key written 0600 to
+`/tmp/nkw-test-key`, read by the script, printed nowhere, and removed in the same command): **3 passed, 0
+failed**, 6.54 s. The gateway listed the models the paid turn asks for; the paid turn streamed through the
+app's own transport in 4 chunks to `data: [DONE]`, answered `PONG`, and billed **17 prompt + 2 completion**
+— every count the app reported was one the provider sent, unchanged. The reasoning dialect turn streamed 43
+bytes of thinking in 9 chunks and then a 4-byte answer, billed **89 prompt + 15 completion, 12 of them
+`reasoning_tokens`**; the completion side has now read 30, 16, 9, 15 across rounds, which is the movement
+that script's header documents rather than a change in the gateway.
