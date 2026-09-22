@@ -2439,3 +2439,138 @@ four chunks to `data: [DONE]` and billed **17 prompt + 2 completion**, every cou
 one the provider sent; the reasoning turn billed **89 prompt + 16 completion, 13 of them `reasoning_tokens`**
 (the completion side has now read 30, 16, 9, 15, 16). The key was written 0600 to `/tmp/nkw-test-key` and
 removed in the same command; it is nowhere in the tree.
+
+## 26. The round after that: a formula that showed its own source
+
+**A real defect, found because the last round's instrument was pointed at a note with a formula in it.**
+`probe-egress.mjs`'s final phase renders a note to answer "does rendering reach the network" — the note has
+a remote image, a local one and, incidentally, inline math. The image readings came back exactly as the
+document promises; the math reading came back as the **source text**:
+
+    mathSamples[4s]    markup "x^2 + y^2 = z^2"     mathLiveStyles 1    hasMathLive false
+    mathSamples[12s]   markup "x^2 + y^2 = z^2"     mathLiveStyles 1
+    mathSamples[24s]   markup "x^2 + y^2 = z^2"     mathLiveStyles 1
+    mathAfterReopen    markup "<span class=\"ML__latex\">…"
+                       text   "x2+y2=z2"
+
+Twenty-four seconds is not a slow load, and `mathLiveStyles: 1` says the library's stylesheet had been
+injected — the import had **succeeded**. The first reading of mine that was wrong was the selector: I counted
+`.katex`, which is the *export* renderer's output; the editor uses MathLive. The second was the conclusion it
+invited ("math does not render"); the truth is narrower and worse — it renders, once, at the moment the node
+view is created, and `renderLatexMarkup` falls back to the escaped LaTeX when the library is not there yet.
+The view re-renders on node **update**, and an update arrives with a document change, so the fallback stayed
+until the note was left and opened again — which is what `mathAfterReopen` shows, and why the note read as
+plain text in the meantime.
+
+**The same race had already been fixed one layer over.** `CHANGELOG.md`'s earlier entry 「公式对话框第一次
+打开时没有可视化编辑器」 is the *dialog*: it mounts what it can and upgrades to MathLive when the library
+lands. The node view had nothing. The fix is the same shape — capture `warmMathLive()`'s promise and render
+again when it resolves — with a `destroyed` flag, because that promise outlives the view whenever the note is
+closed while the library is loading, and writing into a detached element afterwards would be a leak with a
+render in it.
+
+**Evidence, in the order it was taken.**
+
+    RED     packages/editor-core/src/math/views.test.ts
+            AssertionError: expected 'E=mc^2' to contain 'ML__latex'
+    GREEN   33 tests across the six math files (smoke, nodes, atoms, dialog, dialog-upgrade-window, views),
+            each of the three new cases also run alone with `-t` (1 passed, 2 skipped)
+    REAL    before the fix (built app, probe-egress): fallback text at 4 s / 12 s / 24 s
+            after  the fix (rebuilt by `tauri build --no-bundle`): `<span class="ML__latex">…` at 4 s
+
+The regression case gates the import rather than racing it: `mathlive` (and its stylesheet) resolve only when
+the case releases them, so "the library arrives late" is a fact in that file.
+
+**And an adversarial review then found four things wrong with that first fix, three of them mine.** Every one
+was re-verified here before anything was changed; the sharpest was checked by running it:
+
+    vitest run src/math/views.test.ts -t "first paint"
+    FAIL  expected 'E=mc^2' to contain 'ML__latex'
+
+— that is the *control* case run alone, failing with the very message the late-arrival case is supposed to
+produce. It passed in the file only because the case above it had released the file-wide mock latch. A control
+that depends on the order of the cases above it is not a control, and the sentence this document carried about
+it ("nothing about the re-render is doing that work") was therefore unsupported. The file now builds a fresh
+module graph per case (`vi.resetModules()` + `vi.doMock`, the pattern `dialog-upgrade-window.test.ts` already
+used), and each case passes alone — verified by running each with `-t`.
+
+The second: **the fix was one-shot on a promise the loader itself resets.** `loadMathLive` clears its cache
+when the import fails so the next caller starts a fresh attempt, and a view bound to the failed attempt's
+promise could never hear about that retry's success — the same symptom, a different cause, and invisible to the
+probe. `atoms.ts` now keeps a listener list notified inside the import's own success path, so any later
+attempt tells every waiting view; `views.test.ts` covers it with a first attempt that fails and a second note
+whose creation starts the retry, asserting that the node opened *before* the retry is re-rendered too.
+
+The third: the already-loaded path rendered every formula **twice**, because a memoized resolved promise always
+fires its callback. `mathLiveReady()` now answers whether a render happening now can use the library, and the
+view subscribes only when it cannot.
+
+The fourth was in the instrument, and it is the kind that flatters: `hostsIn` stripped a leading `CONNECT `
+and split on `:`, so a plain-HTTP `GET http://host/…` line became the host `GET http`, and the probe's own
+`clientError …` record became an unlisted host — the instrument reporting its own bookkeeping as egress and
+blaming the renderer for it. Four more gaps came with it: the math samples were recorded but never asserted
+(so a regression of the fixed symptom could not fail the probe), the local image it called a control was never
+checked, the remote image pointed at an unresolvable `.invalid` host (so a relaxed `img-src` would fail
+identically to a refused one), and only the windows the probe happened to create were judged — boot time and
+the tail after the last phase were read by nothing.
+
+All of it is fixed, and one more thing was added because the review asked the right question: **a control for
+the webview's own network stack.** Every arm until then proved the proxy saw `reqwest`'s traffic; none proved
+it saw WebKit's, and the renderer phase's claim is about an `<img>` the webview would fetch. A top-level
+navigation from the page — the one request no directive in `tauri.conf.json` restricts — now runs as its own
+phase, and it arrives (`GET http://egress-control.invalid/`), so the proxy is known to see both stacks. Its
+absence is reported as a limitation rather than silently weakening the claim.
+
+**The new assertion then caught a race in the probe itself, on its first run.** Sampling began after the phase
+waited only for `.ProseMirror`, which the app renders before the document lands; three samples of
+`mathNodes: 0` looked exactly like the bug being measured, and the verdict failed on them. The wait is now for
+the note's own text. Re-run: MathLive markup at 4 s, 12 s and 24 s, exit 0.
+
+**And the instrument that found it was recording three other things at the same time.** Rendering a note
+that names `https://remote-image.invalid/x.png` put **nothing** on the wire (`renderer: hits []`), which is
+`docs/PRIVACY.md`'s second network claim measured rather than asserted; the remote image is marked
+`data-failed="true"` with 「远程图片未加载（受安全策略限制）」 and offers *open in browser* while hiding
+*retry* — the honest affordance `image/node-view.ts` chooses for a src the policy refuses — and the local
+image beside it kept `loaded: true` through `asset://`, which is the control for that phase.
+
+**Three documents changed with it.** `CHANGELOG.md`'s Fixed list gains the entry, placed next to the
+dialog's own lazy-load fix it is the other half of. `test-plan.md` gains the row the formula path never had —
+six test files behind it and no line in the coverage table — naming `views.test.ts` as the gated-import
+regression case. And the probe's vault plumbing moved to `drive-vault.mjs`, shared by `drive-app.mjs` and
+`probe-egress.mjs`: the awkward half is not writing files but being allowed to open them (the app accepts a
+root its own `last-vault` record remembers), and that rule should have one answer.
+
+### The gate
+
+| Step | Result |
+|---|---|
+| `verify` | PASS — **5962 tests across 3 package runs** (5959 + the round's three new cases) |
+| `fmt` | PASS |
+| `clippy` | PASS — 97 warning lines, under the 110 ceiling |
+| `instruments` | PASS — 85 of 1368 uncalled exports, at the ceiling |
+| `scripts` | PASS — 91 checks, 0 failed |
+| `harness` | PASS — 5 passed, 0 failed |
+| `build` | PASS |
+| `rust` | PASS — 79 targets, 1409 passed, 0 failed |
+| `e2e` (`--only e2e`) | PASS — 297 passed |
+
+Two runs on this tree, both exit 0 — the eight-step gate, then `--only e2e`, because a plain `gate.sh` does
+not include the Playwright suite and the change is in the bundle that suite drives.
+
+**The live AI reading, re-measured this round**: **3 passed, 0 failed**, 10.82 s. The paid turn streamed in
+four chunks to `data: [DONE]` and billed **17 prompt + 2 completion**, every count the app reported being one
+the provider sent; the reasoning turn billed **89 prompt + 17 completion, 14 of them `reasoning_tokens`** (the
+completion side has now read 30, 16, 9, 15, 16, 17). The key was written 0600 to `/tmp/nkw-test-key` and
+removed in the same command.
+
+**The bundles were rebuilt, twice.** The first build carried the one-promise fix; the review then changed the
+implementation, so the published artifacts are from the second (`bash scripts/package-linux.sh`, exit 0, the
+engine unchanged):
+
+    portable   nekowite_1.0.0_x64        34544ef71f7526635e64cb1b7e9b57d31179dcc38b0ecd2f260fdb16c3a33346
+    engine     opencode                  ca6c0e1f42be3120595bf6848937e7586ec862c87fa7aa111e89c7cc6e9a4650
+    deb        nekowite_1.0.0_amd64.deb  c204fa086d514a26b8dac4f2ecee3a3b46e072e4b9d0404a5d9bbc61763438d8
+    rpm        nekowite-1.0.0-1.x86_64   b39f3b4665bf94e2c734f13e06c92aa760f93ce6effebe75db450c65bc9ede2c
+    AppImage   nekowite_1.0.0_amd64      b11a993749c2ad234f2af1beb865451d2005c328c74131e80208e7381cc2054d
+
+The superseded interim build is kept at `release/superseded/`, as that script does for every run.
