@@ -39,6 +39,19 @@ const LABELS: Record<AgentPageId, string> = {
   catalogue: t('agent.catalogue.section.title'),
 }
 
+const GROUPS: ReadonlyArray<{ id: 'operation' | 'integration' | 'governance' | 'registration'; pages: readonly AgentPageId[] }> = [
+  { id: 'operation', pages: ['runtime'] },
+  { id: 'integration', pages: ['provider', 'configuration', 'skills'] },
+  { id: 'governance', pages: ['permission'] },
+  { id: 'registration', pages: ['registry', 'catalogue'] },
+]
+const GROUP_LABELS = {
+  operation: t('agent.settings.agents.groups.operation'),
+  integration: t('agent.settings.agents.groups.integration'),
+  governance: t('agent.settings.agents.groups.governance'),
+  registration: t('agent.settings.agents.groups.registration'),
+}
+
 /** One icon per page, by what the page is about rather than by which engine it configures. */
 const ICONS: Record<AgentPageId, typeof Activity> = {
   runtime: Activity,
@@ -57,24 +70,35 @@ const ICONS: Record<AgentPageId, typeof Activity> = {
     role="tablist"
     :aria-label="t('agent.settings.agents.pages')"
   >
-    <button
-      v-for="page in pages"
-      :key="page"
-      type="button"
-      role="tab"
-      class="agents-tab"
-      :class="{ active: page === active }"
-      :aria-selected="page === active"
-      :data-page="page"
-      @click="emit('update:active', page)"
+    <div
+      v-for="group in GROUPS"
+      v-show="group.pages.some(page => pages.includes(page))"
+      :key="group.id"
+      class="agents-group"
     >
-      <component
-        :is="ICONS[page]"
-        :size="13"
-        :stroke-width="1.8"
-      />
-      <span>{{ LABELS[page] }}</span>
-    </button>
+      <span class="agents-group-label">{{ GROUP_LABELS[group.id] }}</span>
+      <div class="agents-group-tabs">
+        <button
+          v-for="page in group.pages"
+          v-show="pages.includes(page)"
+          :key="page"
+          type="button"
+          role="tab"
+          class="agents-tab"
+          :class="{ active: page === active }"
+          :aria-selected="page === active"
+          :data-page="page"
+          @click="emit('update:active', page)"
+        >
+          <component
+            :is="ICONS[page]"
+            :size="13"
+            :stroke-width="1.8"
+          />
+          <span>{{ LABELS[page] }}</span>
+        </button>
+      </div>
+    </div>
   </nav>
 </template>
 
@@ -85,8 +109,8 @@ const ICONS: Record<AgentPageId, typeof Activity> = {
    860x560 minimum in `settings-density.spec.ts`. */
 .agents-rail {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
-  gap: 3px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
   margin-top: 8px;
   padding: 4px;
   border: 1px solid color-mix(in srgb, var(--app-border) 78%, transparent);
@@ -94,6 +118,9 @@ const ICONS: Record<AgentPageId, typeof Activity> = {
   background: color-mix(in srgb, var(--app-panel) 48%, transparent);
   user-select: none;
 }
+.agents-group { min-width: 0; }
+.agents-group-label { display: block; padding: 2px 8px 5px; color: var(--app-muted); font-size: 10px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; }
+.agents-group-tabs { display: grid; gap: 2px; }
 .agents-tab {
   display: inline-flex;
   align-items: center;
@@ -129,6 +156,6 @@ const ICONS: Record<AgentPageId, typeof Activity> = {
 }
 
 @media (max-width: 520px) {
-  .agents-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .agents-rail { grid-template-columns: 1fr; }
 }
 </style>
