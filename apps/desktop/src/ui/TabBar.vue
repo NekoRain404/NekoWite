@@ -89,6 +89,8 @@ function tabindexOf(id: string): number {
 
 function onTabKeydown(e: KeyboardEvent, id: string): void {
   if (e.target !== e.currentTarget) return
+  // Ctrl+Space is an input-method switch on Linux and must not activate a tab.
+  if (e.ctrlKey || e.metaKey || e.altKey) return
   if (e.key === 'Enter' || e.key === ' ') {
     e.preventDefault()
     tabs.setActive(id)

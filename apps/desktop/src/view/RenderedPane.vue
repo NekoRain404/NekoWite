@@ -230,10 +230,12 @@ defineExpose({
       class="editor-container"
       @click.self="onTailClick"
     >
-      <ImagePanel
-        v-if="editorForPanel"
-        :editor="editorForPanel"
-      />
+      <Transition name="image-panel">
+        <ImagePanel
+          v-if="editorForPanel"
+          :editor="editorForPanel"
+        />
+      </Transition>
       <TableMenu
         v-if="editorForPanel"
         :editor="editorForPanel"

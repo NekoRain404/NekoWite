@@ -111,6 +111,8 @@ export function useGraphCanvas(options: UseGraphCanvasOptions): GraphCanvas {
   }
 
   function onCanvasKeydown(e: KeyboardEvent): void {
+    // Keep modified Space available to the platform input method.
+    if (e.ctrlKey || e.metaKey || e.altKey) return
     if (e.key === 'Escape') {
       if (kbNodeId.value === null) return
       e.preventDefault()

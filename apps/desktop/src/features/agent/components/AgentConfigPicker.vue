@@ -206,6 +206,8 @@ function onQuery(value: string): void {
 }
 
 function onTriggerKeydown(event: KeyboardEvent): void {
+  // Let the desktop input method own modified shortcuts such as Ctrl+Space.
+  if (event.ctrlKey || event.metaKey || event.altKey) return
   if (event.key === 'Escape') {
     if (!popup.open.value) return
     event.preventDefault()

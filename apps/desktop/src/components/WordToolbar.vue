@@ -320,6 +320,26 @@ function runRegistry(id: string): void {
   background: color-mix(in srgb, var(--app-elevated) 76%, var(--app-canvas));
   overflow-x: auto;
   user-select: none;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--app-accent) 45%, transparent) transparent;
+}
+.toolbar-btn {
+  color: var(--app-muted);
+  border-color: transparent;
+  background: transparent;
+  transition: color var(--app-motion-fast) var(--app-ease),
+    background-color var(--app-motion-fast) var(--app-ease),
+    border-color var(--app-motion-fast) var(--app-ease);
+}
+.toolbar-btn:hover,
+.toolbar-btn:focus-visible {
+  color: var(--app-accent);
+  border-color: color-mix(in srgb, var(--app-accent) 38%, transparent);
+  background: color-mix(in srgb, var(--app-accent) 11%, transparent);
+}
+.toolbar-btn:active {
+  color: var(--app-accent);
+  background: color-mix(in srgb, var(--app-accent) 18%, transparent);
 }
 .heading-preview {
   width: 26px;

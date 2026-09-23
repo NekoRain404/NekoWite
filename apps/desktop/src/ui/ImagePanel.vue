@@ -252,7 +252,9 @@ function onKeydown(e: KeyboardEvent): void {
      the pointer is holding. */
   position: fixed;
   z-index: 40;
-  width: 240px;
+  width: min(360px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  box-sizing: border-box;
   padding: 10px 12px;
   background: var(--app-elevated);
   border: 1px solid var(--app-border);
@@ -280,7 +282,9 @@ function onKeydown(e: KeyboardEvent): void {
 }
 .neko-image-input {
   flex: 1;
+  width: 0;
   min-width: 0;
+  box-sizing: border-box;
   padding: 4px 6px;
   border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);
   border-radius: var(--app-radius-sm);
@@ -290,14 +294,16 @@ function onKeydown(e: KeyboardEvent): void {
   font-size: 12px;
 }
 .neko-image-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 8px;
+  min-width: 0;
 }
 .neko-image-width {
-  flex: 1;
+  min-width: 0;
 }
 .neko-image-align {
-  flex: 1;
+  min-width: 0;
 }
 .neko-image-row .neko-image-field-label {
   width: 44px;
@@ -339,9 +345,11 @@ function onKeydown(e: KeyboardEvent): void {
   display: flex;
   gap: 6px;
   margin-top: 8px;
+  min-width: 0;
 }
 .neko-image-btn {
   flex: 1;
+  min-width: 0;
   padding: 5px 4px;
   border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);
   border-radius: var(--app-radius-sm);
@@ -356,6 +364,34 @@ function onKeydown(e: KeyboardEvent): void {
      snapped here while it eased everywhere else. */
   transition: border-color var(--app-motion-fast) var(--app-ease),
               color var(--app-motion-fast) var(--app-ease);
+}
+
+@media (max-width: 520px) {
+  .neko-image-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .neko-image-field-label,
+  .neko-image-row .neko-image-field-label {
+    width: 52px;
+  }
+  .neko-image-actions {
+    flex-wrap: wrap;
+  }
+  .neko-image-btn {
+    flex: 1 1 92px;
+  }
+}
+
+:global(.image-panel-enter-active),
+:global(.image-panel-leave-active) {
+  transition: opacity var(--app-motion-fast) var(--app-ease),
+    transform var(--app-motion-fast) var(--app-ease);
+  transform-origin: top right;
+}
+:global(.image-panel-enter-from),
+:global(.image-panel-leave-to) {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
 }
 .neko-image-btn:hover {
   border-color: var(--app-accent);

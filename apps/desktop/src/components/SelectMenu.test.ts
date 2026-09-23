@@ -145,6 +145,22 @@ describe('SelectMenu', () => {
     expect(activeLabel()).toBe('Charlie')
   })
 
+  it('leaves modified Space available for the Linux input-method switch', async () => {
+    mount({ value: 'a' })
+    trigger().focus()
+    const event = new KeyboardEvent('keydown', {
+      key: ' ',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    trigger().dispatchEvent(event)
+    await nextTick()
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(trigger().getAttribute('aria-expanded')).toBe('false')
+  })
+
   it('jumps to either end with Home and End', async () => {
     mount({ value: 'a' })
     await press('Enter')

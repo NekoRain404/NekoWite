@@ -182,6 +182,9 @@ function onTriggerClick(): void {
 }
 
 function onTriggerKeydown(e: KeyboardEvent): void {
+  // Modified Space is reserved for OS input-method switching (for example
+  // Ctrl+Space in common Linux Chinese IMEs), never for opening this menu.
+  if (e.ctrlKey || e.metaKey || e.altKey) return
   if (e.key === 'Escape') {
     if (!open.value) return
     e.preventDefault()
