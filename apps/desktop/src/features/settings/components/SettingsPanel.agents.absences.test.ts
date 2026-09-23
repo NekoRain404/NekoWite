@@ -13,7 +13,6 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   el,
   openAgents,
-  railRows,
   section,
   startAgentPanelAgents,
   switchInput,
@@ -65,13 +64,17 @@ describe('the agents section in the settings dialog', () => {
     expect(el('skills-project-scope')?.textContent).toContain('.opencode/skills')
 
     // Everything a mounted page draws itself is inside `agents-pages`; outside it, this file draws
-    // the switch and the rail, and nothing else. A disabled control or a greyed pill below would
-    // be a claim that the capability exists and is temporarily off.
+    // only the engine switch. Navigation rows are owned by SettingsNavigation and are filtered
+    // above, so a disabled control below would be a claim that the capability exists and is off.
     const own = [
       ...section().querySelectorAll<HTMLElement>(
         'input, button, select, textarea, [role="switch"]',
       ),
-    ].filter((control) => control.closest('[data-test="agents-pages"]') === null)
-    expect(own).toEqual([switchInput(), ...railRows()])
+    ].filter((control) => (
+      control.closest('[data-test="agents-pages"]') === null
+      && !control.classList.contains('nav-row')
+      && !control.classList.contains('settings-subnav-row')
+    ))
+    expect(own).toEqual([switchInput()])
   })
 })

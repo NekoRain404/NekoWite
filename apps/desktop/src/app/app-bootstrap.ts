@@ -20,6 +20,8 @@ import { editorSessionManager } from '../features/editor'
 export interface DesktopRuntime {
   /** The currently-open vault root (null before the first folder is picked). */
   vaultPath: Ref<string | null>
+  /** True after the startup vault/session/open-file sequence has settled. */
+  ready: Ref<boolean>
   /** Window size/position persistence, shared with the lifecycle module. */
   windowTracking: WindowTracking
   /** Switch the app to a new vault: reconcile the tabs whose first read has not
@@ -73,6 +75,7 @@ export function createDesktopRuntime(): DesktopRuntime {
   const gateways = getSharedGateways()
   const { fs: fsPort, dialogs } = gateways
   const vaultPath = ref<string | null>(null)
+  const ready = ref(false)
   const windowTracking = setupWindowTracking()
   let disposed = false
 
@@ -174,6 +177,7 @@ export function createDesktopRuntime(): DesktopRuntime {
       // this since `start()`, and only now may it act: a second `applyVault`
       // racing the one above is what silently dropped the restored session.
       openFiles.markReady()
+      ready.value = true
       void windowTracking.start()
     }
   }
@@ -209,6 +213,7 @@ export function createDesktopRuntime(): DesktopRuntime {
 
   return {
     vaultPath,
+    ready,
     windowTracking,
     applyVault,
     onOpenFolder,

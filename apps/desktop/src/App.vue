@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppShell from './app/AppShell.vue'
+import StartupOverlay from './app/StartupOverlay.vue'
 import { createDesktopRuntime } from './app/app-bootstrap'
+import { createStartupMaskController } from './app/startup-mask'
 import { createAppLifecycle } from './app/app-lifecycle'
 import { useAppDialogs } from './app/app-dialogs'
 import { activeTabSubtitle, activeTabTitle } from './app/tab-meta'
@@ -40,6 +42,16 @@ const dialogState = dialogs.state
 const showSettings = ref(false)
 const sidebarVisible = ref(true)
 const railOpen = ref(false)
+const startupVisible = ref(true)
+const startupMask = createStartupMaskController(() => { startupVisible.value = false })
+
+// Start the display window during setup so a fast startup cannot complete
+// before the first overlay paint and make the mask appear to do nothing.
+startupMask.start()
+
+watch(runtime.ready, (ready) => {
+  if (ready) startupMask.markReady()
+})
 
 const activeTitle = computed(() => activeTabTitle(tabs.activeTab))
 const activeSubtitle = computed(() => activeTabSubtitle(tabs.activeTab, tabs.vault))
@@ -131,6 +143,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  startupMask.dispose()
   externalDocSync.stop()
   // Single app teardown: lifecycle.unmount() disposes the runtime AND removes the
   // window listeners, so nothing (vault switch, recovery scan, fs watcher, plugins,
@@ -165,4 +178,19 @@ onBeforeUnmount(() => {
     @toggle-rail="railOpen = !railOpen"
     @toggle-settings="showSettings = !showSettings"
   />
+  <Transition name="startup-mask" appear>
+    <StartupOverlay v-if="startupVisible" />
+  </Transition>
 </template>
+
+<style scoped>
+.startup-mask-enter-active,
+.startup-mask-leave-active {
+  transition: opacity 360ms var(--app-ease), filter 360ms var(--app-ease);
+}
+.startup-mask-enter-from,
+.startup-mask-leave-to {
+  opacity: 0;
+  filter: blur(10px);
+}
+</style>

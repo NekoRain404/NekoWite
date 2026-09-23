@@ -11,6 +11,7 @@ export const common = {
       cancel: 'Cancel',
       confirm: 'Confirm',
       delete: 'Delete',
+      loading: 'Loading NekoWite…',
     },
 
     error: {
@@ -37,6 +38,7 @@ export const common = {
       cancel: '取消',
       confirm: '确认',
       delete: '删除',
+      loading: 'NekoWite 正在加载…',
     },
 
     error: {

@@ -53,7 +53,7 @@ import { useSettingsDialog } from '../composables/use-settings-dialog'
 import { DIALOG_WIDTH_MIN, useDialogSize } from '../composables/use-dialog-size'
 import { resetContentScroll } from '../composables/content-scroll'
 import { markArrived, markLeaving } from '../../../composables/surface-leave'
-import type { SettingsOpenTarget, SettingsSectionId } from '../types'
+import type { AgentPageId, SettingsOpenTarget, SettingsSectionId } from '../types'
 
 const emit = defineEmits<{ (e: 'close'): void; (e: 'saved', path: string): void }>()
 
@@ -75,6 +75,7 @@ const props = withDefaults(
 )
 
 const activeSection = ref<SettingsSectionId>(props.target?.section ?? 'general')
+const agentPage = ref<AgentPageId>(props.target?.agentPage ?? 'runtime')
 
 /**
  * §5.1's sub-page the caller named.
@@ -162,6 +163,7 @@ watch(
     if (!target) return
     activeSection.value = target.section
     if (target.page) petPage.value = target.page
+    if (target.agentPage) agentPage.value = target.agentPage
   },
 )
 </script>
@@ -201,7 +203,12 @@ watch(
         </button>
       </div>
       <div class="dialog-body">
-        <SettingsNavigation v-model:active-section="activeSection" />
+        <SettingsNavigation
+          v-model:active-section="activeSection"
+          v-model:agent-page="agentPage"
+          v-model:pet-page="petPage"
+          :pet-pages-enabled="petConnection !== null"
+        />
         <div
           ref="contentRef"
           class="dialog-content"
@@ -259,8 +266,9 @@ watch(
                  does not exist yet. -->
             <AgentSettingsSection
               v-else-if="activeSection === 'agents'"
+              v-model:page="agentPage"
               :clients="agentClients"
-              :initial-page="target?.agentPage"
+              :show-navigation="false"
             />
             <!-- The pet's settings tree (§5.1), and the one section that is not this
                  feature's: the id is D1's constant (a literal here would be a second spelling
@@ -275,6 +283,7 @@ watch(
               v-else-if="activeSection === PET_SETTINGS_SECTION"
               v-model:page="petPage"
               :gateway="petConnection"
+              :show-navigation="false"
             />
           </Transition>
         </div>

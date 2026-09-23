@@ -373,7 +373,7 @@ export function section(): HTMLElement {
 
 /** The sub-navigation's rows, in the order they are drawn. */
 export function railRows(): HTMLElement[] {
-  return [...section().querySelectorAll<HTMLElement>('.agents-rail [role="tab"]')]
+  return [...document.querySelectorAll<HTMLElement>('.dialog-nav .agents-rail [role="tab"]')]
 }
 
 export function switchInput(): HTMLInputElement {

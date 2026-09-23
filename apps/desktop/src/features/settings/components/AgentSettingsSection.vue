@@ -24,11 +24,11 @@ import { useAgentPanel } from '../composables/use-agent-panel'
 import { resetContentScroll } from '../composables/content-scroll'
 import AgentSettingsNavigation from './AgentSettingsNavigation.vue'
 
-const props = defineProps<{
-
+const props = withDefaults(defineProps<{
   clients: AgentSettingsClients
-  initialPage?: AgentPageId
-}>()
+  showNavigation?: boolean
+}>(), { showNavigation: true })
+const active = defineModel<AgentPageId>('page', { default: 'runtime' })
 
 const { agentPanel, setAgentPanel } = useAgentPanel()
 
@@ -133,8 +133,6 @@ const available = computed<AgentPageId[]>(() =>
     .filter((id) => mountable.value[id]),
 )
 
-const active = ref<AgentPageId>(props.initialPage ?? 'runtime')
-watch(() => props.initialPage, page => { if (page) active.value = landing(page) })
 function landing(id: AgentPageId): AgentPageId {
   if (mountable.value[id] && available.value.includes(id)) return id
   return available.value[0] ?? 'runtime'
@@ -183,18 +181,19 @@ const gaps = computed(() => [
       </p>
     </div>
 
+    <AgentSettingsNavigation
+      v-if="showNavigation"
+      :pages="available"
+      :active="active"
+      @update:active="active = $event"
+    />
+
     <p
       class="agents-profile settings-note"
       data-test="agents-profile"
     >
       {{ showing }}
     </p>
-
-    <AgentSettingsNavigation
-      :pages="available"
-      :active="active"
-      @update:active="active = $event"
-    />
 
     <div
       class="agents-pages"

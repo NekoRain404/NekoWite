@@ -38,8 +38,9 @@ withDefaults(
     gateway: PetGateway | null
     /** §5.1's deep link: the sub-page the pet's right-click named, or a remembered one. */
     page?: PetSettingsPage
+    showNavigation?: boolean
   }>(),
-  { page: 'general' },
+  { page: 'general', showNavigation: true },
 )
 
 defineEmits<{ (e: 'update:page', page: PetSettingsPage): void }>()
@@ -49,6 +50,7 @@ defineEmits<{ (e: 'update:page', page: PetSettingsPage): void }>()
   <DesktopPetSettings
     :gateway="gateway"
     :page="page"
+    :show-navigation="showNavigation"
     @update:page="$emit('update:page', $event)"
   >
     <template #character="{ context }">

@@ -91,8 +91,10 @@ const props = withDefaults(
     gateway?: PetGateway | null
     /** The sub-page to open on. §5.1: the pet's right-click names one. */
     page?: PetSettingsPage
+    /** The settings dialog supplies its own nested left rail. Standalone mounts keep this rail. */
+    showNavigation?: boolean
   }>(),
-  { gateway: null, page: 'general' },
+  { gateway: null, page: 'general', showNavigation: true },
 )
 
 const emit = defineEmits<{ (e: 'update:page', page: PetSettingsPage): void }>()
@@ -257,11 +259,8 @@ onMounted(() => {
       {{ t('settings.pet.noGateway') }}
     </p>
 
-    <!-- `v-if="context"` on each element rather than on a `<template>`: it is what lets the
-         bindings below pass `context` as the non-null prop the pages declare, without a cast
-         that would hide the day the guard stops being true. -->
     <nav
-      v-if="context"
+      v-if="context && showNavigation"
       class="pet-settings__rail"
       role="tablist"
       :aria-label="t('settings.pet.pages')"
@@ -277,15 +276,14 @@ onMounted(() => {
         :data-page="entry"
         @click="open(entry)"
       >
-        <component
-          :is="PAGE_ICONS[entry]"
-          :size="13"
-          :stroke-width="1.8"
-        />
+        <component :is="PAGE_ICONS[entry]" :size="13" :stroke-width="1.8" />
         <span>{{ t(`settings.pet.page.${entry}`) }}</span>
       </button>
     </nav>
 
+    <!-- `v-if="context"` on each element rather than on a `<template>`: it is what lets the
+         bindings below pass `context` as the non-null prop the pages declare, without a cast
+         that would hide the day the guard stops being true. -->
     <p
       v-if="context && loadError"
       class="settings-note pet-settings__alert"
@@ -351,12 +349,7 @@ onMounted(() => {
 .pet-settings__alert { margin: 0; color: var(--app-danger); }
 .pet-settings__pending { margin: 0; }
 
-.pet-settings__rail {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  user-select: none;
-}
+.pet-settings__rail { display: flex; flex-wrap: wrap; gap: 4px; user-select: none; }
 .pet-settings__tab {
   display: inline-flex;
   align-items: center;
@@ -367,22 +360,11 @@ onMounted(() => {
   border-radius: var(--app-radius-lg);
   background: transparent;
   color: color-mix(in srgb, var(--app-text) 72%, var(--app-muted));
-  font-family: var(--app-font);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: -0.01em;
+  font: 500 11px var(--app-font);
   cursor: pointer;
-  transition: background var(--app-motion-fast) var(--app-ease),
-              color var(--app-motion-fast) var(--app-ease);
 }
-.pet-settings__tab:hover {
-  color: var(--app-text);
-  background: color-mix(in srgb, var(--app-panel) 62%, transparent);
-}
-.pet-settings__tab:focus-visible {
-  outline: 2px solid var(--app-accent);
-  outline-offset: 1px;
-}
+.pet-settings__tab:hover { color: var(--app-text); background: color-mix(in srgb, var(--app-panel) 62%, transparent); }
+.pet-settings__tab:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 1px; }
 .pet-settings__tab.active {
   border-color: color-mix(in srgb, var(--app-accent) 45%, var(--app-border));
   background: color-mix(in srgb, var(--app-accent-soft) 76%, var(--app-elevated));
