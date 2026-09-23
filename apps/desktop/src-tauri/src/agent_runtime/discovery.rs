@@ -91,6 +91,21 @@ pub fn discover_known_agents(path_var: Option<&str>) -> Vec<DiscoveryCandidate> 
             }
         }
     }
+    // GUI launchers often receive a reduced PATH. Include the standard per-user Linux bin
+    // locations so discovery behaves the same from a desktop file and from a shell.
+    if let Some(home) = env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        for relative in [
+            ".local/bin",
+            ".local/share/pnpm",
+            ".npm-global/bin",
+            ".cargo/bin",
+            ".bun/bin",
+        ] {
+            search_dirs.insert(home.join(relative));
+        }
+    }
+    search_dirs.insert(PathBuf::from("/snap/bin"));
     for dir in ["/usr/local/bin", "/usr/bin", "/bin"] {
         search_dirs.insert(PathBuf::from(dir));
     }
@@ -188,6 +203,18 @@ mod tests {
         assert!(found
             .iter()
             .any(|candidate| candidate.agent_id == "claude-acp" && !candidate.available));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missing_launcher_is_reported_without_failing_the_scan() {
+        let root =
+            std::env::temp_dir().join(format!("nekowite-discovery-empty-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("mkdir");
+        let found = discover_in_dirs(&BTreeSet::from([root.clone()]));
+        assert_eq!(found.len(), 6);
+        assert!(found.iter().all(|candidate| !candidate.available));
         let _ = fs::remove_dir_all(root);
     }
 }

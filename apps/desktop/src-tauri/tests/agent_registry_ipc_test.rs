@@ -14,8 +14,8 @@
 //!    the user typed into), and `env_extra` is an object per variable rather than a pair.
 //! 2. **A refusal and an exception are two channels.** A refusal is a value from a call that
 //!    completed — `Ok(Some(…))`, the facts as data, which the page renders with its own sentences.
-//!    An `Err` is a call that did not run at all: a registry that cannot be built (no engine beside
-//!    the executable) or one an in-flight start is holding. The difference is what tells a user
+//!    An `Err` is a call that did not run at all, such as when an in-flight start holds the registry.
+//!    The difference is what tells a user
 //!    whether to fix a field or to retry, so both are asserted, and the blocked case is asserted to
 //!    have changed nothing.
 //! 3. **Registration is not a sandbox, and not a shell.** A draft is validated for what `execve`
@@ -247,7 +247,7 @@ fn an_added_engine_is_the_users_own_and_carries_the_draft_verbatim() {
 }
 
 #[test]
-fn a_refused_change_is_a_value_and_an_unreachable_registry_is_an_error() {
+fn a_refused_change_is_a_value_and_an_in_flight_registry_is_an_error() {
     let managed = temp_dir("channels");
 
     // The refusal channel: the call completed and the backend said no. `Ok(Some(…))`, and the facts
@@ -262,20 +262,22 @@ fn a_refused_change_is_a_value_and_an_unreachable_registry_is_an_error() {
         Some(RegistryRefusal::DuplicateAgent { .. })
     ));
 
-    // The exception channel, first form: nothing to build a registry from. An empty slot sends
-    // `edit_registry` through `program_to_launch`, and a test binary has no engine beside it — the
-    // same sentence the app gives for a package that did not carry its sidecar.
+    // An ACP-only build has no sidecar; the first edit still builds and persists its registry.
     let empty = AgentRuntimeState::default();
-    let unbuildable = edit_registry(&empty, &managed, |registry| {
+    let first_edit = edit_registry(&empty, &managed, |registry| {
         add_agent(registry, draft("acme"))
     });
-    assert!(unbuildable.is_err(), "{unbuildable:?}");
-    assert!(
-        empty.registry.lock().unwrap().is_none(),
-        "a registry that could not be built must not be left half-installed"
-    );
+    assert!(first_edit.unwrap().is_none());
+    assert!(empty
+        .registry
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .get("acme")
+        .is_some());
 
-    // The exception channel, second form: a start is in flight and holds a share of it. That is
+    // The exception channel: a start is in flight and holds a share of it. That is
     // §3.4.7's rule from the other side — a definition may not be edited while an engine is being
     // started from it — and the registry stays exactly where it was.
     let in_flight = state_with(AgentRegistry::with_bundled("/opt/nekowite/opencode"));
@@ -469,15 +471,26 @@ fn agent_registry_delete_refuses_default_unknown_and_in_flight() {
     let state = state_with(AgentRegistry::with_bundled("/opt/nekowite/opencode"));
     for (id, kind) in [("opencode", "is-default"), ("unknown", "unknown-agent")] {
         let refusal = edit_registry(&state, &managed, |registry| delete_agent(registry, id))
-            .unwrap().unwrap();
-        assert_eq!(refusal_json(&refusal), json!({ "kind": kind, "agentId": id }));
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            refusal_json(&refusal),
+            json!({ "kind": kind, "agentId": id })
+        );
     }
-    edit_registry(&state, &managed, |registry| add_agent(registry, draft("acme"))).unwrap();
+    edit_registry(&state, &managed, |registry| {
+        add_agent(registry, draft("acme"))
+    })
+    .unwrap();
     let held = state.registry.lock().unwrap().clone().unwrap();
     assert!(edit_registry(&state, &managed, |registry| delete_agent(registry, "acme")).is_err());
     assert!(held.get("acme").is_some());
     drop(held);
-    assert!(edit_registry(&state, &managed, |registry| delete_agent(registry, "acme")).unwrap().is_none());
+    assert!(
+        edit_registry(&state, &managed, |registry| delete_agent(registry, "acme"))
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]

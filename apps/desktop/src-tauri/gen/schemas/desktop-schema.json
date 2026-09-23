@@ -279,6 +279,12 @@
           "markdownDescription": "Enables the agent_registry_add command without any pre-configured scope."
         },
         {
+          "description": "Enables the agent_registry_delete command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-registry-delete",
+          "markdownDescription": "Enables the agent_registry_delete command without any pre-configured scope."
+        },
+        {
           "description": "Enables the agent_registry_discover command without any pre-configured scope.",
           "type": "string",
           "const": "allow-agent-registry-discover",
@@ -793,6 +799,12 @@
           "type": "string",
           "const": "deny-agent-registry-add",
           "markdownDescription": "Denies the agent_registry_add command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_registry_delete command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-registry-delete",
+          "markdownDescription": "Denies the agent_registry_delete command without any pre-configured scope."
         },
         {
           "description": "Denies the agent_registry_discover command without any pre-configured scope.",

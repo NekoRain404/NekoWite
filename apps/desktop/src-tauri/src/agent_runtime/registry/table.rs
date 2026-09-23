@@ -63,9 +63,8 @@ impl AgentRegistry {
 
     /// A registry for the ACP edition, which deliberately ships no engine binary.
     ///
-    /// Keep OpenCode's id as the first-session preference so the readout contract remains stable.
-    /// It is not registered in this variant; starting before an ACP program is added is rejected as
-    /// an unknown agent instead of preventing the settings page from opening.
+    /// OpenCode remains the preference until discovery chooses an installed agent. This lets the
+    /// settings page initialize before any ACP program is available.
     pub fn without_bundled() -> Self {
         Self {
             registrations: BTreeMap::new(),
@@ -102,6 +101,33 @@ impl AgentRegistry {
     /// does not describe.
     pub fn default_agent_id(&self) -> &str {
         &self.default_agent
+    }
+
+    /// The lean edition may choose a discovered first-run preset as its default. Persisting the
+    /// choice with the registry keeps later scans and deletions from silently changing it.
+    pub fn set_default_if_unregistered(&mut self, agent_id: &str) -> bool {
+        if self.registrations.contains_key(&self.default_agent) {
+            return false;
+        }
+        if !self.registrations.contains_key(agent_id) {
+            return false;
+        }
+        self.default_agent = agent_id.to_string();
+        self.profiles
+            .entry(DEFAULT_PROFILE.to_string())
+            .or_insert_with(|| agent_id.to_string());
+        true
+    }
+
+    pub(super) fn set_default_to(&mut self, agent_id: &str) {
+        self.default_agent = agent_id.to_string();
+        if agent_id.is_empty() {
+            self.profiles.remove(DEFAULT_PROFILE);
+        } else {
+            self.profiles
+                .entry(DEFAULT_PROFILE.to_string())
+                .or_insert_with(|| agent_id.to_string());
+        }
     }
 
     /// The agents with a live runtime instance, in id order.
@@ -186,9 +212,12 @@ impl AgentRegistry {
     /// program, the engine's own config and its session history are untouched, and the profile
     /// bindings stay so re-adding the agent keeps the authorization the user gave it.
     pub fn remove(&mut self, agent_id: &str) -> Result<AgentRegistration, RegistryError> {
-        // The default is not a removable entry: §3.4.1 makes it the fixed answer for a new
-        // session, and a new-session menu with nothing to preselect is not a state this app has.
-        if agent_id == self.default_agent {
+        if agent_id == self.default_agent
+            && self
+                .registrations
+                .get(agent_id)
+                .is_some_and(|registration| registration.source != super::InstallSource::External)
+        {
             return Err(RegistryError::IsDefault {
                 agent_id: agent_id.to_string(),
             });
@@ -199,9 +228,20 @@ impl AgentRegistry {
                 epoch,
             });
         }
-        self.registrations
+        let registration = self
+            .registrations
             .remove(agent_id)
-            .ok_or_else(|| RegistryError::unknown(agent_id))
+            .ok_or_else(|| RegistryError::unknown(agent_id))?;
+        if agent_id == self.default_agent {
+            let next_default = self
+                .registrations
+                .values()
+                .find(|candidate| candidate.enabled)
+                .map(|candidate| candidate.agent_id.clone())
+                .unwrap_or_default();
+            self.set_default_to(&next_default);
+        }
+        Ok(registration)
     }
 
     /// Starts one engine and returns the instance that owns it. `managed_root` is the app's

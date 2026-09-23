@@ -9,8 +9,10 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::agent_runtime::discovery::{discover_known_agents, DiscoveryCandidate};
 use crate::agent_runtime::registry::persistence::RegistryStorage;
 use crate::agent_runtime::registry::AgentRegistry;
+use crate::agent_runtime::registry::{AgentRegistration, EnvPolicy, InstallSource};
 
 use super::agent::AgentRuntimeState;
 use super::launch::{executable_dir, program_to_launch_or_none};
@@ -101,12 +103,64 @@ pub(super) fn registry_for(
 }
 
 fn load_registry(managed: &Path) -> Result<AgentRegistry, String> {
+    let storage = RegistryFile(managed);
+    let seed_needed = AgentRegistry::needs_preset_seed(&storage)?;
     let mut registry = match program_to_launch_or_none(managed, &executable_dir())? {
         Some(program) => AgentRegistry::with_bundled(program),
         None => AgentRegistry::without_bundled(),
     };
-    registry.load_persisted(&RegistryFile(managed))?;
+    registry.load_persisted(&storage)?;
+    // Persist the first-run set, including an empty set, so a deliberate later deletion stays
+    // deleted. Existing registrations are never overwritten by auto-discovery.
+    if seed_needed {
+        seed_registry(
+            &mut registry,
+            &storage,
+            discover_known_agents(std::env::var("PATH").ok().as_deref()),
+        )?;
+    }
     Ok(registry)
+}
+
+fn seed_registry(
+    registry: &mut AgentRegistry,
+    storage: &dyn RegistryStorage,
+    candidates: Vec<DiscoveryCandidate>,
+) -> Result<(), String> {
+    for candidate in candidates
+        .into_iter()
+        .filter(|candidate| candidate.available)
+    {
+        if registry.get(&candidate.agent_id).is_some() {
+            continue;
+        }
+        let registration = AgentRegistration {
+            agent_id: candidate.agent_id,
+            display_name: candidate.display_name,
+            program: candidate.program.into(),
+            args: candidate.args,
+            source: InstallSource::External,
+            env: EnvPolicy::UserEnvironment,
+            env_extra: Vec::new(),
+            enabled: true,
+            adapter_id: candidate.adapter_id,
+            reported_version: None,
+        };
+        registry
+            .register(registration)
+            .map_err(|error| format!("cannot add discovered ACP preset: {error:?}"))?;
+    }
+    if registry.default_agent_id() == "opencode" && registry.get("opencode").is_none() {
+        let first_available = registry
+            .registrations()
+            .find(|registration| registration.enabled)
+            .map(|registration| registration.agent_id.clone());
+        if let Some(first_available) = first_available {
+            registry.set_default_if_unregistered(&first_available);
+        }
+    }
+    storage.write(&registry.persisted_document()?)?;
+    Ok(())
 }
 
 struct RegistryFile<'a>(&'a Path);
@@ -138,5 +192,111 @@ impl RegistryStorage for RegistryFile<'_> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct MemoryStorage(Mutex<Option<String>>);
+
+    impl RegistryStorage for MemoryStorage {
+        fn read(&self) -> Result<Option<String>, String> {
+            Ok(self.0.lock().unwrap().clone())
+        }
+
+        fn write(&self, document: &str) -> Result<(), String> {
+            *self.0.lock().unwrap() = Some(document.to_string());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn first_run_presets_installed_agents_and_keeps_deletions_across_restart() {
+        let storage = MemoryStorage::default();
+        let mut registry = AgentRegistry::without_bundled();
+        let candidate = DiscoveryCandidate {
+            agent_id: "codex-acp".into(),
+            display_name: "Codex ACP".into(),
+            command: "npx".into(),
+            program: "/usr/bin/npx".into(),
+            args: vec!["--yes".into(), "@zed-industries/codex-acp".into()],
+            available: true,
+            adapter_id: "generic-acp".into(),
+        };
+        seed_registry(&mut registry, &storage, vec![candidate]).unwrap();
+        assert!(registry.get("codex-acp").is_some());
+        assert_eq!(registry.default_agent_id(), "codex-acp");
+        let second = AgentRegistration {
+            agent_id: "claude-acp".into(),
+            display_name: "Claude Code ACP".into(),
+            program: "/usr/bin/npx".into(),
+            args: vec![
+                "--yes".into(),
+                "@agentclientprotocol/claude-agent-acp".into(),
+            ],
+            source: InstallSource::External,
+            env: EnvPolicy::UserEnvironment,
+            env_extra: Vec::new(),
+            enabled: true,
+            adapter_id: "generic-acp".into(),
+            reported_version: None,
+        };
+        registry.register(second).unwrap();
+        storage
+            .write(&registry.persisted_document().unwrap())
+            .unwrap();
+        let mut restarted = AgentRegistry::without_bundled();
+        restarted.load_persisted(&storage).unwrap();
+        assert!(restarted.get("codex-acp").is_some());
+        assert_eq!(restarted.default_agent_id(), "codex-acp");
+        restarted
+            .edit_persisted(&storage, |registry| registry.remove("codex-acp"))
+            .unwrap()
+            .unwrap();
+        let mut after_delete = AgentRegistry::without_bundled();
+        after_delete.load_persisted(&storage).unwrap();
+        assert!(after_delete.get("codex-acp").is_none());
+        assert_eq!(after_delete.default_agent_id(), "claude-acp");
+        after_delete
+            .edit_persisted(&storage, |registry| registry.remove("claude-acp"))
+            .unwrap()
+            .unwrap();
+        let mut after_last_delete = AgentRegistry::without_bundled();
+        after_last_delete.load_persisted(&storage).unwrap();
+        assert!(after_last_delete.default_agent_id().is_empty());
+        assert!(storage.read().unwrap().is_some());
+    }
+
+    #[test]
+    fn existing_registry_receives_presets_once_without_overwriting_user_entries() {
+        let storage = MemoryStorage(Mutex::new(Some(
+            r#"{"version":1,"registrations":[{"agentId":"codex-acp","displayName":"Custom Codex","program":"/opt/my-codex","args":["acp"],"enabled":true,"adapterId":"generic-acp"}],"profileOwners":{}}"#.into(),
+        )));
+        assert!(AgentRegistry::needs_preset_seed(&storage).unwrap());
+        let mut registry = AgentRegistry::without_bundled();
+        registry.load_persisted(&storage).unwrap();
+        seed_registry(
+            &mut registry,
+            &storage,
+            vec![DiscoveryCandidate {
+                agent_id: "codex-acp".into(),
+                display_name: "Codex ACP".into(),
+                command: "npx".into(),
+                program: "/usr/bin/npx".into(),
+                args: vec!["--yes".into(), "@zed-industries/codex-acp".into()],
+                available: true,
+                adapter_id: "generic-acp".into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            registry.get("codex-acp").unwrap().program,
+            Path::new("/opt/my-codex")
+        );
+        assert!(!AgentRegistry::needs_preset_seed(&storage).unwrap());
     }
 }

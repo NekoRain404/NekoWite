@@ -14,6 +14,10 @@ pub trait RegistryStorage {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RegistryDocument {
     version: u32,
+    #[serde(default)]
+    presets_initialized: bool,
+    #[serde(default)]
+    default_agent_id: Option<String>,
     registrations: Vec<ExternalDefinition>,
     profile_owners: BTreeMap<String, String>,
 }
@@ -31,6 +35,15 @@ struct ExternalDefinition {
 }
 
 impl AgentRegistry {
+    pub fn needs_preset_seed(storage: &dyn RegistryStorage) -> Result<bool, String> {
+        let Some(document) = storage.read()? else {
+            return Ok(true);
+        };
+        let document: RegistryDocument = serde_json::from_str(&document)
+            .map_err(|error| format!("cannot read agent registry: {error}"))?;
+        Ok(!document.presets_initialized)
+    }
+
     pub fn load_persisted(&mut self, storage: &dyn RegistryStorage) -> Result<(), String> {
         let Some(document) = storage.read()? else {
             return Ok(());
@@ -72,6 +85,15 @@ impl AgentRegistry {
             // the deleted engine's credentials or history on a later launch.
             candidate.profiles.insert(profile, owner);
         }
+        if let Some(default_agent_id) = document.default_agent_id.as_deref() {
+            if default_agent_id.is_empty() {
+                candidate.set_default_to("");
+            } else if default_agent_id != candidate.default_agent_id()
+                && !candidate.set_default_if_unregistered(default_agent_id)
+            {
+                return Err("saved default agent is not registered".into());
+            }
+        }
         *self = candidate;
         Ok(())
     }
@@ -91,6 +113,8 @@ impl AgentRegistry {
             .collect();
         serde_json::to_string_pretty(&RegistryDocument {
             version: 1,
+            presets_initialized: true,
+            default_agent_id: Some(self.default_agent_id().to_string()),
             registrations,
             profile_owners: self.profile_owners(),
         })

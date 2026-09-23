@@ -101,6 +101,16 @@ async fn system_accent_color() -> Option<commands::system::SystemAccent> {
     commands::system::system_accent_color().await
 }
 
+#[tauri::command]
+fn agent_registry_discover() -> &'static str {
+    "discovery reached"
+}
+
+#[tauri::command]
+fn agent_registry_delete() -> &'static str {
+    "delete reached"
+}
+
 #[tauri::command(rename_all = "snake_case")]
 async fn read_file(
     vault_root: String,
@@ -304,6 +314,8 @@ fn app() -> App {
         .invoke_handler(tauri::generate_handler![
             take_pending_open,
             system_accent_color,
+            agent_registry_discover,
+            agent_registry_delete,
             read_file,
             agent_stop,
             agent_permission_grants,
@@ -429,6 +441,7 @@ fn a_pet_window_cannot_stop_or_start_the_users_agent() {
         "agent_permission_answer",
         "agent_cancel_run",
         "agent_registry_add",
+        "agent_registry_delete",
         "agent_registry_set_enabled",
         "agent_session_capabilities",
         // Session history. The sharpest of the three for a decoration to hold would be
@@ -618,6 +631,16 @@ fn a_pet_window_cannot_reach_the_providers_or_the_keys() {
 fn the_main_window_reaches_the_commands_the_pet_is_refused() {
     let app = app();
     let main = window(&app, "main");
+
+    assert_eq!(
+        call(&main, "agent_registry_discover", Value::Null).expect("main may scan ACP agents"),
+        "discovery reached"
+    );
+    assert_eq!(
+        call(&main, "agent_registry_delete", Value::Null)
+            .expect("main may delete ACP registrations"),
+        "delete reached"
+    );
 
     let taken = call(&main, "take_pending_open", Value::Null).expect("the main window may ask");
     assert_eq!(
