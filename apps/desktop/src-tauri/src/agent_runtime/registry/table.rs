@@ -61,6 +61,20 @@ impl AgentRegistry {
         registry
     }
 
+    /// A registry for the ACP edition, which deliberately ships no engine binary.
+    ///
+    /// Keep OpenCode's id as the first-session preference so the readout contract remains stable.
+    /// It is not registered in this variant; starting before an ACP program is added is rejected as
+    /// an unknown agent instead of preventing the settings page from opening.
+    pub fn without_bundled() -> Self {
+        Self {
+            registrations: BTreeMap::new(),
+            profiles: BTreeMap::new(),
+            live: Arc::new(Mutex::new(LiveInstances::new())),
+            default_agent: adapters::opencode::AGENT_ID.to_string(),
+        }
+    }
+
     /// Adds a definition.
     pub fn register(&mut self, registration: AgentRegistration) -> Result<(), RegistryError> {
         registration.validate()?;
@@ -289,5 +303,19 @@ impl AgentRegistry {
             events: Some(events),
             live: Arc::clone(&self.live),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentRegistry;
+
+    #[test]
+    fn acp_edition_starts_with_no_bundled_registration() {
+        let registry = AgentRegistry::without_bundled();
+
+        assert_eq!(registry.default_agent_id(), "opencode");
+        assert_eq!(registry.registrations().count(), 0);
+        assert!(registry.profile_owners().is_empty());
     }
 }

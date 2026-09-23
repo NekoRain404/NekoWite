@@ -42,7 +42,6 @@ import {
 import type {
   AgentDraft,
   AgentDiscoveryCandidate,
-  AgentDiscoveryKind,
   AgentRegistryClient,
   AgentRegistryEntry,
   AgentRegistryReadout,
@@ -131,7 +130,7 @@ function discovery(value: unknown): readonly AgentDiscoveryCandidate[] {
       command: asString(record['command'], `discovery[${index}].command`),
       program: asString(record['program'], `discovery[${index}].program`),
       args: asStringList(record['args'], `discovery[${index}].args`),
-      kind: oneOf(record['kind'], ['acp', 'terminal'] as readonly AgentDiscoveryKind[], `discovery[${index}].kind`),
+      available: asBoolean(record['available'], `discovery[${index}].available`),
       adapterId: asString(record['adapterId'], `discovery[${index}].adapterId`),
     }
   })

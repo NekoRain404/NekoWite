@@ -100,15 +100,14 @@ export interface AgentRegistryReadout {
   profileOwners: Readonly<Record<string, string>>
 }
 
-export type AgentDiscoveryKind = 'acp' | 'terminal'
-
 export interface AgentDiscoveryCandidate {
   agentId: string
   displayName: string
   command: string
   program: string
   args: readonly string[]
-  kind: AgentDiscoveryKind
+  /** Whether the launcher and required local CLI were found during this scan. */
+  available: boolean
   adapterId: string
 }
 

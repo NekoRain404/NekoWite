@@ -389,12 +389,13 @@ function engineText(): string {
             <div>
               <strong>{{ candidate.displayName }}</strong>
               <span class="settings-note">
-                {{ candidate.kind === 'acp' ? labels.discovery.acp : labels.discovery.terminal }} · {{ candidate.program }}
+                {{ labels.discovery.acp }} · {{ candidate.available ? candidate.program : labels.discovery.unavailable }}
               </span>
             </div>
             <button
               type="button"
               class="registry-button"
+              :disabled="!candidate.available"
               @click="useCandidate(candidate)"
             >
               {{ labels.discovery.use }}

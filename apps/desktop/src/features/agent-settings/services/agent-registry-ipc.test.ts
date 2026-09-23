@@ -66,14 +66,20 @@ function readout(overrides: Record<string, unknown> = {}): Record<string, unknow
 
 function wire(answers: {
   read?: unknown
+  discover?: unknown
   add?: unknown
   setEnabled?: unknown
-}): { port: AgentRegistryWire; add: ReturnType<typeof vi.fn>; setEnabled: ReturnType<typeof vi.fn> } {
+}): {
+  port: AgentRegistryWire
+  add: ReturnType<typeof vi.fn>
+  setEnabled: ReturnType<typeof vi.fn>
+} {
   const add = vi.fn(async () => answers.add ?? null)
   const setEnabled = vi.fn(async () => answers.setEnabled ?? null)
   return {
     port: {
       read: async () => answers.read ?? readout(),
+      discover: async () => answers.discover ?? [],
       add,
       setEnabled,
       delete: async () => null,
@@ -123,6 +129,48 @@ describe('what the backend answers with', () => {
     const { port } = wire({ read: readout({ entries: [entry({ reportedVersion: null })] }) })
     const answer = await createAgentRegistryClient(port).read()
     expect(answer.entries[0]?.reportedVersion).toBeNull()
+  })
+})
+
+describe('ACP preset discovery', () => {
+  it('keeps unavailable presets visible and only trusts a boolean availability field', async () => {
+    const { port } = wire({
+      discover: [{
+        agentId: 'codex-acp',
+        displayName: 'Codex ACP',
+        command: 'npx',
+        program: '/usr/bin/npx',
+        args: ['--yes', '@zed-industries/codex-acp'],
+        available: false,
+        adapterId: 'generic-acp',
+      }],
+    })
+
+    await expect(createAgentRegistryClient(port).discover?.()).resolves.toEqual([{
+      agentId: 'codex-acp',
+      displayName: 'Codex ACP',
+      command: 'npx',
+      program: '/usr/bin/npx',
+      args: ['--yes', '@zed-industries/codex-acp'],
+      available: false,
+      adapterId: 'generic-acp',
+    }])
+  })
+
+  it('rejects an ACP preset whose availability is not a boolean', async () => {
+    const { port } = wire({
+      discover: [{
+        agentId: 'codex-acp',
+        displayName: 'Codex ACP',
+        command: 'npx',
+        program: '/usr/bin/npx',
+        args: ['--yes', '@zed-industries/codex-acp'],
+        available: 'yes',
+        adapterId: 'generic-acp',
+      }],
+    })
+
+    await expect(createAgentRegistryClient(port).discover?.()).rejects.toThrow(/available/)
   })
 })
 

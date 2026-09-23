@@ -13,7 +13,7 @@ use crate::agent_runtime::registry::persistence::RegistryStorage;
 use crate::agent_runtime::registry::AgentRegistry;
 
 use super::agent::AgentRuntimeState;
-use super::launch::{executable_dir, program_to_launch};
+use super::launch::{executable_dir, program_to_launch_or_none};
 
 /// The definitions this app knows, for a reader that only looks — the settings surface's read.
 ///
@@ -101,7 +101,10 @@ pub(super) fn registry_for(
 }
 
 fn load_registry(managed: &Path) -> Result<AgentRegistry, String> {
-    let mut registry = AgentRegistry::with_bundled(program_to_launch(managed, &executable_dir())?);
+    let mut registry = match program_to_launch_or_none(managed, &executable_dir())? {
+        Some(program) => AgentRegistry::with_bundled(program),
+        None => AgentRegistry::without_bundled(),
+    };
     registry.load_persisted(&RegistryFile(managed))?;
     Ok(registry)
 }

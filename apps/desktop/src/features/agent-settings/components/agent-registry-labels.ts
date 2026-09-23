@@ -33,7 +33,7 @@ export interface AgentRegistryLabels {
   update: Record<UpdatePolicy, string>
   programState: Record<ProgramState, string>
   control: { enable: string; disable: string }
-  discovery: { title: string; hint: string; scan: string; scanning: string; retry: string; empty: string; failed: string; acp: string; terminal: string; use: string }
+  discovery: { title: string; hint: string; scan: string; scanning: string; retry: string; empty: string; failed: string; acp: string; unavailable: string; use: string }
   deletion: { title: string; confirm: string; cancel: string; hint: string }
   fields: { agentId: string; displayName: string; program: string; args: string; argsHint: string; adapter: string }
   add: { title: string; submit: string; added: string }
@@ -85,7 +85,7 @@ export function registryLabels(): AgentRegistryLabels {
       scan: t('agent.registry.discovery.scan'), scanning: t('agent.registry.discovery.scanning'),
       retry: t('agent.registry.discovery.retry'), empty: t('agent.registry.discovery.empty'),
       failed: t('agent.registry.discovery.failed'), acp: t('agent.registry.discovery.acp'),
-      terminal: t('agent.registry.discovery.terminal'), use: t('agent.registry.discovery.use'),
+      unavailable: t('agent.registry.discovery.unavailable'), use: t('agent.registry.discovery.use'),
     },
     deletion: { title: t('agent.registry.deletion.title'), confirm: t('agent.registry.deletion.confirm'), cancel: t('agent.registry.deletion.cancel'), hint: t('agent.registry.deletion.hint') },
     fields: {

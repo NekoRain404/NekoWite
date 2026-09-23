@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 BUDGET="${BUDGET:-30}"
+BUNDLE_MODE="${BUNDLE_MODE:-full}"
 [[ "$BUDGET" =~ ^([1-9][0-9]*([.][0-9]+)?|0[.][0-9]*[1-9][0-9]*)$ ]] || {
   echo "BUDGET must be a positive number of seconds" >&2
   exit 2
@@ -15,10 +16,15 @@ if [ -z "${BIN:-}" ]; then
 fi
 BIN="$(realpath -m -- "$BIN")"
 [ -x "$BIN" ] || { echo "no executable at $BIN" >&2; exit 2; }
-[ -x "$(dirname "$BIN")/opencode" ] || {
-  echo "no engine beside $BIN" >&2
+if [ "$BUNDLE_MODE" = full ]; then
+  [ -x "$(dirname "$BIN")/opencode" ] || {
+    echo "no engine beside $BIN" >&2
+    exit 2
+  }
+elif [ "$BUNDLE_MODE" != lean ]; then
+  echo "BUNDLE_MODE must be full or lean" >&2
   exit 2
-}
+fi
 
 # Linux Unix sockets allow only 107 pathname bytes. Keep the profile near the
 # repository root; nested target paths broke portal sockets in real launches.

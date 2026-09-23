@@ -38,7 +38,7 @@ export const registry = {
       },
       control: { enable: 'Switch on', disable: 'Switch off' },
       picker: { title: 'Choose agent', current: 'Current', add: 'Add ACP agent', manage: 'Manage agents', busy: 'Stop active tasks and answer pending permissions before switching agents.' },
-      discovery: { title: 'Installed agents', hint: 'Scan known ACP and terminal agents in Linux PATH. Nothing is added automatically.', scan: 'Scan', scanning: 'Scanning...', retry: 'Scan again', empty: 'No scan results yet.', failed: 'The agent scan could not be completed.', acp: 'ACP', terminal: 'Terminal CLI', use: 'Use in form' },
+      discovery: { title: 'ACP presets', hint: 'Built-in ACP presets are always shown. Scan Linux PATH to match each preset with its installed launcher; nothing is added automatically.', scan: 'Scan', scanning: 'Scanning...', retry: 'Scan again', empty: 'No ACP presets are available.', failed: 'The agent scan could not be completed.', acp: 'ACP', unavailable: 'Required local program not found', use: 'Use in form' },
       deletion: { title: 'Delete registration', confirm: 'Delete', cancel: 'Cancel', hint: 'Delete this ACP registration? The program, configuration, credentials and session history will be kept.' },
       fields: {
         agentId: 'Id',
@@ -117,7 +117,7 @@ export const registry = {
       },
       control: { enable: '启用', disable: '停用' },
       picker: { title: '选择 Agent', current: '当前', add: '添加 ACP', manage: '管理 Agent', busy: '请先停止运行中的任务并处理待授权请求，再切换 Agent。' },
-      discovery: { title: '已安装的 Agent', hint: '扫描 Linux PATH 中已知的 ACP 和终端 Agent，不会自动添加。', scan: '扫描', scanning: '扫描中…', retry: '重新扫描', empty: '尚未扫描。', failed: '无法完成 Agent 扫描。', acp: 'ACP', terminal: '终端 CLI', use: '填入表单' },
+      discovery: { title: 'ACP 预置', hint: '内置 ACP 预置项会始终显示。扫描 Linux PATH 后会为已安装的程序匹配启动路径；不会自动添加。', scan: '扫描', scanning: '扫描中…', retry: '重新扫描', empty: '没有可用的 ACP 预置项。', failed: '无法完成 Agent 扫描。', acp: 'ACP', unavailable: '未检测到所需的本地程序', use: '填入表单' },
       deletion: { title: '删除注册', confirm: '删除', cancel: '取消', hint: '删除此 ACP 注册？程序、配置、凭据和会话历史将保留。' },
       fields: {
         agentId: '标识',

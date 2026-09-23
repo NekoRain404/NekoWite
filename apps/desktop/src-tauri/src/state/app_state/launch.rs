@@ -38,21 +38,31 @@ pub(super) fn executable_dir() -> PathBuf {
 /// `beside` is the directory of the running executable, passed in rather than
 /// derived so that the resolution can be exercised without an app bundle.
 pub fn program_to_launch(managed: &Path, beside: &Path) -> Result<PathBuf, String> {
+    program_to_launch_or_none(managed, beside)?.ok_or_else(|| {
+        format!(
+            "the bundled engine was not found beside {}. It is installed with the app, so \
+             this points at a build or a package that did not carry it.",
+            beside.display()
+        )
+    })
+}
+
+/// Resolves a managed or bundled engine when this distribution carries one.
+///
+/// The ACP edition intentionally does not ship a sidecar. It still needs a registry so users can
+/// add their own ACP programs; `None` distinguishes that supported distribution from a corrupt
+/// managed installation.
+pub(super) fn program_to_launch_or_none(
+    managed: &Path,
+    beside: &Path,
+) -> Result<Option<PathBuf>, String> {
     let layout = BinaryRegistry::new(managed).map_err(|error| format!("{error:?}"))?;
     match layout.active_program() {
-        Ok(Some(program)) => return Ok(program.path),
+        Ok(Some(program)) => return Ok(Some(program.path)),
         Ok(None) => {}
         Err(error) => eprintln!("nekowite: could not read the agent release pointer: {error:?}"),
     }
-    binary_registry::bundled_program(beside)
-        .map(|program| program.path)
-        .ok_or_else(|| {
-            format!(
-                "the bundled engine was not found beside {}. It is installed with the app, so \
-                 this points at a build or a package that did not carry it.",
-                beside.display()
-            )
-        })
+    Ok(binary_registry::bundled_program(beside).map(|program| program.path))
 }
 
 /// Why a start was refused, in the words of the thing that refused it.
@@ -131,5 +141,22 @@ pub(super) fn profile_refusal(error: &ProfileError) -> String {
                 .to_string()
         }
         other => format!("the agent profile could not be opened: {other:?}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{program_to_launch, program_to_launch_or_none};
+
+    #[test]
+    fn acp_edition_can_open_a_registry_without_a_sidecar() {
+        let root = std::env::temp_dir().join(format!("nekowite-acp-launch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create test root");
+
+        assert_eq!(program_to_launch_or_none(&root, &root).unwrap(), None);
+        assert!(program_to_launch(&root, &root).is_err());
+
+        std::fs::remove_dir_all(root).expect("remove test root");
     }
 }
