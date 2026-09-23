@@ -107,10 +107,9 @@
    of 6px is the -0.5px, so both fall out of the same token.
 
    The fade is a *separate* transition from the movement, not the same one
-   slowed down. On the arrival curve an opacity is finished a third of the way
-   into a 460ms timeline and then sits clamped at 1 while the surface is still
-   moving; 200ms on the state-change curve is the fade the design asked for and
-   the movement gets the whole 460ms to settle.
+   slowed down. A settings page is a frequent navigation surface, so its
+   handover uses the fast motion rung: the content settles in 140ms and leaves
+   in 91ms while the cross-fade keeps the swap readable.
 
    The page is a *page*: it replaces the content area rather than landing on a
    scrim, so its exit is the handover to whatever comes next. Two of them cross
@@ -119,9 +118,9 @@
    other's height on every switch. Out of flow at its own top and full width, so
    it fades and shrinks exactly where it was standing. */
 .page-enter-active {
-  transition: opacity var(--app-motion-fade) var(--app-ease),
-              scale var(--app-motion-slow) var(--app-ease-surface),
-              translate var(--app-motion-slow) var(--app-ease-surface);
+  transition: opacity var(--app-motion-fast) var(--app-ease),
+              scale var(--app-motion-fast) var(--app-ease-surface),
+              translate var(--app-motion-fast) var(--app-ease-surface);
 }
 .page-enter-from {
   opacity: 0;
@@ -133,9 +132,9 @@
   top: 16px;
   left: 20px;
   right: 20px;
-  transition: opacity var(--app-motion-exit-slow) var(--app-ease-exit),
-              scale var(--app-motion-exit-slow) var(--app-ease-exit),
-              translate var(--app-motion-exit-slow) var(--app-ease-exit);
+  transition: opacity var(--app-motion-exit) var(--app-ease-exit),
+              scale var(--app-motion-exit) var(--app-ease-exit),
+              translate var(--app-motion-exit) var(--app-ease-exit);
   /* Out of flow is not out of the way. The page that is leaving sits exactly
      where the incoming one is arriving, so without this a click in the first
      280ms of a section switch lands on the section the user has just left —

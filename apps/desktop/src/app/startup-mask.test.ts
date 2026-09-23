@@ -4,14 +4,14 @@ import { createStartupMaskController } from './startup-mask'
 afterEach(() => vi.useRealTimers())
 
 describe('startup mask', () => {
-  it('waits at least one second after a fast startup', () => {
+  it('keeps a short first-paint buffer after a fast startup', () => {
     vi.useFakeTimers()
     const hide = vi.fn()
-    const mask = createStartupMaskController(hide)
+    const mask = createStartupMaskController(hide, undefined, 450, 2500)
 
     mask.start()
     mask.markReady()
-    vi.advanceTimersByTime(999)
+    vi.advanceTimersByTime(449)
     expect(hide).not.toHaveBeenCalled()
     vi.advanceTimersByTime(1)
     expect(hide).toHaveBeenCalledOnce()
@@ -20,10 +20,10 @@ describe('startup mask', () => {
   it('reveals the app after three seconds when startup stalls', () => {
     vi.useFakeTimers()
     const hide = vi.fn()
-    const mask = createStartupMaskController(hide)
+    const mask = createStartupMaskController(hide, undefined, 450, 2500)
 
     mask.start()
-    vi.advanceTimersByTime(2999)
+    vi.advanceTimersByTime(2499)
     expect(hide).not.toHaveBeenCalled()
     vi.advanceTimersByTime(1)
     expect(hide).toHaveBeenCalledOnce()

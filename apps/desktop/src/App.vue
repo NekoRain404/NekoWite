@@ -43,7 +43,12 @@ const showSettings = ref(false)
 const sidebarVisible = ref(true)
 const railOpen = ref(false)
 const startupVisible = ref(true)
-const startupMask = createStartupMaskController(() => { startupVisible.value = false })
+const startupMask = createStartupMaskController(
+  () => { startupVisible.value = false },
+  undefined,
+  450,
+  2500,
+)
 
 // Start the display window during setup so a fast startup cannot complete
 // before the first overlay paint and make the mask appear to do nothing.

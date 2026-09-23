@@ -100,4 +100,24 @@ describe('SettingsPanel modal focus', () => {
     expect(rows.filter((r) => r.getAttribute('aria-selected') === 'true')).toHaveLength(1)
     expect(rows.filter((r) => r.classList.contains('active'))).toHaveLength(1)
   })
+
+  it('keeps agent and desktop-pet disclosures independent', async () => {
+    mountPanel()
+    await settle()
+
+    const rows = [...document.querySelectorAll<HTMLElement>('.nav-row')]
+    const agents = rows.find((row) => row.textContent?.includes('智能体'))
+    const pet = rows.find((row) => row.textContent?.includes('桌面宠物'))
+    expect(agents).toBeDefined()
+    expect(pet).toBeDefined()
+
+    agents!.click()
+    await settle()
+    expect(agents!.getAttribute('aria-expanded')).toBe('true')
+
+    pet!.click()
+    await settle()
+    expect(pet!.getAttribute('aria-expanded')).toBe('true')
+    expect(agents!.getAttribute('aria-expanded')).toBe('true')
+  })
 })

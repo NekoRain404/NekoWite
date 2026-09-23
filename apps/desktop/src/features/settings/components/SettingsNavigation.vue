@@ -54,38 +54,52 @@ function isExpandable(id: SettingsSectionId): boolean {
   return id === 'agents' || id === PET_SETTINGS_SECTION
 }
 
-const expanded = ref<SettingsSectionId | null>(
-  isExpandable(activeSection.value) ? activeSection.value : null,
-)
+// Disclosure state is independent per group: selecting agents must not fold
+// the desktop-pet pages, and selecting a page must not change the other group.
+const expanded = ref<Record<'agents' | typeof PET_SETTINGS_SECTION, boolean>>({
+  agents: activeSection.value === 'agents',
+  [PET_SETTINGS_SECTION]: activeSection.value === PET_SETTINGS_SECTION,
+})
+
+function isExpanded(id: SettingsSectionId): boolean {
+  if (id === 'agents') return expanded.value.agents
+  if (id === PET_SETTINGS_SECTION) return expanded.value[PET_SETTINGS_SECTION]
+  return false
+}
 
 function openSection(id: SettingsSectionId): void {
   if (!isExpandable(id)) {
     activeSection.value = id
     return
   }
-  if (activeSection.value === id) {
-    expanded.value = expanded.value === id ? null : id
-    return
-  }
+  const wasActive = activeSection.value === id
   activeSection.value = id
-  expanded.value = id
+  if (id === 'agents') expanded.value.agents = wasActive ? !expanded.value.agents : true
+  else expanded.value[PET_SETTINGS_SECTION] = wasActive
+    ? !expanded.value[PET_SETTINGS_SECTION]
+    : true
 }
 
 function openAgentPage(page: AgentPageId): void {
   activeSection.value = 'agents'
-  expanded.value = 'agents'
+  expanded.value.agents = true
   agentPage.value = page
 }
 
 function openPetPage(page: PetSettingsPage): void {
   activeSection.value = PET_SETTINGS_SECTION
-  expanded.value = PET_SETTINGS_SECTION
+  expanded.value[PET_SETTINGS_SECTION] = true
   petPage.value = page
 }
 
+// A setting-location request can arrive from another window while this dialog
+// is already open. Keep both trees independent, but reveal the requested tree
+// so its selected child page is reachable and announced.
 watch(activeSection, (section) => {
-  if (isExpandable(section)) expanded.value = section
+  if (section === 'agents') expanded.value.agents = true
+  if (section === PET_SETTINGS_SECTION) expanded.value[PET_SETTINGS_SECTION] = true
 })
+
 </script>
 
 <template>
@@ -98,7 +112,7 @@ watch(activeSection, (section) => {
         :class="{ active: activeSection === s.id, 'nav-row-major': s.id === 'agents' }"
         :aria-current="activeSection === s.id ? 'page' : undefined"
         :aria-selected="activeSection === s.id"
-        :aria-expanded="isExpandable(s.id) ? expanded === s.id : undefined"
+        :aria-expanded="isExpandable(s.id) ? isExpanded(s.id) : undefined"
         @click="openSection(s.id)"
       >
         <component :is="s.icon" class="nav-row-icon" :size="16" :stroke-width="1.8" />
@@ -106,14 +120,14 @@ watch(activeSection, (section) => {
         <ChevronDown
           v-if="isExpandable(s.id)"
           class="nav-chevron"
-          :class="{ open: expanded === s.id }"
+          :class="{ open: isExpanded(s.id) }"
           :size="14"
         />
       </button>
 
       <Transition name="subnav">
         <div
-          v-if="s.id === 'agents' && expanded === s.id"
+          v-if="s.id === 'agents' && isExpanded(s.id)"
           class="settings-subnav agents-rail"
           role="tablist"
           :aria-label="t('agent.settings.agents.pages')"
@@ -134,7 +148,7 @@ watch(activeSection, (section) => {
           </button>
         </div>
         <div
-          v-else-if="s.id === PET_SETTINGS_SECTION && expanded === s.id && petPagesEnabled"
+          v-else-if="s.id === PET_SETTINGS_SECTION && isExpanded(s.id) && petPagesEnabled"
           class="settings-subnav pet-settings__rail"
           role="tablist"
           :aria-label="t('settings.section.desktopPet')"
@@ -230,7 +244,7 @@ watch(activeSection, (section) => {
 .settings-subnav-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-subnav-row:hover { color: var(--app-text); background: color-mix(in srgb, var(--app-elevated) 54%, transparent); }
 .settings-subnav-row.active { color: var(--app-text); background: color-mix(in srgb, var(--app-accent-soft) 72%, transparent); font-weight: 650; }
-.subnav-enter-active, .subnav-leave-active { transition: opacity 130ms var(--app-ease), transform 130ms var(--app-ease); }
+.subnav-enter-active, .subnav-leave-active { transition: opacity var(--app-motion-fast) var(--app-ease), transform var(--app-motion-fast) var(--app-ease); }
 .subnav-enter-from, .subnav-leave-to { opacity: 0; transform: translateY(-4px); }
 @media (max-width: 760px) {
   .dialog-nav { width: 184px; padding: 10px 8px; }
