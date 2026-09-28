@@ -157,8 +157,8 @@ fn the_capability_files_are_the_policy_and_nothing_else() {
         .collect();
     assert_eq!(
         declared.len(),
-        89,
-        "the declared surface includes two main-only pet navigation consumers"
+        92,
+        "the declared surface includes three main-only remote connection commands"
     );
 
     let pet: Vec<String> = allows(&capability("desktop-pet.json"));

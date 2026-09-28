@@ -76,6 +76,9 @@ const COMMANDS: &[&str] = &[
     "watch_folder",
     "vault_git",
     "remote_import",
+    "remote_connect",
+    "remote_disconnect",
+    "remote_connections",
     // The AI providers and the key store.
     "ai_complete",
     "ai_cancel",

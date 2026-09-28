@@ -125,6 +125,21 @@ async fn read_file(
     commands::fs::read_file(vault_root, path, state).await
 }
 
+#[tauri::command]
+fn remote_connections() -> &'static str {
+    "remote connections reached"
+}
+
+#[tauri::command]
+fn remote_connect() -> &'static str {
+    "remote connect reached"
+}
+
+#[tauri::command]
+fn remote_disconnect() -> &'static str {
+    "remote disconnect reached"
+}
+
 /// The command a pet window must never reach, answering `Ok` if it ever does.
 ///
 /// This one is the whole brief, so it is worth being explicit about the shape: it takes no
@@ -323,6 +338,9 @@ fn app() -> App {
             agent_registry_update,
             agent_registry_delete,
             read_file,
+            remote_connections,
+            remote_connect,
+            remote_disconnect,
             agent_stop,
             agent_permission_grants,
             agent_permission_grant_revoke,
@@ -512,6 +530,9 @@ fn a_pet_window_cannot_read_or_write_the_vault() {
         "save_file_dialog",
         "import_attachment",
         "watch_folder",
+        "remote_connect",
+        "remote_disconnect",
+        "remote_connections",
         "clear_trash",
         "restore_history",
         // The whole vault surface, because "the pet may read one file" and "the pet may read the
@@ -638,6 +659,11 @@ fn a_pet_window_cannot_reach_the_providers_or_the_keys() {
 fn the_main_window_reaches_the_commands_the_pet_is_refused() {
     let app = app();
     let main = window(&app, "main");
+
+    assert_eq!(
+        call(&main, "remote_connect", Value::Null).expect("main may connect a remote workspace"),
+        "remote connect reached"
+    );
 
     assert_eq!(
         call(&main, "agent_registry_discover", Value::Null).expect("main may scan ACP agents"),

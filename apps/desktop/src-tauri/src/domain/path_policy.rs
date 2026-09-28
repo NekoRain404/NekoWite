@@ -100,6 +100,16 @@ pub fn resolve_within_rel(base: &str, requested: &str) -> Result<(PathBuf, Strin
         return Err(format!("path escapes vault: {requested}"));
     }
     reject_symlink_components(&canonical_base, &canonical)?;
+    // A live SSHFS mount hides this local marker. If the mount disappears,
+    // refusing the exposed placeholder prevents an editor save from silently
+    // writing a second, local version of a remote document.
+    let mut ancestor = canonical.as_path();
+    while ancestor.starts_with(&canonical_base) && ancestor != canonical_base {
+        if ancestor.join(".nekowite-remote-placeholder").exists() {
+            return Err("remote connection is offline; reconnect before editing".into());
+        }
+        ancestor = ancestor.parent().expect("vault ancestors have a parent");
+    }
     // Inside the vault is not the same as the user's: see `super::app_owned`
     // for what a served app directory — the remembered-vault record above all —
     // would let the window do.

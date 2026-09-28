@@ -116,6 +116,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(open_file::PendingOpen::default())
         .manage(state::WatcherState::default())
+        .manage(commands::remote_mount::RemoteMountState::default())
         .manage(state::VaultRegistry::default())
         // The images the image dialog has handed back this session. It is managed here for the same
         // reason the vault registry is: `pick_image_files` mints into it and `import_attachment`
@@ -298,6 +299,9 @@ pub fn run() {
             commands::fs::watch_folder,
             commands::vault_git::vault_git,
             commands::remote_workspace::remote_import,
+            commands::remote_mount::remote_connect,
+            commands::remote_mount::remote_disconnect,
+            commands::remote_mount::remote_connections,
             commands::ai::ai_complete,
             commands::ai::ai_cancel,
             commands::ai::ai_list_models,
