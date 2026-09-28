@@ -36,6 +36,8 @@
     "allow-pick-image-files",
     "allow-import-attachment",
     "allow-watch-folder",
+    "allow-vault-git",
+    "allow-remote-import",
     "allow-ai-complete",
     "allow-ai-cancel",
     "allow-ai-list-models",

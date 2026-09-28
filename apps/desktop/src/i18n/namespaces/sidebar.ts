@@ -1,6 +1,20 @@
 /** The left navigation rail: its sections, the trash view, and the note-creation entries. */
 export const sidebar = {
   en: {
+    remote: {
+      add: 'Add remote workspace', title: 'Import over SSH',
+      hint: 'Copy a remote folder into a new folder in this vault using your SSH key. Requires rsync on both computers.',
+      user: 'SSH user', host: 'Host', port: 'Port', path: 'Remote directory', folder: 'Local folder',
+      import: 'Import folder', importing: 'Importing...',
+    },
+    sync: {
+      title: 'Git sync', refresh: 'Refresh', loading: 'Reading repository',
+      notInitialized: 'This vault has no Git repository.', init: 'Initialize Git',
+      origin: 'Remote repository', originHint: 'ssh://git.example/team/notes.git', saveOrigin: 'Save remote',
+      changes: 'Local changes', clean: 'No local changes', message: 'Commit message',
+      messageHint: 'Describe your changes', commit: 'Commit changes', pull: 'Pull', push: 'Push',
+      localOnly: 'Sync uses your installed Git and SSH authentication. Save open notes before committing.',
+    },
     nav: {
       folders: 'Folders',
       all: 'All notes',
@@ -52,6 +66,20 @@ export const sidebar = {
     },
   },
   zh: {
+    remote: {
+      add: '添加远程工作区', title: '通过 SSH 导入',
+      hint: '使用 SSH 密钥将远程目录复制到当前文库的新文件夹。两端均需安装 rsync。',
+      user: 'SSH 用户', host: '主机', port: '端口', path: '远程目录', folder: '本地文件夹',
+      import: '导入文件夹', importing: '导入中…',
+    },
+    sync: {
+      title: 'Git 云同步', refresh: '刷新', loading: '读取仓库中',
+      notInitialized: '当前文库还没有 Git 仓库。', init: '初始化 Git',
+      origin: '远程仓库', originHint: 'ssh://git.example/team/notes.git', saveOrigin: '保存远程地址',
+      changes: '本地变更', clean: '没有本地变更', message: '提交说明',
+      messageHint: '描述本次修改', commit: '提交修改', pull: '拉取', push: '推送',
+      localOnly: '同步使用本机 Git 和 SSH 认证。提交前请先保存正在编辑的笔记。',
+    },
     nav: {
       folders: '文件夹',
       all: '全部笔记',

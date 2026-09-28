@@ -157,7 +157,7 @@ fn the_capability_files_are_the_policy_and_nothing_else() {
         .collect();
     assert_eq!(
         declared.len(),
-        87,
+        89,
         "the declared surface includes two main-only pet navigation consumers"
     );
 

@@ -53,7 +53,7 @@ function vueFiles(dir: string): string[] {
 const DIALOG_HOSTS: Record<string, number> = {
   '../app/AppDialogs.vue': 5,
   '../ui/EditorPane.vue': 1,
-  '../features/sidebar/components/AppSidebar.vue': 1,
+  '../features/sidebar/components/AppSidebar.vue': 2,
 }
 
 describe('a dialog that arrives can leave', () => {
@@ -137,6 +137,7 @@ describe('the context menu, whose exit every host used to cut', () => {
     '../features/notes/components/NoteListPanel.vue',
     '../features/notes/components/NoteListToolbar.vue',
     '../features/vault/components/FileTree.vue',
+    '../features/sidebar/components/SidebarNavigation.vue',
   ]
 
   it('is wrapped where the v-if is, in every host that mounts one', () => {
@@ -146,7 +147,7 @@ describe('the context menu, whose exit every host used to cut', () => {
         /<Transition name="ctx">/,
       )
     }
-    expect(HOSTS.length, 'the list is the host count from ContextMenu.vue').toBe(6)
+    expect(HOSTS.length, 'the list is the host count from ContextMenu.vue').toBe(7)
   })
 
   it('declares the exit on selectors that can out-specify its own state class', () => {

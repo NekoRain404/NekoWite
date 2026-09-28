@@ -21,6 +21,7 @@ import HistoryPanel from '../../../ui/HistoryPanel.vue'
 import ReferencesPanel from '../../../ui/ReferencesPanel.vue'
 import { GraphPanel } from '../../graph'
 import { FileTree } from '../../vault'
+import VaultSyncPanel from '../../sync/components/VaultSyncPanel.vue'
 import LinkList from './LinkList.vue'
 import NoteListContent from './NoteListContent.vue'
 import NoteListToolbar from './NoteListToolbar.vue'
@@ -146,6 +147,13 @@ const docPanel = computed<Component | null>(() => DOC_PANELS[panelMode.value] ??
       >
         {{ t('notelist.openFolderAfter') }}
       </p>
+    </div>
+
+    <div
+      v-else-if="listView === 'cloud'"
+      class="nl-embed arrives"
+    >
+      <VaultSyncPanel v-if="vault" :vault="vault" />
     </div>
 
     <div

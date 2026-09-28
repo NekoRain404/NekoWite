@@ -74,6 +74,8 @@ const COMMANDS: &[&str] = &[
     "pick_image_files",
     "import_attachment",
     "watch_folder",
+    "vault_git",
+    "remote_import",
     // The AI providers and the key store.
     "ai_complete",
     "ai_cancel",

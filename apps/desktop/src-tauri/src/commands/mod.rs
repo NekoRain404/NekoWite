@@ -17,4 +17,6 @@ pub mod key_vault;
 pub mod keys;
 pub mod open;
 pub mod recovery;
+pub mod remote_workspace;
 pub mod system;
+pub mod vault_git;

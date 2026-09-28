@@ -11,7 +11,9 @@
  *
  * The vault arrives as a name because that is all this section shows of it.
  */
-import { Calendar, FolderOpen, Hash, LayoutTemplate, Tag as TagIcon, X } from 'lucide-vue-next'
+import { markRaw, ref } from 'vue'
+import { Calendar, FolderOpen, Hash, LayoutTemplate, Server, Tag as TagIcon, X } from 'lucide-vue-next'
+import ContextMenu from '../../../ui/ContextMenu.vue'
 import { useSidebarNavigation } from '../composables/use-sidebar-navigation'
 import { useSidebarTags } from '../composables/use-sidebar-tags'
 import { t } from '../../../i18n'
@@ -24,7 +26,11 @@ const emit = defineEmits<{
   openFolder: [path: string]
   newDaily: []
   pickTemplate: []
+  addRemote: []
 }>()
+
+const vaultMenu = ref<{ x: number; y: number } | null>(null)
+const vaultMenuItems = [{ id: 'remote', label: t('remote.add'), icon: markRaw(Server) }]
 
 const { navEntries, pickVaultFolder } = useSidebarNavigation()
 const { tagCounts, activeTag, selectTag, activeDocTags, removeCurrentTag } = useSidebarTags()
@@ -40,6 +46,7 @@ async function pickFolder(): Promise<void> {
     class="nav-item vault-item"
     :title="t('nav.openOther')"
     @click="pickFolder"
+    @contextmenu.prevent="vaultMenu = { x: $event.clientX, y: $event.clientY }"
   >
     <FolderOpen
       class="nav-icon"
@@ -53,6 +60,16 @@ async function pickFolder(): Promise<void> {
       :stroke-width="1.8"
     />
   </button>
+  <Transition name="ctx">
+    <ContextMenu
+      v-if="vaultMenu"
+      :x="vaultMenu.x"
+      :y="vaultMenu.y"
+      :items="vaultMenuItems"
+      @select="vaultMenu = null; emit('addRemote')"
+      @close="vaultMenu = null"
+    />
+  </Transition>
 
   <div class="quick-actions">
     <button

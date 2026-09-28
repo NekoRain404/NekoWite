@@ -296,6 +296,8 @@ pub fn run() {
             commands::fs::pick_image_files,
             commands::fs::import_attachment,
             commands::fs::watch_folder,
+            commands::vault_git::vault_git,
+            commands::remote_workspace::remote_import,
             commands::ai::ai_complete,
             commands::ai::ai_cancel,
             commands::ai::ai_list_models,

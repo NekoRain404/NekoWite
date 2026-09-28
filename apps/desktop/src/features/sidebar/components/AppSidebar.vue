@@ -17,6 +17,7 @@ import SidebarNavigation from './SidebarNavigation.vue'
 import SidebarReferences from './SidebarReferences.vue'
 import SidebarTrash from './SidebarTrash.vue'
 import TemplatePicker from '../../../ui/TemplatePicker.vue'
+import RemoteImportDialog from '../../remote/components/RemoteImportDialog.vue'
 import { useSidebarTemplates } from '../composables/use-sidebar-templates'
 import { useSidebarTheme } from '../composables/use-sidebar-theme'
 import { baseName } from '../../../services/paths'
@@ -41,6 +42,7 @@ const {
 
 const refsOpen = ref(false)
 const trashOpen = ref(false)
+const remoteOpen = ref(false)
 
 const vaultName = computed(() => {
   // Windows vault paths end with a backslash-separated folder name, so a
@@ -55,6 +57,7 @@ watch(
   () => {
     refsOpen.value = false
     trashOpen.value = false
+    remoteOpen.value = false
   },
 )
 </script>
@@ -67,6 +70,7 @@ watch(
         @open-folder="(path: string) => emit('openFolder', path)"
         @new-daily="createDailyNote"
         @pick-template="openTemplatePicker"
+        @add-remote="remoteOpen = true"
       />
       <SidebarReferences v-model:open="refsOpen" />
       <SidebarTrash
@@ -127,6 +131,14 @@ watch(
         :templates="templateTemplates"
         @select="createFromTemplate"
         @close="closeTemplatePicker"
+      />
+    </Transition>
+    <Transition name="dialog" type="transition">
+      <RemoteImportDialog
+        v-if="remoteOpen"
+        :vault="props.vault"
+        @close="remoteOpen = false"
+        @imported="remoteOpen = false"
       />
     </Transition>
   </aside>
