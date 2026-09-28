@@ -60,6 +60,14 @@ const KNOWN_ORPHANS: &[(&str, &str)] = &[];
 const MIN_FILES: usize = 60;
 
 #[test]
+fn comment_stripping_preserves_module_path_literals() {
+    assert_eq!(
+        strip_comments("#[path = \"../start.rs\"] // comment\nmod start;"),
+        "#[path = \"../start.rs\"] \nmod start;"
+    );
+}
+
+#[test]
 fn every_source_file_is_reachable_from_a_crate_root() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
 
@@ -329,11 +337,16 @@ fn strip_comments(text: &str) -> String {
                 }
             }
         } else if bytes[index] == b'"' {
-            index += string_literal_len(bytes, index, 0);
+            let length = string_literal_len(bytes, index, 0);
+            out.extend_from_slice(&bytes[index..index + length]);
+            index += length;
         } else if let Some(length) = raw_string_len(bytes, index) {
+            out.extend_from_slice(&bytes[index..index + length]);
             index += length;
         } else if bytes[index] == b'\'' {
-            index += char_literal_len(bytes, index);
+            let length = char_literal_len(bytes, index);
+            out.extend_from_slice(&bytes[index..index + length]);
+            index += length;
         } else {
             out.push(bytes[index]);
             index += 1;
