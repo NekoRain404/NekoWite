@@ -2,8 +2,7 @@
 
 > 面向维护者：把当前工作区变成一次公开发布的清单。命令都在仓库根目录执行。
 >
-> **本文件的主线是 Linux（deb / rpm / AppImage / 便携二进制），那是 `AGENTS.md` 指定的目标平台，
-> 也是仓库里唯一被测试和 CI 覆盖的打包路径。** Windows 便携版是另一条线，历史上是主要交付物，
+> **本文件的主线是 Linux（完全版 / ACP 版、Arch 包、deb / rpm / AppImage / 便携二进制），那是 `AGENTS.md` 指定的目标平台。** 原有 Linux 打包链有 CI 覆盖，Arch 包仍需在 Arch 环境单独验收。Windows 便携版是另一条线，历史上是主要交付物，
 > 现在没有 CI 覆盖，其流程保留在 §7 作为附录。
 
 ## 1. 版本号（4 个文件 + 变更日志）
@@ -59,6 +58,22 @@ instrument 与 e2e 都不在其中，所以先跑 §2 的命令，再打包。
 
 ## 3. 打包（Linux）
 
+### 完全版与 ACP 版
+
+先构建当前平台的 release 二进制，再运行对应发行脚本：
+
+```bash
+pnpm --filter @nekowite/desktop exec tauri build --no-bundle
+pnpm package:portable:full  # release/nekowite_<version>_x64，旁边必须有 release/opencode
+pnpm package:portable:acp   # release/nekowite-acp_<version>_x64/nekowite，不附带引擎
+pnpm package:arch:full      # release/nekowite-full-<version>-1-x86_64.pkg.tar.zst
+pnpm package:arch:acp       # release/nekowite-<version>-1-x86_64.pkg.tar.zst
+```
+
+ACP 版的应用文件可以单独分发，但仍要求系统 GTK / WebKitGTK 依赖，并需要用户安装可执行的 ACP 智能体。完全版把 OpenCode 一同交付；便携版的应用 ELF 本身并不包含引擎。Arch 脚本必须在提供 `makepkg` 和 `pacman` 的环境中运行，以预先生成的 `release/nekowite_<version>_x64` 为输入，完整包还读取旁边的 `release/opencode`；两种 Arch 包互相冲突，不能同时安装。`package:portable:acp` 会覆盖同名 ACP 目录，运行前核对 `release/` 中待替换的文件。
+
+### deb / rpm / AppImage（原有流程）
+
 ```bash
 pnpm package:linux        # 即 bash scripts/package-linux.sh
 ```
@@ -88,7 +103,7 @@ pnpm package:linux        # 即 bash scripts/package-linux.sh
    `release/superseded/build.XXXXXX/`**（任何一次改名失败都会把上一代恢复回来），
    最后对每个发布的文件打印 `sha256sum`。
 
-产物（`release/`，已在 `.gitignore` 里，不入库）：
+这条流程的产物（`release/`，已在 `.gitignore` 里，不入库）：
 
 | 文件 | 用途 |
 | --- | --- |
@@ -106,7 +121,7 @@ pnpm package:linux        # 即 bash scripts/package-linux.sh
 
 ## 4. 签名现状
 
-- **Linux 的三个包没有 GPG 签名。** 这是 Linux 侧真正的缺口：无论用哪种方式分发，用户都无法验证
+- **Linux 包（含 Arch 包）没有 GPG 签名。** 这是 Linux 侧真正的缺口：无论用哪种方式分发，用户都无法验证
   包确实来自这里；仓库目前也没有发布公钥的位置。要补的话，需要先决定密钥托管与公钥分发方式。
 - **Windows 二进制没有 Authenticode 签名**（`tauri.conf.json` 的 `bundle` 里没有 `windows` 签名配置，
   `scripts/package-win.sh` 也没有签名步骤）——见 §7。

@@ -32,7 +32,8 @@ A local-first desktop knowledge base: WYSIWYG writing, files that stay plain Mar
 | **研究与引用** | 导入 `.bib`、`.ris`、CSL，侧栏管理 `@citekey` 并自动编号 |
 | **公式与发布** | MathLive 可视化编辑 `$…$` / `$$…$$`，导出 HTML 与 PDF |
 | **AI 辅助** | 自备密钥；续写（Tab）、侧栏聊天、选区改写 / 润色 / 翻译。可接 OpenAI、Claude、Gemini、Grok、DeepSeek，或本地 LM Studio / Ollama |
-| **智能体** | 右侧栏的智能体面板，在你打开的知识库里工作；随包内置一个引擎，也可以自己指定其它 ACP 智能体程序 |
+| **智能体** | 右侧栏的智能体面板，在当前知识库工作；可扫描、注册和编辑本机 ACP 智能体。完全版附带 OpenCode，ACP 版使用用户安装的引擎 |
+| **同步与远程** | 知识库内手动执行 Git 提交、拉取、推送；通过 SSHFS 挂载远程目录实时编辑，或通过 rsync 导入副本 |
 | **桌面宠物** | 一个可以待在桌面上的角色窗口（外加一只浮球），七个设置子页：常规与交互、角色与动画、气泡与消息、通知与声音、养成与统计、项目与多角色、高级与集成 |
 | **个人工作流** | 每日笔记、模板、维基链接、知识图谱、历史版本、回收站、主题 |
 
@@ -51,7 +52,7 @@ A local-first desktop knowledge base: WYSIWYG writing, files that stay plain Mar
 3. 用底部状态栏在「渲染 / 源码 / 对照」之间切换。
 4. 需要 AI 时：设置 → AI，填写服务商、模型和密钥（密钥加密存在本机，界面只显示已配置）。
 
-侧栏里的「云同步」是占位，目前**不会**把知识库传到网上。
+「云同步」使用本机 Git：配置远端后手动提交、拉取和推送，不会后台自动同步。SSH 远程工作区需要本机安装 `sshfs`（实时挂载）或 `rsync`（复制导入）；详见[用户指南](docs/USER-GUIDE.md)。
 
 更完整的界面说明见 [用户指南](docs/USER-GUIDE.md)，隐私边界见 [PRIVACY.md](docs/PRIVACY.md)。
 
@@ -71,26 +72,23 @@ pnpm dev
 pnpm tauri dev
 ```
 
-### 打包成单个可执行文件
+### Linux 打包
 
 ```bash
-# Linux（本机构建，产物为 ELF）
 pnpm --filter @nekowite/desktop exec tauri build --no-bundle
-# 二进制：apps/desktop/src-tauri/target/release/nekowite
-# 可复制为：release/nekowite_<version>_x64
-
-# Windows 便携版（在 Windows 上、Git Bash 中执行；免安装，双击运行）
-bash scripts/package-win.sh
-# 产物：release/nekowite_<version>_x64.exe
+pnpm package:portable:full   # release/nekowite_<version>_x64 + release/opencode
+pnpm package:portable:acp    # release/nekowite-acp_<version>_x64/nekowite
+pnpm package:arch:full       # Arch 包，含 OpenCode
+pnpm package:arch:acp        # Arch 包，使用本机 ACP 智能体
 ```
 
-Linux 二进制依赖系统里的 GTK / WebKitGTK。Windows 便携版不需要安装器。
+ACP 版是单个应用 ELF，但仍依赖系统 GTK / WebKitGTK 和用户安装的 ACP 智能体。完全版的便携 ELF 需要旁边的 `opencode`，不能只复制应用文件。Arch 包在 Arch Linux 上用 `makepkg` 构建；deb / rpm / AppImage 的旧流程仍可用 `pnpm package:linux`。具体校验与产物见[发布指南](docs/RELEASING.md)。
 
-**支持的架构只有 x86_64（Linux / glibc）。** `scripts/package-linux.sh` 产出的每一个产物——`nekowite_<version>_x64`、deb、rpm、`nekowite_<version>_amd64.AppImage`——都是这一个架构，而随包内置的 OpenCode 引擎是 `scripts/fetch-opencode-linux.sh` 固定的单一制品 `opencode-linux-x64@1.18.29`，即 `x86_64-unknown-linux-gnu`。所以在 arm64 机器上，AppImage 与 deb/rpm 都执行不起来（内核直接拒绝这个 ELF）；musl 发行版（如 Alpine）同样不行，因为该引擎是动态链接 glibc 的。从源码在本机构建也一样：构建出的应用是本机架构，但内置的引擎仍是 x86_64，启动引擎时才会失败——**这个架构不是「尚未支持」，而是本版本只交付这一个。**
+当前 Linux 发布脚本面向 x86_64 / glibc；完全版附带的 OpenCode 引擎同样是 x86_64。不要把从其他架构自行构建的应用当成已验证的发行包。
 
 ## 项目状态
 
-当前版本 **1.0.0**。面向写作者的核心能力（编辑、知识库、公式、引用、导出、AI）已经能用。还没有官方 GitHub Release 渠道、没有自动更新；Windows 便携 exe 是主要用户交付物，Linux 可从源码打出单个二进制。插件沙箱仍在路线图上。
+当前版本 **1.0.0**。Linux 是当前仓库的测试和打包目标，提供完全版与依赖本机智能体的 ACP 版。尚无自动更新；第三方 vault 插件在发行版中不加载。历史验证记录不代表当前功能状态。
 
 ## 开发
 
@@ -113,10 +111,11 @@ WebKit harness 测试、`tauri build` 与 Rust 全套（含真实进程用例）
 每一步都会跑完再汇总，任一步失败退出码为 1。只跑子集用 `--only verify,fmt`。
 
 ```text
-apps/desktop/              Vue 界面与 Tauri 壳
+apps/desktop/              Vue 界面与 Tauri 壳；features/sync、features/remote 为 Git / SSH 界面
+apps/desktop/src-tauri/src/commands/  Git、SSH 与智能体 IPC 命令
 packages/editor-core/      Markdown / MDX 解析、编辑与序列化
 packages/plugin-host/      插件加载、权限与生命周期
-docs/                      用户指南与设计文档
+docs/                      用户指南、发布流程、历史审计与设计记录
 ```
 
 约定见 [docs/dev.md](docs/dev.md)，测试范围见 [docs/test-plan.md](docs/test-plan.md)。
@@ -148,8 +147,8 @@ export default definePlugin({
 
 面向使用者：
 
-- [docs/USER-GUIDE.md](docs/USER-GUIDE.md) — 打开知识库、编辑、搜索、引用、导出、配置 AI
-- [docs/PRIVACY.md](docs/PRIVACY.md) — 哪些数据会离开本机、本机存了什么
+- [docs/USER-GUIDE.md](docs/USER-GUIDE.md) — 编辑、导出、ACP、Git 同步与 SSH 工作区
+- [docs/PRIVACY.md](docs/PRIVACY.md) — 本机存储与 AI、Git、SSH 等联网边界
 
 面向开发与发布：
 
@@ -158,7 +157,7 @@ export default definePlugin({
 - [docs/RELEASING.md](docs/RELEASING.md) — 维护者：版本号、门禁与打包
 - [docs/test-plan.md](docs/test-plan.md) — 实际跑哪些测试、每个功能域由哪些文件守着、哪里还没人守
 - [docs/PERF.md](docs/PERF.md) · [docs/A11Y.md](docs/A11Y.md)
-- [docs/audits/](docs/audits/) — 逐条核对文档与代码的记录（含每次修复后的账本）
+- [docs/audits/](docs/audits/) · [docs/development/](docs/development/) — 带日期的审计、设计与开发记录；以本页和用户指南了解当前使用方式
 - [CHANGELOG.md](CHANGELOG.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md) · [.github/SECURITY.md](.github/SECURITY.md)
 
@@ -166,7 +165,7 @@ export default definePlugin({
 
 - 更完整的跨平台打包与发布渠道
 - webview / worker 级别的插件沙箱
-- 更丰富的主题、模板
+- 更完善的跨设备冲突处理与同步体验
 - 更稳定的 E2E 与插件文档
 
 ## 参与贡献
