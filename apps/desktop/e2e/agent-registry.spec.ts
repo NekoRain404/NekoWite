@@ -177,6 +177,10 @@ async function open(
           state.readout = { ...state.readout, entries: state.readout.entries.filter(entry => entry.agentId !== agentId) }
           return null
         },
+        update: async (agentId, draft) => {
+          state.readout = { ...state.readout, entries: state.readout.entries.map(entry => entry.agentId === agentId ? { ...entry, ...draft } : entry) }
+          return null
+        },
         setEnabled: async (agentId, enabled) => {
           state.calls.setEnabled.push([agentId, enabled])
           if (state.setEnabledRefusal !== null) return state.setEnabledRefusal

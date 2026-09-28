@@ -130,6 +130,7 @@ export interface AgentRegistryClient {
   discover?(): Promise<readonly AgentDiscoveryCandidate[]>
   /** `null` when the registration was accepted. */
   add(draft: AgentDraft): Promise<RegistryRefusal | null>
+  update(agentId: string, draft: AgentDraft): Promise<RegistryRefusal | null>
   /** `null` when the change was applied. */
   setEnabled(agentId: string, enabled: boolean): Promise<RegistryRefusal | null>
   delete(agentId: string): Promise<RegistryRefusal | null>

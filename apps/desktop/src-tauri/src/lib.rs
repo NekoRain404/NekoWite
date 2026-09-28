@@ -347,6 +347,7 @@ pub fn run() {
             commands::agent_registry::agent_registry_read,
             commands::agent_registry::agent_registry_discover,
             commands::agent_registry::agent_registry_add,
+            commands::agent_registry::agent_registry_update,
             commands::agent_registry::agent_registry_delete,
             commands::agent_registry::agent_registry_set_enabled,
             // The runtime page (§3.1.4): what this app's engine connection is — the negotiated

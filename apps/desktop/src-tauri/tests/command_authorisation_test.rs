@@ -111,6 +111,11 @@ fn agent_registry_delete() -> &'static str {
     "delete reached"
 }
 
+#[tauri::command]
+fn agent_registry_update() -> &'static str {
+    "update reached"
+}
+
 #[tauri::command(rename_all = "snake_case")]
 async fn read_file(
     vault_root: String,
@@ -315,6 +320,7 @@ fn app() -> App {
             take_pending_open,
             system_accent_color,
             agent_registry_discover,
+            agent_registry_update,
             agent_registry_delete,
             read_file,
             agent_stop,
@@ -441,6 +447,7 @@ fn a_pet_window_cannot_stop_or_start_the_users_agent() {
         "agent_permission_answer",
         "agent_cancel_run",
         "agent_registry_add",
+        "agent_registry_update",
         "agent_registry_delete",
         "agent_registry_set_enabled",
         "agent_session_capabilities",

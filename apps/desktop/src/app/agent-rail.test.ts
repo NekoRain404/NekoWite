@@ -697,7 +697,7 @@ function unsupportedRegistry(): AgentRegistryClient {
   const unsupported = (): never => {
     throw new Error('the registry is not part of this test')
   }
-  return { read: unsupported, add: unsupported, setEnabled: unsupported, delete: unsupported }
+  return { read: unsupported, add: unsupported, update: unsupported, setEnabled: unsupported, delete: unsupported }
 }
 
 /**
@@ -731,5 +731,5 @@ function registryOf(entries: Array<{ agentId: string; displayName: string }>): A
   const notThisTest = (): never => {
     throw new Error('the rail reads the registry and writes nothing')
   }
-  return { read: async () => readout, add: notThisTest, setEnabled: notThisTest, delete: notThisTest }
+  return { read: async () => readout, add: notThisTest, update: notThisTest, setEnabled: notThisTest, delete: notThisTest }
 }

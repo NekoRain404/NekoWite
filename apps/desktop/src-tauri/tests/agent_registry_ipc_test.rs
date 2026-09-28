@@ -50,8 +50,8 @@ use nekowite_lib::agent_runtime::secret::Secret;
 use nekowite_lib::agent_runtime::TransportError;
 use nekowite_lib::agent_runtime::VaultFiles;
 use nekowite_lib::commands::agent_registry::{
-    add_agent, delete_agent, read_registry, refusal_view, set_enabled, AgentDraft, RegistryReadout,
-    RegistryRefusal,
+    add_agent, delete_agent, read_registry, refusal_view, set_enabled, update_agent, AgentDraft,
+    RegistryReadout, RegistryRefusal,
 };
 use nekowite_lib::state::{edit_registry, AgentRuntimeState};
 
@@ -151,6 +151,41 @@ fn draft(agent_id: &str) -> AgentDraft {
         args: vec!["--acp".to_string(), "--profile default".to_string()],
         adapter_id: adapters::generic_acp::ADAPTER_ID.to_string(),
     }
+}
+
+#[test]
+fn updating_an_external_registration_preserves_identity_and_settings() {
+    let mut registry = AgentRegistry::without_bundled();
+    let mut original = fixture_agent("qwen", Path::new("/tmp/unused"));
+    original.enabled = false;
+    registry.register(original).unwrap();
+    let mut change = draft("qwen");
+    change.display_name = "Updated Qwen".into();
+    change.program = "/usr/bin/qwen".into();
+    assert!(update_agent(&mut registry, "qwen", change).is_none());
+    let result = registry.get("qwen").unwrap();
+    assert_eq!(result.display_name, "Updated Qwen");
+    assert_eq!(result.program, Path::new("/usr/bin/qwen"));
+    assert!(!result.enabled);
+    assert_eq!(result.env_extra[0].0, "NWK_FAKE_CAPTURE");
+    assert!(matches!(
+        update_agent(&mut registry, "qwen", draft("other")),
+        Some(RegistryRefusal::Id { .. })
+    ));
+    assert_eq!(registry.get("qwen").unwrap().display_name, "Updated Qwen");
+}
+
+#[test]
+fn updating_a_bundled_or_unknown_registration_is_refused() {
+    let mut registry = AgentRegistry::with_bundled("/usr/bin/opencode");
+    assert!(matches!(
+        update_agent(&mut registry, "opencode", draft("opencode")),
+        Some(RegistryRefusal::IsDefault { .. })
+    ));
+    assert!(matches!(
+        update_agent(&mut registry, "missing", draft("missing")),
+        Some(RegistryRefusal::UnknownAgent { .. })
+    ));
 }
 
 fn readout_json(readout: &RegistryReadout) -> Value {
@@ -453,10 +488,18 @@ async fn a_live_engine_blocks_the_switch_off_and_shows_in_the_readout() {
         refusal_json(&delete_agent(&mut registry, "acme").expect("live deletion refused")),
         json!({ "kind": "instance-running", "agentId": "acme" })
     );
+    assert_eq!(
+        refusal_json(
+            &update_agent(&mut registry, "acme", draft("acme")).expect("live edit refused")
+        ),
+        json!({ "kind": "instance-running", "agentId": "acme" })
+    );
+    assert_eq!(registry.get("acme").unwrap().program, Path::new("/bin/sh"));
 
     // Dropping the instance releases the epoch and asks the engine to exit, which is what makes the
     // switch-off possible — and the readout's answer is about *now*, not about what ever started.
     drop(instance);
+    assert!(update_agent(&mut registry, "acme", draft("acme")).is_none());
     assert!(set_enabled(&mut registry, "acme", false).is_none());
     assert_eq!(
         readout_json(&read_registry(&registry))["runningAgentIds"],

@@ -64,6 +64,7 @@
     "allow-agent-registry-read",
     "allow-agent-registry-discover",
     "allow-agent-registry-add",
+    "allow-agent-registry-update",
     "allow-agent-registry-delete",
     "allow-agent-registry-set-enabled",
     "allow-agent-runtime-read",

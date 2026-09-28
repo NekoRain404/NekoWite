@@ -4,7 +4,7 @@ import { useAgentRegistryReadout } from './use-agent-registry-readout'
 import type { AgentRegistryClient, AgentRegistryReadout } from '../services/agent-registry-policy'
 
 const answer = (id: string): AgentRegistryReadout => ({ defaultAgentId: id, entries: [], adapterIds: [], runningAgentIds: [], profileOwners: {} })
-const client = (read: AgentRegistryClient['read']): AgentRegistryClient => ({ read, add: vi.fn(), delete: vi.fn(), setEnabled: vi.fn() })
+const client = (read: AgentRegistryClient['read']): AgentRegistryClient => ({ read, add: vi.fn(), update: vi.fn(), delete: vi.fn(), setEnabled: vi.fn() })
 let app: App
 afterEach(() => { app.unmount(); document.body.innerHTML = '' })
 const flush = async () => { await nextTick(); await nextTick(); await nextTick() }

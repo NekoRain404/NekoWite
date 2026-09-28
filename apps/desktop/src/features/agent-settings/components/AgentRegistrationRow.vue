@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { Trash2 } from 'lucide-vue-next'
+import { Pencil, Trash2 } from 'lucide-vue-next'
 import { fillTemplate, readEnvForDisplay, updateStanding, type AgentRegistryEntry } from '../services/agent-registry-policy'
 import type { AgentRegistryLabels } from './agent-registry-labels'
-defineProps<{ entry: AgentRegistryEntry; labels: AgentRegistryLabels; blocked: string | null; deletionBlocked: boolean; refusal: string; version: string; busy: string | null }>()
-const emit = defineEmits<{ toggle: [event: Event]; delete: [] }>()
+defineProps<{ entry: AgentRegistryEntry; labels: AgentRegistryLabels; blocked: string | null; deletionBlocked: boolean; editBlocked: boolean; refusal: string; version: string; busy: string | null }>()
+const emit = defineEmits<{ toggle: [event: Event]; delete: []; edit: [] }>()
 </script>
 <template>
   <li
@@ -59,20 +59,37 @@ const emit = defineEmits<{ toggle: [event: Event]; delete: [] }>()
         @change="emit('toggle', $event)"
       >
     </label>
-    <button
-      type="button"
-      class="registry-delete"
-      :title="labels.deletion.title"
-      :aria-label="labels.deletion.title"
-      :data-test="`registry-delete-${entry.agentId}`"
-      :disabled="busy !== null || deletionBlocked"
-      @click="emit('delete')"
-    >
-      <Trash2
-        :size="15"
-        aria-hidden="true"
-      />
-    </button>
+    <div class="registry-row-actions">
+      <button
+        v-if="entry.source === 'external'"
+        type="button"
+        class="registry-delete"
+        :title="labels.edit.title"
+        :aria-label="labels.edit.title"
+        :data-test="`registry-edit-${entry.agentId}`"
+        :disabled="busy !== null || editBlocked"
+        @click="emit('edit')"
+      >
+        <Pencil
+          :size="15"
+          aria-hidden="true"
+        />
+      </button>
+      <button
+        type="button"
+        class="registry-delete"
+        :title="labels.deletion.title"
+        :aria-label="labels.deletion.title"
+        :data-test="`registry-delete-${entry.agentId}`"
+        :disabled="busy !== null || deletionBlocked"
+        @click="emit('delete')"
+      >
+        <Trash2
+          :size="15"
+          aria-hidden="true"
+        />
+      </button>
+    </div>
     <span
       v-if="blocked"
       class="settings-note registry-blocked"
@@ -119,5 +136,6 @@ const emit = defineEmits<{ toggle: [event: Event]; delete: [] }>()
 .registry-button:disabled { opacity: 0.5; cursor: default; }
 .registry-delete { align-self: flex-end; display: grid; place-items: center; width: 28px; height: 28px; border: 0; background: transparent; color: var(--app-danger); cursor: pointer; }
 .registry-delete:disabled { opacity: 0.4; cursor: default; }
+.registry-row-actions { display: flex; justify-content: flex-end; gap: 4px; }
 .registry-confirm { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--app-danger); border-radius: var(--app-radius-sm); }
 </style>

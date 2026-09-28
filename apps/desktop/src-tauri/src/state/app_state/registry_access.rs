@@ -153,7 +153,18 @@ fn seed_registry(
     if registry.default_agent_id() == "opencode" && registry.get("opencode").is_none() {
         let first_available = registry
             .registrations()
-            .find(|registration| registration.enabled)
+            .filter(|registration| registration.enabled)
+            .min_by_key(|registration| {
+                // Local ACP executables can answer immediately. An npx bridge may need to
+                // download its package before it can even receive initialize.
+                (
+                    registration
+                        .program
+                        .file_name()
+                        .is_some_and(|name| name == "npx"),
+                    registration.agent_id.as_str(),
+                )
+            })
             .map(|registration| registration.agent_id.clone());
         if let Some(first_available) = first_available {
             registry.set_default_if_unregistered(&first_available);
@@ -269,6 +280,33 @@ mod tests {
         after_last_delete.load_persisted(&storage).unwrap();
         assert!(after_last_delete.default_agent_id().is_empty());
         assert!(storage.read().unwrap().is_some());
+    }
+
+    #[test]
+    fn first_run_prefers_native_acp_over_a_bridge_that_may_download() {
+        let storage = MemoryStorage::default();
+        let mut registry = AgentRegistry::without_bundled();
+        let candidates = [
+            (
+                "claude-acp",
+                "npx",
+                vec!["--yes", "@agentclientprotocol/claude-agent-acp"],
+            ),
+            ("qwen", "qwen", vec!["--acp"]),
+        ]
+        .into_iter()
+        .map(|(id, command, args)| DiscoveryCandidate {
+            agent_id: id.into(),
+            display_name: id.into(),
+            command: command.into(),
+            program: format!("/usr/bin/{command}"),
+            args: args.into_iter().map(str::to_string).collect(),
+            available: true,
+            adapter_id: "generic-acp".into(),
+        })
+        .collect();
+        seed_registry(&mut registry, &storage, candidates).unwrap();
+        assert_eq!(registry.default_agent_id(), "qwen");
     }
 
     #[test]

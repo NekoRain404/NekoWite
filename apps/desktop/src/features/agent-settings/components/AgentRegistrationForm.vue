@@ -4,10 +4,11 @@ import type { AgentRegistryLabels } from './agent-registry-labels'
 defineProps<{
   form: Record<DraftField, string>; labels: AgentRegistryLabels; adapterIds: readonly string[]
   busy: string | null; addedAgentId: string | null; actionFailed: boolean; addRefusal: RegistryRefusal | null
+  editing: boolean
   problem: (field: DraftField) => RegistryRefusal | null
   refusalText: (refusal: RegistryRefusal | null) => string
 }>()
-const emit = defineEmits<{ submit: []; update: [field: DraftField, value: string] }>()
+const emit = defineEmits<{ submit: []; cancel: []; update: [field: DraftField, value: string] }>()
 function update(field: DraftField, event: Event): void {
   emit('update', field, (event.target as HTMLInputElement).value)
 }
@@ -18,13 +19,14 @@ function update(field: DraftField, event: Event): void {
     @submit.prevent="emit('submit')"
   >
     <fieldset :disabled="busy !== null">
-      <span class="settings-label">{{ labels.add.title }}</span>
+      <span class="settings-label">{{ editing ? labels.edit.title : labels.add.title }}</span>
       <label class="settings-field">
         <span>{{ labels.fields.agentId }}</span>
         <input
           :value="form.agentId"
           class="registry-input"
           data-test="registry-field-agentId"
+          :disabled="editing"
           @input="update('agentId', $event)"
         >
         <span
@@ -99,10 +101,19 @@ function update(field: DraftField, event: Event): void {
         <button
           type="submit"
           class="registry-button"
-          data-test="registry-add"
+          :data-test="editing ? 'registry-update' : 'registry-add'"
           :disabled="busy !== null"
         >
-          {{ labels.add.submit }}
+          {{ editing ? labels.edit.submit : labels.add.submit }}
+        </button>
+        <button
+          v-if="editing"
+          type="button"
+          class="registry-button"
+          data-test="registry-cancel-edit"
+          @click="emit('cancel')"
+        >
+          {{ labels.edit.cancel }}
         </button>
         <span
           v-if="addedAgentId"

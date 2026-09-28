@@ -87,6 +87,44 @@ impl AgentRegistry {
         Ok(())
     }
 
+    /// Changes an external definition without replacing its identity, ownership or credentials.
+    pub fn update(
+        &mut self,
+        agent_id: &str,
+        replacement: AgentRegistration,
+    ) -> Result<(), RegistryError> {
+        if replacement.agent_id != agent_id {
+            return Err(RegistryError::Id {
+                field: "agent_id",
+                value: replacement.agent_id,
+            });
+        }
+        replacement.validate()?;
+        let current = self
+            .registrations
+            .get(agent_id)
+            .ok_or_else(|| RegistryError::unknown(agent_id))?;
+        if current.source != super::InstallSource::External {
+            return Err(RegistryError::IsDefault {
+                agent_id: agent_id.to_string(),
+            });
+        }
+        // A live child keeps the old launch description; editing it would make the UI lie about
+        // which executable and permissions belong to that instance.
+        if let Some(epoch) = self.live.lock().unwrap().epoch_of(agent_id) {
+            return Err(RegistryError::InstanceRunning {
+                agent_id: agent_id.to_string(),
+                epoch,
+            });
+        }
+        let mut replacement = replacement;
+        replacement.enabled = current.enabled;
+        replacement.env_extra = current.env_extra.clone();
+        replacement.reported_version = current.reported_version.clone();
+        self.registrations.insert(agent_id.to_string(), replacement);
+        Ok(())
+    }
+
     /// Every definition, in id order.
     pub fn registrations(&self) -> impl Iterator<Item = &AgentRegistration> {
         self.registrations.values()

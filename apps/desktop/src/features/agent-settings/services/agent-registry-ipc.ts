@@ -64,6 +64,7 @@ export interface AgentRegistryWire {
   read(): Promise<unknown>
   discover?(): Promise<unknown>
   add(draft: AgentDraft): Promise<unknown>
+  update(agentId: string, draft: AgentDraft): Promise<unknown>
   setEnabled(agentId: string, enabled: boolean): Promise<unknown>
   delete(agentId: string): Promise<unknown>
 }
@@ -111,6 +112,9 @@ export function createAgentRegistryClient(wire: AgentRegistryWire): AgentRegistr
     },
     async add(draft: AgentDraft): Promise<RegistryRefusal | null> {
       return nullableRefusal(await wire.add(draft))
+    },
+    async update(agentId: string, draft: AgentDraft): Promise<RegistryRefusal | null> {
+      return nullableRefusal(await wire.update(agentId, draft))
     },
     async setEnabled(agentId: string, enabled: boolean): Promise<RegistryRefusal | null> {
       return nullableRefusal(await wire.setEnabled(agentId, enabled))

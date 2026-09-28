@@ -43,6 +43,7 @@ export interface AgentRegistryCommands {
   read(): Promise<unknown>
   discover(): Promise<unknown>
   add(draft: unknown): Promise<unknown>
+  update(agentId: string, draft: unknown): Promise<unknown>
   setEnabled(agentId: string, enabled: boolean): Promise<unknown>
   delete(agentId: string): Promise<unknown>
 }
@@ -58,6 +59,7 @@ export function createTauriAgentRegistryCommands(): AgentRegistryCommands {
     read: () => invoke('agent_registry_read'),
     discover: () => invoke('agent_registry_discover'),
     add: (draft: unknown) => invoke('agent_registry_add', { draft }),
+    update: (agentId: string, draft: unknown) => invoke('agent_registry_update', { agentId, draft }),
     delete: (agentId: string) => invoke('agent_registry_delete', { agentId }),
     setEnabled: (agentId: string, enabled: boolean) =>
       invoke('agent_registry_set_enabled', { agentId, enabled }),

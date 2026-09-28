@@ -49,6 +49,7 @@ export const registry = {
         adapter: 'Adapter',
       },
       add: { title: 'Add a program', submit: 'Add', added: 'Added {agentId}.' },
+      edit: { title: 'Edit registration', submit: 'Save changes', cancel: 'Cancel' },
       action: { failed: 'This change could not be sent to the backend.' },
       ownerUnknown: 'no engine yet',
       refusal: {
@@ -128,6 +129,7 @@ export const registry = {
         adapter: '适配器',
       },
       add: { title: '添加程序', submit: '添加', added: '已添加 {agentId}。' },
+      edit: { title: '修改注册项', submit: '保存修改', cancel: '取消' },
       action: { failed: '未能把这次改动发送到后端。' },
       ownerUnknown: '尚未有引擎',
       refusal: {

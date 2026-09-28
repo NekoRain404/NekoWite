@@ -8,9 +8,10 @@ import { useAgentRegistryReadout } from './use-agent-registry-readout'
 import AgentRegistrationRow from './AgentRegistrationRow.vue'
 import AgentRegistrationForm from './AgentRegistrationForm.vue'
 import AgentRegistryDiscovery from './AgentRegistryDiscovery.vue'
+import AgentRegistryEngine from './AgentRegistryEngine.vue'
 import { suggestRegistrationId } from '../services/agent-registration-id'
 import {
-  disableStanding, fillTemplate, planEngineSwitch, refusedField, validateAgentDraft,
+  disableStanding, fillTemplate, refusedField, validateAgentDraft,
   type AgentDraft, type AgentDiscoveryCandidate, type AgentRegistryClient, type AgentRegistryEntry, type AgentRegistryReadout,
   type DraftField, type RegistryRefusal,
 } from '../services/agent-registry-policy'
@@ -39,14 +40,16 @@ const rowRefusals = reactive<Record<string, RegistryRefusal | null>>({})
 const busy = ref<string | null>(null)
 const actionFailed = ref(false)
 const deleting = ref<AgentRegistryEntry | null>(null)
+const editing = ref<string | null>(null)
 const form = reactive({ agentId: '', displayName: '', program: '', args: '', adapterId: 'generic-acp' })
 const edited = reactive<Record<DraftField, boolean>>({ agentId: false, displayName: false, program: false, args: false, adapterId: false })
 const submitted = ref(false)
 watch(() => [form.displayName, form.program], () => {
-  if (!edited.agentId) form.agentId = suggestRegistrationId(form.displayName, form.program, entries.value)
+  if (editing.value === null && !edited.agentId) form.agentId = suggestRegistrationId(form.displayName, form.program, entries.value)
 })
 const addRefusal = ref<RegistryRefusal | null>(null)
 const addedAgentId = ref<string | null>(null)
+let appliedPrefill: typeof props.prefill = null
 
 const draft = computed<AgentDraft>(() => ({
   agentId: form.agentId.trim(),
@@ -60,7 +63,7 @@ const problems = computed<RegistryRefusal[]>(() => {
   if (loadState.value !== 'ready' || readout.value === null) return []
   return validateAgentDraft(draft.value, {
     adapterIds: readout.value.adapterIds,
-    entries: readout.value.entries,
+    entries: readout.value.entries.filter((entry) => entry.agentId !== editing.value),
   })
 })
 
@@ -74,6 +77,25 @@ function updateField(field: DraftField, value: string): void {
   edited[field] = true
 }
 
+function resetForm(): void {
+  editing.value = null
+  Object.assign(form, { agentId: '', displayName: '', program: '', args: '', adapterId: 'generic-acp' })
+  for (const field of Object.keys(edited) as DraftField[]) edited[field] = false
+  submitted.value = false
+  addRefusal.value = null
+}
+
+function editRegistration(entry: AgentRegistryEntry): void {
+  if (entry.source !== 'external' || readout.value?.runningAgentIds.includes(entry.agentId)) return
+  editing.value = entry.agentId
+  Object.assign(form, { agentId: entry.agentId, displayName: entry.displayName, program: entry.program,
+    args: entry.args.join('\n'), adapterId: entry.adapterId })
+  for (const field of Object.keys(edited) as DraftField[]) edited[field] = false
+  submitted.value = false
+  addRefusal.value = null
+  addedAgentId.value = null
+}
+
 async function submit(): Promise<void> {
   if (busy.value !== null || loadState.value !== 'ready') return
   submitted.value = true
@@ -81,18 +103,18 @@ async function submit(): Promise<void> {
   addedAgentId.value = null
   actionFailed.value = false
   if (problems.value.length > 0) return
-  busy.value = 'add'
+  busy.value = editing.value ?? 'add'
   const submittedDraft = draft.value
   try {
-    const refusal = await props.client.add(submittedDraft)
+    const refusal = editing.value === null
+      ? await props.client.add(submittedDraft)
+      : await props.client.update(editing.value, submittedDraft)
     if (refusal !== null) {
       addRefusal.value = refusal
       return
     }
-    addedAgentId.value = submittedDraft.agentId
-    Object.assign(form, { agentId: '', displayName: '', program: '', args: '', adapterId: 'generic-acp' })
-    for (const field of Object.keys(edited) as DraftField[]) edited[field] = false
-    submitted.value = false
+    addedAgentId.value = editing.value === null ? submittedDraft.agentId : null
+    resetForm()
     await load()
   } catch {
     actionFailed.value = true
@@ -103,6 +125,9 @@ async function submit(): Promise<void> {
 
 
 function useCandidate(candidate: AgentDiscoveryCandidate): void {
+  const existing = entries.value.find((entry) => entry.agentId === candidate.agentId)
+  if (existing?.source === 'external') editRegistration(existing)
+  else editing.value = null
   form.agentId = candidate.agentId
   form.displayName = candidate.displayName
   form.program = candidate.program
@@ -172,15 +197,15 @@ function deletionBlocked(entry: AgentRegistryEntry): RegistryRefusal | null {
   return blocked(entry)
 }
 
-const selectedEngine = ref('')
-const selectable = computed(() => entries.value.filter((entry) => entry.enabled))
-const nameOf = (agentId: string): string =>
-  entries.value.find((entry) => entry.agentId === agentId)?.displayName || agentId
-
 watch(
-  () => props.prefill,
-  (prefill) => {
-    if (prefill === null) return
+  [() => props.prefill, entries],
+  ([prefill]) => {
+    if (prefill === null) { appliedPrefill = null; return }
+    if (readout.value === null || appliedPrefill === prefill) return
+    appliedPrefill = prefill
+    const existing = entries.value.find((entry) => entry.agentId === prefill.agentId)
+    if (existing?.source === 'external') editRegistration(existing)
+    else editing.value = null
     form.agentId = prefill.agentId
     form.displayName = prefill.displayName
     form.program = prefill.program
@@ -194,31 +219,6 @@ watch(
     addedAgentId.value = null
   },
   { immediate: true },
-)
-
-watch(
-  [entries, () => props.sessionAgentId],
-  () => {
-    // The engine the user is on first, then the default: §3.4.1 makes the bundled engine the
-    // answer for a first session, and the session in front of them is the answer for the next one.
-    const preferred = props.sessionAgentId ?? readout.value?.defaultAgentId ?? ''
-    if (selectable.value.some((entry) => entry.agentId === selectedEngine.value)) return
-    selectedEngine.value = selectable.value.some((entry) => entry.agentId === preferred)
-      ? preferred
-      : (selectable.value[0]?.agentId ?? '')
-  },
-  { immediate: true },
-)
-
-const enginePlan = computed(() =>
-  readout.value === null || selectedEngine.value === ''
-    ? null
-    : planEngineSwitch({
-        sessionAgentId: props.sessionAgentId,
-        agentId: selectedEngine.value,
-        profileId: props.profileId,
-        readout: readout.value,
-      }),
 )
 
 function refusalText(refusal: RegistryRefusal | null): string {
@@ -241,15 +241,6 @@ function versionText(entry: AgentRegistryEntry): string {
   return entry.reportedVersion === null
     ? labels.value.list.versionUnknown
     : fillTemplate(labels.value.list.version, { version: entry.reportedVersion })
-}
-
-function engineText(): string {
-  if (enginePlan.value === null) return labels.value.engine.none
-  if (enginePlan.value.kind === 'refused') return refusalText(enginePlan.value.refusal)
-  const engine = nameOf(enginePlan.value.agentId)
-  return enginePlan.value.kind === 'keep-session'
-    ? fillTemplate(labels.value.engine.keeps, { engine })
-    : fillTemplate(labels.value.engine.creates, { engine })
 }
 
 </script>
@@ -294,10 +285,12 @@ function engineText(): string {
           :busy="busy"
           :blocked="blocked(entry) ? refusalText(blocked(entry)) : null"
           :deletion-blocked="deletionBlocked(entry) !== null"
+          :edit-blocked="readout?.runningAgentIds.includes(entry.agentId) ?? false"
           :refusal="refusalText(rowRefusals[entry.agentId] ?? null)"
           :version="versionText(entry)"
           @toggle="toggle(entry, $event)"
           @delete="deleting = entry"
+          @edit="editRegistration(entry)"
         />
       </ul>
 
@@ -336,12 +329,14 @@ function engineText(): string {
         :labels="labels"
         :adapter-ids="readout?.adapterIds ?? []"
         :busy="busy"
+        :editing="editing !== null"
         :added-agent-id="addedAgentId"
         :action-failed="actionFailed"
         :add-refusal="addRefusal"
         :problem="problem"
         :refusal-text="refusalText"
         @submit="submit"
+        @cancel="resetForm"
         @update="updateField"
       />
       <AgentRegistryDiscovery
@@ -349,49 +344,15 @@ function engineText(): string {
         :labels="labels"
         @use="useCandidate"
       />
-      <div class="registry-engine">
-        <span class="settings-label">{{ labels.engine.title }}</span>
-        <span
-          class="settings-note registry-engine-current"
-          data-test="registry-engine-current"
-        >
-          {{ sessionAgentId === null ? labels.engine.none : fillTemplate(labels.engine.current, { engine: nameOf(sessionAgentId) }) }}
-        </span>
-
-        <span
-          v-if="!canStartSession"
-          class="settings-note"
-          data-test="registry-engine-elsewhere"
-        >
-          {{ labels.engine.elsewhere }}
-        </span>
-        <template v-else>
-          <label class="settings-field">
-            <span>{{ labels.engine.choose }}</span>
-            <select
-              v-model="selectedEngine"
-              class="registry-input"
-              data-test="registry-engine-select"
-            >
-              <option
-                v-for="entry in selectable"
-                :key="entry.agentId"
-                :value="entry.agentId"
-              >{{ entry.displayName || entry.agentId }}</option>
-            </select>
-          </label>
-          <span class="settings-note registry-engine-plan">{{ engineText() }}</span>
-          <button
-            v-if="enginePlan?.kind === 'new-session'"
-            type="button"
-            class="registry-button"
-            data-test="registry-new-session"
-            @click="emit('new-session', selectedEngine)"
-          >
-            {{ fillTemplate(labels.engine.start, { engine: nameOf(selectedEngine) }) }}
-          </button>
-        </template>
-      </div>
+      <AgentRegistryEngine
+        :readout="readout"
+        :profile-id="profileId"
+        :session-agent-id="sessionAgentId"
+        :can-start-session="canStartSession"
+        :labels="labels"
+        :refusal-text="refusalText"
+        @new-session="emit('new-session', $event)"
+      />
     </template>
   </section>
 </template>

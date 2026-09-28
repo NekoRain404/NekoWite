@@ -37,6 +37,7 @@ export interface AgentRegistryLabels {
   deletion: { title: string; confirm: string; cancel: string; hint: string }
   fields: { agentId: string; displayName: string; program: string; args: string; argsHint: string; adapter: string }
   add: { title: string; submit: string; added: string }
+  edit: { title: string; submit: string; cancel: string }
   action: { failed: string }
   /** The owner slot of a `profile-unbound` refusal when the backend names none. */
   ownerUnknown: string
@@ -94,6 +95,7 @@ export function registryLabels(): AgentRegistryLabels {
       argsHint: t('agent.registry.fields.argsHint'), adapter: t('agent.registry.fields.adapter'),
     },
     add: { title: t('agent.registry.add.title'), submit: t('agent.registry.add.submit'), added: template('agent.registry.add.added', 'agentId') },
+    edit: { title: t('agent.registry.edit.title'), submit: t('agent.registry.edit.submit'), cancel: t('agent.registry.edit.cancel') },
     action: { failed: t('agent.registry.action.failed') },
     ownerUnknown: t('agent.registry.ownerUnknown'),
     refusal: {

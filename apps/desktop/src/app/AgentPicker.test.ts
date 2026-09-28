@@ -14,7 +14,7 @@ function readout(): AgentRegistryReadout {
 }
 async function mount(busy = false, currentAgentId = 'one') {
   const read = vi.fn(async () => readout())
-  const client: AgentRegistryClient = { read, add: async () => null, delete: async () => null, setEnabled: async () => null }
+  const client: AgentRegistryClient = { read, add: async () => null, update: async () => null, delete: async () => null, setEnabled: async () => null }
   const select = vi.fn(); const manage = vi.fn()
   const host = document.createElement('div'); host.className = 'shell'; document.body.append(host)
   const app = createApp(AgentPicker, { client, busy, currentAgentId, onSelect: select, onManage: manage })

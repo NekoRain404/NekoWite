@@ -209,6 +209,18 @@ pub fn add_agent(registry: &mut AgentRegistry, draft: AgentDraft) -> Option<Regi
     }
 }
 
+/// Updates only an existing external definition; its stable id and active state stay intact.
+pub fn update_agent(
+    registry: &mut AgentRegistry,
+    agent_id: &str,
+    draft: AgentDraft,
+) -> Option<RegistryRefusal> {
+    registry
+        .update(agent_id, registration_from(draft))
+        .err()
+        .map(refusal_view)
+}
+
 /// Switches a registration on or off, or answers why it was refused.
 pub fn set_enabled(
     registry: &mut AgentRegistry,
@@ -358,6 +370,19 @@ pub fn agent_registry_add(
 ) -> Result<Option<RegistryRefusal>, String> {
     let managed = managed_dir(&app)?;
     edit_registry(&runtime, &managed, |registry| add_agent(registry, draft))
+}
+
+#[tauri::command]
+pub fn agent_registry_update(
+    app: AppHandle,
+    runtime: State<'_, AgentRuntimeState>,
+    agent_id: String,
+    draft: AgentDraft,
+) -> Result<Option<RegistryRefusal>, String> {
+    let managed = managed_dir(&app)?;
+    edit_registry(&runtime, &managed, |registry| {
+        update_agent(registry, &agent_id, draft)
+    })
 }
 
 /// Switches a registration on or off. Same three outcomes as [`agent_registry_add`].

@@ -3,9 +3,56 @@
 
 use std::path::Path;
 
-use nekowite_lib::agent_runtime::{env_pairs, isolated_profile_env, EngineLaunch};
+use nekowite_lib::agent_runtime::{
+    env_pairs, isolated_profile_env, EngineConnection, EngineLaunch, INITIALIZE_BOUND,
+};
 
 use crate::support::{start, temp_dir};
+
+#[tokio::test]
+async fn installed_agent_answers_through_the_application_transport() {
+    let Ok(program) = std::env::var("NEKOWITE_LOCAL_ACP_PROGRAM") else {
+        return;
+    };
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/local-acp-probe");
+    for directory in ["home", "config", "cache", "data"] {
+        std::fs::create_dir_all(root.join(directory)).expect("isolated agent directory");
+    }
+    let launch = EngineLaunch {
+        program: program.into(),
+        args: std::env::var("NEKOWITE_LOCAL_ACP_ARGUMENT")
+            .map(|arg| vec![arg])
+            .unwrap_or_default(),
+        env: env_pairs([
+            (
+                "HOME".into(),
+                root.join("home").to_string_lossy().into_owned(),
+            ),
+            (
+                "XDG_CONFIG_HOME".into(),
+                root.join("config").to_string_lossy().into_owned(),
+            ),
+            (
+                "XDG_CACHE_HOME".into(),
+                root.join("cache").to_string_lossy().into_owned(),
+            ),
+            (
+                "XDG_DATA_HOME".into(),
+                root.join("data").to_string_lossy().into_owned(),
+            ),
+        ]),
+        ca_bundle: None,
+    };
+    let (connection, _events) = EngineConnection::connect(&launch)
+        .await
+        .expect("start local agent");
+    let answer = connection
+        .initialize(INITIALIZE_BOUND)
+        .await
+        .expect("local ACP initialize");
+    assert_eq!(answer.protocol_version.as_u16(), 1);
+    connection.shutdown();
+}
 
 // ---------------------------------------------------------------------------
 // The real engine

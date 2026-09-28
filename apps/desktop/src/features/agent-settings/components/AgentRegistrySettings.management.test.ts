@@ -13,10 +13,13 @@ afterEach(() => cleanups.splice(0).forEach((cleanup) => cleanup()))
 async function mount(running = false, defaultAgentId = 'opencode') {
   let entries = [entry]
   const deleteAgent = vi.fn(async () => { entries = []; return null })
+  const update = vi.fn(async (_agentId: string, draft: { displayName: string; program: string }) => {
+    entries = [{ ...entry, displayName: draft.displayName, program: draft.program }]; return null
+  })
   const client: AgentRegistryClient = {
     read: async () => ({ defaultAgentId, entries, adapterIds: ['generic-acp'],
       runningAgentIds: running ? ['custom'] : [], profileOwners: { default: 'opencode' } }),
-    add: vi.fn(async () => null), setEnabled: vi.fn(async () => null), delete: deleteAgent,
+    add: vi.fn(async () => null), update, setEnabled: vi.fn(async () => null), delete: deleteAgent,
   }
   const host = document.createElement('div')
   document.body.append(host)
@@ -24,7 +27,7 @@ async function mount(running = false, defaultAgentId = 'opencode') {
   app.mount(host)
   cleanups.push(() => { app.unmount(); host.remove() })
   await nextTick(); await nextTick()
-  return { host, client, deleteAgent }
+  return { host, client, deleteAgent, update }
 }
 async function click(host: HTMLElement, selector: string) {
   const button = host.querySelector<HTMLButtonElement>(selector)
@@ -33,6 +36,25 @@ async function click(host: HTMLElement, selector: string) {
   await nextTick(); await nextTick(); await nextTick()
 }
 describe('Agent registration management', () => {
+  it('opens the registered agent in an update form and refreshes after save', async () => {
+    const { host, update } = await mount()
+    await click(host, '[data-test="registry-edit-custom"]')
+    expect(host.querySelector<HTMLInputElement>('[data-test="registry-field-agentId"]')?.value).toBe('custom')
+    expect(host.querySelector<HTMLInputElement>('[data-test="registry-field-agentId"]')?.disabled).toBe(true)
+    const name = host.querySelector<HTMLInputElement>('[data-test="registry-field-displayName"]')!
+    name.value = 'Qwen Code'; name.dispatchEvent(new Event('input', { bubbles: true }))
+    await click(host, '[data-test="registry-update"]')
+    expect(update).toHaveBeenCalledWith('custom', expect.objectContaining({ agentId: 'custom', displayName: 'Qwen Code' }))
+    expect(host.querySelector('[data-test="registry-row-custom"]')?.textContent).toContain('Qwen Code')
+  })
+  it('cancels editing and refuses edits of a running agent', async () => {
+    const { host, update } = await mount()
+    await click(host, '[data-test="registry-edit-custom"]')
+    await click(host, '[data-test="registry-cancel-edit"]')
+    expect(update).not.toHaveBeenCalled()
+    const running = await mount(true)
+    expect(running.host.querySelector<HTMLButtonElement>('[data-test="registry-edit-custom"]')?.disabled).toBe(true)
+  })
   it('allows deleting the external default while keeping its disable toggle locked', async () => {
     const { host, deleteAgent } = await mount(false, 'custom')
     expect(host.querySelector<HTMLInputElement>('[data-test="registry-toggle-custom"]')?.disabled).toBe(true)

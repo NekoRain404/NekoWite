@@ -60,6 +60,7 @@ function fakeComposition(): AgentComposition {
         throw new Error('the registry is not part of this test')
       },
       delete: async () => null,
+      update: async () => null,
       setEnabled: () => {
         throw new Error('the registry is not part of this test')
       },
