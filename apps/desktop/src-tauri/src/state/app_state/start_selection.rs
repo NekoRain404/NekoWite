@@ -15,7 +15,11 @@ fn selection(
 ) -> Result<(String, String), String> {
     let agent_id = agent_id.unwrap_or_else(|| registry.default_agent_id());
     let profile_id = profile_id.map(str::to_string).unwrap_or_else(|| {
-        if agent_id == registry.default_agent_id() {
+        if registry
+            .profile_owners()
+            .get(DEFAULT_PROFILE)
+            .is_some_and(|owner| owner == agent_id)
+        {
             DEFAULT_PROFILE.to_string()
         } else {
             // A full digest is a stable, valid 64-byte component even for maximum-length IDs.
@@ -53,6 +57,27 @@ pub(super) fn selected_registry(
 mod tests {
     use super::*;
     use crate::agent_runtime::registry::AgentRegistry;
+
+    #[test]
+    fn fallback_default_uses_its_own_profile_after_deletion() {
+        let mut registry = AgentRegistry::without_bundled();
+        for id in ["first", "second"] {
+            let mut entry = AgentRegistry::with_bundled("/bin/true")
+                .get("opencode")
+                .unwrap()
+                .clone();
+            entry.agent_id = id.into();
+            entry.source = crate::agent_runtime::registry::InstallSource::External;
+            registry.register(entry).unwrap();
+        }
+        registry.set_default_if_unregistered("first");
+        registry.remove("first").unwrap();
+        let (agent, profile) = selection(&registry, None, None).unwrap();
+        assert_eq!(agent, "second");
+        assert_ne!(profile, "default");
+        registry.bind_profile(&profile, &agent).unwrap();
+        assert_eq!(registry.profile_owners()["default"], "first");
+    }
 
     fn registry() -> AgentRegistry {
         let mut registry = AgentRegistry::with_bundled("/bin/true");

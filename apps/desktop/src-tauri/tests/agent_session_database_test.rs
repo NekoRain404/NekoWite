@@ -179,9 +179,8 @@ fn a_registration_that_keeps_the_users_environment_names_no_root_at_all() {
          {names:?}"
     );
     assert!(
-        names.is_empty(),
-        "a `UserEnvironment` launch now carries something, so this arm is no longer the one that \
-         leaves every root to the process it inherits: {names:?}"
+        names.iter().all(|name| name == "PATH"),
+        "a `UserEnvironment` launch may extend discovery PATH, but must inherit data roots: {names:?}"
     );
 }
 

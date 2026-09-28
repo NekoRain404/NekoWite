@@ -52,6 +52,8 @@ mod agent_runtime {
     #[allow(dead_code)]
     pub mod capabilities;
     pub mod config_edit;
+    #[allow(dead_code)]
+    pub mod discovery;
     // Included because `process` names it through `super::`: the roots a profile-isolated launch
     // pins live there now, and `process` re-exports the function this target reaches by path.
     #[allow(dead_code)]

@@ -55,6 +55,14 @@ impl AgentRegistry {
         }
         let mut candidate = self.clone();
         for entry in document.registrations {
+            // A saved external definition keeps its launch/config policy across editions.
+            // Replacing the initial bundled entry avoids changing the user's executable.
+            if candidate
+                .get(&entry.agent_id)
+                .is_some_and(|existing| existing.source == InstallSource::Bundled)
+            {
+                candidate.registrations.remove(&entry.agent_id);
+            }
             candidate
                 .register(AgentRegistration {
                     agent_id: entry.agent_id,
@@ -79,7 +87,9 @@ impl AgentRegistry {
                 .get(&profile)
                 .is_some_and(|existing| existing != &owner)
             {
-                return Err("saved profile ownership conflicts with the bundled profile".into());
+                if profile != super::DEFAULT_PROFILE {
+                    return Err("saved profile ownership conflicts with the bundled profile".into());
+                }
             }
             // Orphan bindings intentionally survive deletion so another agent cannot claim
             // the deleted engine's credentials or history on a later launch.
@@ -88,10 +98,20 @@ impl AgentRegistry {
         if let Some(default_agent_id) = document.default_agent_id.as_deref() {
             if default_agent_id.is_empty() {
                 candidate.set_default_to("");
-            } else if default_agent_id != candidate.default_agent_id()
-                && !candidate.set_default_if_unregistered(default_agent_id)
-            {
-                return Err("saved default agent is not registered".into());
+            } else if candidate.get(default_agent_id).is_none() {
+                // Bundled definitions are deliberately absent from snapshots. Opening the
+                // same data in the ACP edition must not require the previous edition's engine.
+                if default_agent_id != super::super::adapters::opencode::AGENT_ID {
+                    return Err("saved default agent is not registered".into());
+                }
+                let fallback = candidate
+                    .registrations()
+                    .find(|entry| entry.enabled)
+                    .map(|entry| entry.agent_id.clone())
+                    .unwrap_or_default();
+                candidate.set_default_to(&fallback);
+            } else {
+                candidate.set_default_to(default_agent_id);
             }
         }
         *self = candidate;

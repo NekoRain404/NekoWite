@@ -8,6 +8,58 @@ use nekowite_lib::{
 use std::{fs, sync::Arc};
 
 struct MemoryStorage(std::sync::Mutex<Option<String>>);
+
+#[test]
+fn bundled_snapshot_can_open_in_an_empty_acp_edition_then_add_an_agent() {
+    let full = AgentRegistry::with_bundled("/opt/bundled/opencode");
+    let storage = MemoryStorage(std::sync::Mutex::new(Some(full.persisted_document().unwrap())));
+    let mut lean = AgentRegistry::without_bundled();
+    lean.load_persisted(&storage).unwrap();
+    assert!(add_agent(&mut lean, draft()).is_none());
+    assert_eq!(lean.default_agent_id(), "external");
+    assert_eq!(lean.profile_owners()["default"], "opencode");
+}
+
+#[test]
+fn external_launch_includes_the_discovery_directories() {
+    let mut registry = AgentRegistry::without_bundled();
+    assert!(add_agent(&mut registry, draft()).is_none());
+    let launch = registry
+        .get("external")
+        .unwrap()
+        .launch(std::path::Path::new("/unused"), &Default::default());
+    let path = launch
+        .env
+        .iter()
+        .find(|(name, _)| name == "PATH")
+        .expect("external launch needs the GUI search path");
+    assert!(std::env::split_paths(path.1.expose()).any(|dir| dir.ends_with(".local/bin")));
+}
+
+#[test]
+fn saved_external_default_survives_adding_opencode_and_switching_editions() {
+    let mut lean = AgentRegistry::without_bundled();
+    assert!(add_agent(&mut lean, draft()).is_none());
+    assert_eq!(lean.default_agent_id(), "external");
+    let mut opencode = draft();
+    opencode.agent_id = "opencode".into();
+    assert!(add_agent(&mut lean, opencode).is_none());
+    let storage = MemoryStorage(std::sync::Mutex::new(Some(
+        lean.persisted_document().unwrap(),
+    )));
+    for mut restarted in [
+        AgentRegistry::without_bundled(),
+        AgentRegistry::with_bundled("/opt/bundled/opencode"),
+    ] {
+        restarted.load_persisted(&storage).unwrap();
+        assert_eq!(restarted.default_agent_id(), "external");
+        assert_eq!(
+            restarted.get("opencode").unwrap().program,
+            std::path::Path::new("/bin/true")
+        );
+        assert_eq!(restarted.profile_owners()["default"], "external");
+    }
+}
 impl RegistryStorage for MemoryStorage {
     fn read(&self) -> Result<Option<String>, String> {
         Ok(self.0.lock().unwrap().clone())

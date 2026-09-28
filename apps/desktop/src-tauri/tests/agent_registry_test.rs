@@ -582,24 +582,28 @@ fn where_a_program_came_from_decides_who_may_replace_it_and_what_it_inherits() {
         external
             .launch(root, &Credentials::default())
             .env
-            .is_empty(),
-        "nothing of ours is injected into an external installation"
+            .iter()
+            .all(|(name, _)| name == "PATH"),
+        "external installations receive discovery PATH but no managed profile roots"
     );
 
     // The third part of a launch is the profile's credentials (§8.1), and they arrive whatever the
     // registration's environment policy is: the policy decides which *roots* the engine reads its
     // configuration from, while a credential is a value the user typed for this profile, and P0 §3
     // makes the environment the channel it travels in. An external registration therefore carries
-    // exactly the profile's set — the one this test's `Credentials::default()` above showed empty.
+    // the profile's set alongside the discovery PATH, without managed configuration roots.
     let credentials = Credentials::new([(
         "ANTHROPIC_API_KEY".to_string(),
         Secret::new("sk-ant-oat01-not-a-real-key"),
     )]);
     let with_credentials = external.launch(root, &credentials).env;
-    assert_eq!(with_credentials.len(), 1, "{with_credentials:?}");
-    assert_eq!(with_credentials[0].0, "ANTHROPIC_API_KEY");
+    assert_eq!(with_credentials.len(), 2, "{with_credentials:?}");
+    let key = with_credentials
+        .iter()
+        .find(|(name, _)| name == "ANTHROPIC_API_KEY")
+        .unwrap();
     assert_eq!(
-        with_credentials[0].1.expose(),
+        key.1.expose(),
         "sk-ant-oat01-not-a-real-key"
     );
 }

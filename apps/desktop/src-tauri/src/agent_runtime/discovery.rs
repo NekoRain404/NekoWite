@@ -83,18 +83,30 @@ pub struct DiscoveryCandidate {
 }
 
 pub fn discover_known_agents(path_var: Option<&str>) -> Vec<DiscoveryCandidate> {
-    let mut search_dirs = BTreeSet::new();
+    discover_in_dirs(&linux_search_dirs(
+        path_var,
+        env::var_os("HOME").map(PathBuf::from),
+    ))
+}
+
+pub(crate) fn linux_search_dirs(path_var: Option<&str>, home: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut search_dirs = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut add = |dir: PathBuf| {
+        if dir.is_absolute() && env::join_paths([&dir]).is_ok() && seen.insert(dir.clone()) {
+            search_dirs.push(dir);
+        }
+    };
     if let Some(path) = path_var {
         for dir in env::split_paths(path) {
             if !dir.as_os_str().is_empty() {
-                search_dirs.insert(dir);
+                add(dir);
             }
         }
     }
     // GUI launchers often receive a reduced PATH. Include the standard per-user Linux bin
     // locations so discovery behaves the same from a desktop file and from a shell.
-    if let Some(home) = env::var_os("HOME") {
-        let home = PathBuf::from(home);
+    if let Some(home) = home {
         for relative in [
             ".local/bin",
             ".local/share/pnpm",
@@ -102,18 +114,18 @@ pub fn discover_known_agents(path_var: Option<&str>) -> Vec<DiscoveryCandidate> 
             ".cargo/bin",
             ".bun/bin",
         ] {
-            search_dirs.insert(home.join(relative));
+            add(home.join(relative));
         }
     }
-    search_dirs.insert(PathBuf::from("/snap/bin"));
+    add(PathBuf::from("/snap/bin"));
     for dir in ["/usr/local/bin", "/usr/bin", "/bin"] {
-        search_dirs.insert(PathBuf::from(dir));
+        add(PathBuf::from(dir));
     }
 
-    discover_in_dirs(&search_dirs)
+    search_dirs
 }
 
-fn discover_in_dirs(search_dirs: &BTreeSet<PathBuf>) -> Vec<DiscoveryCandidate> {
+fn discover_in_dirs(search_dirs: &[PathBuf]) -> Vec<DiscoveryCandidate> {
     KNOWN_AGENTS
         .iter()
         .map(|known| {
@@ -142,7 +154,7 @@ fn discover_in_dirs(search_dirs: &BTreeSet<PathBuf>) -> Vec<DiscoveryCandidate> 
         .collect()
 }
 
-fn find_program(search_dirs: &BTreeSet<PathBuf>, command: &str) -> Option<PathBuf> {
+fn find_program(search_dirs: &[PathBuf], command: &str) -> Option<PathBuf> {
     search_dirs
         .iter()
         .map(|directory| directory.join(command))
@@ -170,8 +182,29 @@ fn is_executable(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::discover_in_dirs;
-    use std::collections::BTreeSet;
     use std::fs;
+    use std::path::PathBuf;
+
+    #[test]
+    fn search_path_preserves_shell_precedence_and_appends_gui_locations() {
+        let dirs = super::linux_search_dirs(
+            Some("/z/bin:/a/bin:/z/bin"),
+            Some(PathBuf::from("/home/test")),
+        );
+        assert_eq!(
+            &dirs[..2],
+            &[PathBuf::from("/z/bin"), PathBuf::from("/a/bin")]
+        );
+        assert!(dirs.contains(&PathBuf::from("/home/test/.local/bin")));
+        assert_eq!(
+            dirs.iter()
+                .filter(|dir| **dir == PathBuf::from("/z/bin"))
+                .count(),
+            1
+        );
+        let invalid_home = super::linux_search_dirs(None, Some(PathBuf::from("/home/a:b")));
+        assert!(std::env::join_paths(invalid_home).is_ok());
+    }
 
     #[test]
     fn finds_only_known_executables_and_deduplicates_path() {
@@ -189,7 +222,7 @@ mod tests {
                 fs::set_permissions(&program, permissions).expect("chmod");
             }
         }
-        let found = discover_in_dirs(&BTreeSet::from([root.clone()]));
+        let found = discover_in_dirs(&[root.clone()]);
         let codex_matches: Vec<_> = found
             .iter()
             .filter(|candidate| candidate.agent_id == "codex-acp")
@@ -212,7 +245,7 @@ mod tests {
             std::env::temp_dir().join(format!("nekowite-discovery-empty-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).expect("mkdir");
-        let found = discover_in_dirs(&BTreeSet::from([root.clone()]));
+        let found = discover_in_dirs(&[root.clone()]);
         assert_eq!(found.len(), 6);
         assert!(found.iter().all(|candidate| !candidate.available));
         let _ = fs::remove_dir_all(root);

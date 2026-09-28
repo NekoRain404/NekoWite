@@ -199,8 +199,12 @@ pub fn read_registry(registry: &AgentRegistry) -> RegistryReadout {
 
 /// Adds a definition, or answers why it was refused.
 pub fn add_agent(registry: &mut AgentRegistry, draft: AgentDraft) -> Option<RegistryRefusal> {
+    let agent_id = draft.agent_id.clone();
     match registry.register(registration_from(draft)) {
-        Ok(()) => None,
+        Ok(()) => {
+            registry.set_default_if_unregistered(&agent_id);
+            None
+        }
         Err(error) => Some(refusal_view(error)),
     }
 }

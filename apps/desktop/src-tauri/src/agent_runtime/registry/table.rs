@@ -121,9 +121,8 @@ impl AgentRegistry {
 
     pub(super) fn set_default_to(&mut self, agent_id: &str) {
         self.default_agent = agent_id.to_string();
-        if agent_id.is_empty() {
-            self.profiles.remove(DEFAULT_PROFILE);
-        } else {
+        // Default selection must never transfer or erase a persisted profile's ownership.
+        if !agent_id.is_empty() {
             self.profiles
                 .entry(DEFAULT_PROFILE.to_string())
                 .or_insert_with(|| agent_id.to_string());

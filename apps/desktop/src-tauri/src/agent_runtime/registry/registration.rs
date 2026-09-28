@@ -178,7 +178,17 @@ impl AgentRegistration {
     pub fn launch(&self, managed_root: &Path, credentials: &Credentials) -> EngineLaunch {
         let isolation = match self.env {
             EnvPolicy::ProfileIsolated => isolated_profile_env(managed_root),
-            EnvPolicy::UserEnvironment => Vec::new(),
+            EnvPolicy::UserEnvironment => {
+                // Desktop launchers may omit user-level bins. Use the same ordered search
+                // path as discovery so script interpreters and agent subprocesses resolve.
+                let dirs = super::super::discovery::linux_search_dirs(
+                    std::env::var("PATH").ok().as_deref(),
+                    std::env::var_os("HOME").map(PathBuf::from),
+                );
+                // Search directories are filtered for PATH representability at collection.
+                let path = std::env::join_paths(dirs).expect("validated Linux search directories");
+                vec![("PATH".into(), path.to_string_lossy().into_owned())]
+            }
         };
         // The roots first, then the registration's own variables, so an explicit setting still wins
         // over the policy's default root — the affordance that made this an order in the first
