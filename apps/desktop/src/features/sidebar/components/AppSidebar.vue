@@ -23,10 +23,11 @@ import { useSidebarTheme } from '../composables/use-sidebar-theme'
 import { baseName } from '../../../services/paths'
 import { t } from '../../../i18n'
 
-const props = defineProps<{ vault: string }>()
+const props = defineProps<{ vault: string; compact: boolean }>()
 const emit = defineEmits<{
   openFolder: [path: string]
   openSettings: []
+  toggleCompact: []
 }>()
 
 const { theme, toggleTheme } = useSidebarTheme()
@@ -63,17 +64,26 @@ watch(
 </script>
 
 <template>
-  <aside class="sidebar">
+  <aside
+    class="sidebar"
+    :class="{ compact }"
+  >
     <div class="sidebar-scroll">
       <SidebarNavigation
         :vault-name="vaultName"
+        :compact="compact"
         @open-folder="(path: string) => emit('openFolder', path)"
         @new-daily="createDailyNote"
         @pick-template="openTemplatePicker"
         @add-remote="remoteOpen = true"
+        @toggle-compact="emit('toggleCompact')"
       />
-      <SidebarReferences v-model:open="refsOpen" />
+      <SidebarReferences
+        v-if="!compact"
+        v-model:open="refsOpen"
+      />
       <SidebarTrash
+        v-if="!compact"
         v-model:open="trashOpen"
         :vault="props.vault"
       />
@@ -81,6 +91,7 @@ watch(
 
     <div class="sidebar-footer">
       <span
+        v-if="!compact"
         class="footer-vault"
         :title="props.vault"
       >
@@ -155,6 +166,8 @@ watch(
   border-right: 1px solid var(--app-border);
   overflow: hidden;
   user-select: none;
+  transition: width var(--app-motion-fast) var(--app-ease),
+              min-width var(--app-motion-fast) var(--app-ease);
 }
 .sidebar-scroll {
   flex: 1;
@@ -164,6 +177,10 @@ watch(
   display: flex;
   flex-direction: column;
 }
+.sidebar.compact .sidebar-scroll { padding-inline: 6px; }
+.sidebar.compact .sidebar-footer { justify-content: center; gap: 0; padding-inline: 2px; }
+.sidebar.compact .footer-spacer { display: none; }
+.sidebar.compact .footer-btn { width: 24px; }
 
 .sidebar-footer {
   display: flex;

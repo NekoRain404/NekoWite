@@ -79,6 +79,7 @@ const agentRegistry = createAgentSettingsClients().registry
 // outlive it: held here, closing the rail and reopening it puts the user back on
 // the panel they were reading instead of resetting to the chat (D1).
 const railTab = ref<RailTab>('ai')
+const sidebarCompact = ref(false)
 
 const theme = computed<string>(() => {
   void appearance.systemRevision
@@ -184,7 +185,7 @@ attachPetTaskLink({
 })
 
 const shellStyle = computed<Record<string, string>>(() => ({
-  '--app-sidebar-width': `${appearance.sidebarWidth}px`,
+  '--app-sidebar-width': `${sidebarCompact.value ? 56 : appearance.sidebarWidth}px`,
   '--app-rail-width': `${appearance.railWidth}px`,
   '--app-notelist-width': `${appearance.notelistWidth}px`,
   '--app-body-size': `${appearance.bodyFontSize}px`,
@@ -223,12 +224,14 @@ const shellStyle = computed<Record<string, string>>(() => ({
             v-show="sidebarVisible"
             class="layout-col"
             :vault="vaultPath"
+            :compact="sidebarCompact"
             @open-folder="(p: string) => emit('open-folder', p)"
             @open-settings="emit('open-settings')"
+            @toggle-compact="sidebarCompact = !sidebarCompact"
           />
         </Transition>
         <LayoutResizeHandle
-          v-if="sidebarVisible"
+          v-if="sidebarVisible && !sidebarCompact"
           :label="t('layout.resizeSidebar')"
           :min="SIDEBAR_WIDTH_MIN"
           :max="SIDEBAR_WIDTH_MAX"
