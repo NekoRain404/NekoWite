@@ -7,6 +7,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 VERSION="$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")"
+# Arch pkgver rejects SemVer pre-release hyphens; keep the application version
+# intact and normalize only the package metadata version.
+PKGVER="${VERSION//-/.}"
 BIN="${BIN:-$ROOT/release/nekowite_${VERSION}_x64}"
 ENGINE="${ENGINE:-$ROOT/release/opencode}"
 OUT="$ROOT/release"
@@ -69,7 +72,7 @@ EOF
 
 cat > "$WORK/PKGBUILD" <<EOF
 pkgname=$PACKAGE_NAME
-pkgver=$VERSION
+pkgver=$PKGVER
 pkgrel=1
 pkgdesc='$PACKAGE_DESCRIPTION'
 arch=('x86_64')
@@ -93,10 +96,10 @@ EOF
 
 cp -p "$WORK/src/"* "$WORK/"
 echo "[1/2] Building Arch package"
-rm -f "$OUT/${PACKAGE_NAME}-${VERSION}-1-x86_64.pkg.tar.zst" "$OUT/${PACKAGE_NAME}-debug-${VERSION}-1-x86_64.pkg.tar.zst"
+rm -f "$OUT/${PACKAGE_NAME}-${PKGVER}-1-x86_64.pkg.tar.zst" "$OUT/${PACKAGE_NAME}-debug-${PKGVER}-1-x86_64.pkg.tar.zst"
 (cd "$WORK" && PKGDEST="$OUT" SRCDEST="$WORK/srcdest" BUILDDIR="$WORK/build" makepkg --clean --nodeps --force --noconfirm)
 
-PACKAGE="$OUT/${PACKAGE_NAME}-${VERSION}-1-x86_64.pkg.tar.zst"
+PACKAGE="$OUT/${PACKAGE_NAME}-${PKGVER}-1-x86_64.pkg.tar.zst"
 [ -s "$PACKAGE" ] || { echo "FAIL: package was not produced: $PACKAGE" >&2; exit 1; }
 echo "[2/2] Verifying package metadata"
 pacman -Qp "$PACKAGE" >/dev/null
