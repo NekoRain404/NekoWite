@@ -2,7 +2,7 @@
 import { Trash2 } from 'lucide-vue-next'
 import { fillTemplate, readEnvForDisplay, updateStanding, type AgentRegistryEntry } from '../services/agent-registry-policy'
 import type { AgentRegistryLabels } from './agent-registry-labels'
-defineProps<{ entry: AgentRegistryEntry; labels: AgentRegistryLabels; blocked: string | null; refusal: string; version: string; busy: string | null }>()
+defineProps<{ entry: AgentRegistryEntry; labels: AgentRegistryLabels; blocked: string | null; deletionBlocked: boolean; refusal: string; version: string; busy: string | null }>()
 const emit = defineEmits<{ toggle: [event: Event]; delete: [] }>()
 </script>
 <template>
@@ -65,7 +65,7 @@ const emit = defineEmits<{ toggle: [event: Event]; delete: [] }>()
       :title="labels.deletion.title"
       :aria-label="labels.deletion.title"
       :data-test="`registry-delete-${entry.agentId}`"
-      :disabled="busy !== null || blocked !== null"
+      :disabled="busy !== null || deletionBlocked"
       @click="emit('delete')"
     >
       <Trash2

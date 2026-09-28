@@ -1,0 +1,17 @@
+/* The `.settings-*` classes are restated here, as they are in every section that renders them: a
+   scoped block belongs to the component that renders the element, and these are too small to
+   belong in the shared stylesheet. */
+.settings-section { display: flex; flex-direction: column; gap: 8px; }
+.settings-label { margin-top: 6px; font-size: 10px; font-weight: 600; letter-spacing: 0.04em; color: var(--app-muted); }
+.settings-note { font-size: 11px; line-height: 1.5; color: var(--app-muted); }
+.settings-note.is-warn { color: var(--app-warn); }
+.settings-note.is-error { color: var(--app-danger); }
+.settings-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--app-text); }
+.settings-field > span:first-child { color: var(--app-muted); font-size: 11px; }
+.registry-rows { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.registry-form, .registry-engine { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--app-border); }
+.registry-input { font: inherit; font-size: 12px; padding: 4px 6px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-elevated); color: var(--app-text); }
+.registry-actions { display: flex; align-items: center; gap: 8px; }
+.registry-button { align-self: flex-start; font: inherit; font-size: 11px; padding: 4px 10px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-accent); color: var(--app-accent-contrast); cursor: pointer; }
+.registry-button:disabled { opacity: 0.5; cursor: default; }
+.registry-confirm { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--app-danger); border-radius: var(--app-radius-sm); }

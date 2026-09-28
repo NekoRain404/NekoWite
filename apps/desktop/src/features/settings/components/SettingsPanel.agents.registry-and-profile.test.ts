@@ -15,6 +15,7 @@ import {
   el,
   openAgents,
   refusing,
+  registryReadout,
   startAgentPanelAgents,
   untilDom,
 } from './SettingsPanel.agents.mount'
@@ -26,6 +27,58 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 startAgentPanelAgents(invokeMock)
 
 describe('the agents section in the settings dialog', () => {
+  it('preserves an unsaved model while an unrelated registration is refreshed', async () => {
+    const original = invokeMock.getMockImplementation()!
+    let reads = 0
+    let finishRefresh!: () => void
+    const refresh = new Promise<void>(resolve => { finishRefresh = resolve })
+    invokeMock.mockImplementation(async (command, args) => {
+      if (command === 'agent_registry_read') {
+        if (++reads > 1) await refresh
+        const readout = registryReadout() as Record<string, unknown>
+        const entries = readout.entries as Record<string, unknown>[]
+        return { ...readout, entries: [...entries, { ...entries[0], agentId: 'spare', source: 'external' }] }
+      }
+      if (command === 'agent_registry_set_enabled') return null
+      return original(command, args)
+    })
+    await openAgents()
+    await untilDom(() => el('provider-field-model') !== null, 'the model field')
+    const model = el('provider-field-model') as HTMLInputElement
+    model.value = 'my-unsaved-model'
+    model.dispatchEvent(new Event('input', { bubbles: true }))
+    const toggle = el('registry-toggle-spare') as HTMLInputElement
+    toggle.checked = false
+    toggle.dispatchEvent(new Event('change', { bubbles: true }))
+    await untilDom(() => reads > 1, 'the refresh in flight')
+    try { expect(el('provider-field-model')).toBe(model) }
+    finally { finishRefresh() }
+    await untilDom(() => el('registry-toggle-spare')?.getAttribute('disabled') === null, 'the refreshed registration')
+    expect(el('provider-field-model')).toBe(model)
+    expect((el('provider-field-model') as HTMLInputElement).value).toBe('my-unsaved-model')
+  })
+  it('clears profile pages after deleting the final default agent', async () => {
+    const original = invokeMock.getMockImplementation()!
+    let deleted = false
+    invokeMock.mockImplementation(async (command, args) => {
+      if (command === 'agent_registry_read') {
+        const readout = registryReadout() as Record<string, unknown>
+        return deleted
+          ? { ...readout, defaultAgentId: '', entries: [] }
+          : { ...readout, entries: (readout.entries as Record<string, unknown>[]).map(entry => ({ ...entry, source: 'external' })) }
+      }
+      if (command === 'agent_registry_delete') { deleted = true; return null }
+      return original(command, args)
+    })
+    await openAgents()
+    await untilDom(() => el('provider-identity') !== null, 'the original profile')
+    el('registry-delete-bundled-engine')?.click()
+    await untilDom(() => el('registry-confirm-delete') !== null, 'delete confirmation')
+    el('registry-confirm-delete')?.click()
+    await untilDom(() => el('registry-empty') !== null, 'the empty registry')
+    expect(el('provider-identity')).toBeNull()
+    expect(el('agents-profile')?.textContent).not.toContain('bundled-engine')
+  })
   it('says which engine and profile the mounted pages are about', async () => {
     await openAgents()
     await untilDom(

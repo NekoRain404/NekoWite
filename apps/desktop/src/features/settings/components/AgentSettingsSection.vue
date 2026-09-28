@@ -1,6 +1,6 @@
 <script setup lang="ts">
 
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { t } from '../../../i18n'
 import {
   AGENT_SETTINGS_SECTIONS,
@@ -13,7 +13,7 @@ import {
   AgentSkillsSettings,
 } from '../../agent-settings'
 import { defaultEngineIdentity } from '../../agent-settings/services/agent-registry-policy'
-import type { EngineIdentity } from '../../agent-settings/services/agent-registry-policy'
+import type { AgentRegistryReadout, EngineIdentity } from '../../agent-settings/services/agent-registry-policy'
 // Named by file rather than through the barrel: the catalogue's prefill is the *component's* own
 // vocabulary (`index.ts` exports the sections' components and their label types, and a fifth type
 // there would be a name with one caller). The specifier is the component the type belongs to.
@@ -35,16 +35,13 @@ const { agentPanel, setAgentPanel } = useAgentPanel()
 const identity = ref<EngineIdentity | null>(null)
 const verifiedOpenCode = ref(false)
 
-onMounted(async () => {
-  try {
-    const readout = await props.clients.registry.read()
-    identity.value = defaultEngineIdentity(readout)
-    const entry = readout.entries.find(entry => entry.agentId === identity.value?.agentId)
-    verifiedOpenCode.value = entry?.adapterId === 'opencode' && entry.source !== 'external'
-  } catch {
-    identity.value = null
-  }
-})
+function updateIdentity(readout: AgentRegistryReadout | null): void {
+  identity.value = readout === null ? null : defaultEngineIdentity(readout)
+  const entry = readout?.entries.find(entry => entry.agentId === identity.value?.agentId)
+  verifiedOpenCode.value = entry?.adapterId === 'opencode' && entry.source !== 'external'
+}
+// A different profile must not retain the previous page's pending reads or editable draft.
+const identityKey = computed(() => identity.value === null ? '' : JSON.stringify(identity.value))
 
 const showing = computed(() =>
   identity.value === null
@@ -206,6 +203,7 @@ const gaps = computed(() => [
       />
       <AgentProviderSettings
         v-if="providerPage"
+        :key="`provider:${identityKey}`"
         v-show="active === 'provider'"
         :data-page="'provider'"
         :client="providerPage.client"
@@ -216,6 +214,7 @@ const gaps = computed(() => [
 
       <AgentConfigurationSettings
         v-if="configurationPage"
+        :key="`configuration:${identityKey}`"
         v-show="active === 'configuration'"
         :data-page="'configuration'"
         :client="configurationPage.client"
@@ -224,6 +223,7 @@ const gaps = computed(() => [
 
       <AgentSkillsSettings
         v-if="skillsPage"
+        :key="`skills:${identityKey}`"
         v-show="active === 'skills'"
         :data-page="'skills'"
         :client="skillsPage.client"
@@ -231,6 +231,7 @@ const gaps = computed(() => [
 
       <AgentPermissionSettings
         v-if="permissionPage"
+        :key="`permission:${identityKey}`"
         v-show="active === 'permission'"
         :data-page="'permission'"
         :client="permissionPage.client"
@@ -244,6 +245,7 @@ const gaps = computed(() => [
         :profile-id="identity?.profileId ?? ''"
         :can-start-session="false"
         :prefill="cataloguePrefill"
+        @readout-changed="updateIdentity"
       />
 
       <AgentCatalogueBrowser

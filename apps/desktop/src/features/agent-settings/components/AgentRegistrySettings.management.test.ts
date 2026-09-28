@@ -10,11 +10,11 @@ const entry: AgentRegistryEntry = {
 }
 const cleanups: (() => void)[] = []
 afterEach(() => cleanups.splice(0).forEach((cleanup) => cleanup()))
-async function mount(running = false) {
+async function mount(running = false, defaultAgentId = 'opencode') {
   let entries = [entry]
   const deleteAgent = vi.fn(async () => { entries = []; return null })
   const client: AgentRegistryClient = {
-    read: async () => ({ defaultAgentId: 'opencode', entries, adapterIds: ['generic-acp'],
+    read: async () => ({ defaultAgentId, entries, adapterIds: ['generic-acp'],
       runningAgentIds: running ? ['custom'] : [], profileOwners: { default: 'opencode' } }),
     add: vi.fn(async () => null), setEnabled: vi.fn(async () => null), delete: deleteAgent,
   }
@@ -33,6 +33,13 @@ async function click(host: HTMLElement, selector: string) {
   await nextTick(); await nextTick(); await nextTick()
 }
 describe('Agent registration management', () => {
+  it('allows deleting the external default while keeping its disable toggle locked', async () => {
+    const { host, deleteAgent } = await mount(false, 'custom')
+    expect(host.querySelector<HTMLInputElement>('[data-test="registry-toggle-custom"]')?.disabled).toBe(true)
+    await click(host, '[data-test="registry-delete-custom"]')
+    await click(host, '[data-test="registry-confirm-delete"]')
+    expect(deleteAgent).toHaveBeenCalledWith('custom')
+  })
   it('retains the registration and allows retry after deletion fails', async () => {
     const { host, deleteAgent } = await mount()
     deleteAgent.mockRejectedValueOnce(new Error('disk full'))

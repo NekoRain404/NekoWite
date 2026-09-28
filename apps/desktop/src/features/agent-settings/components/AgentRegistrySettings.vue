@@ -1,50 +1,44 @@
 <script lang="ts">
-
 export type { AgentRegistryLabels } from './agent-registry-labels'
 </script>
 
 <script setup lang="ts">
-
 import { computed, reactive, ref, watch } from 'vue'
 import { useAgentRegistryReadout } from './use-agent-registry-readout'
 import AgentRegistrationRow from './AgentRegistrationRow.vue'
 import AgentRegistrationForm from './AgentRegistrationForm.vue'
+import AgentRegistryDiscovery from './AgentRegistryDiscovery.vue'
 import { suggestRegistrationId } from '../services/agent-registration-id'
 import {
   disableStanding, fillTemplate, planEngineSwitch, refusedField, validateAgentDraft,
-  type AgentDraft, type AgentDiscoveryCandidate, type AgentRegistryClient, type AgentRegistryEntry,
+  type AgentDraft, type AgentDiscoveryCandidate, type AgentRegistryClient, type AgentRegistryEntry, type AgentRegistryReadout,
   type DraftField, type RegistryRefusal,
 } from '../services/agent-registry-policy'
 import { registryLabels, type AgentRegistryLabels } from './agent-registry-labels'
 
 const props = withDefaults(
   defineProps<{
-
     client: AgentRegistryClient
-
     profileId: string
-
     sessionAgentId?: string | null
-
     canStartSession?: boolean
-
     prefill?: { agentId: string; displayName: string; program: string; args: readonly string[] } | null
     labels?: AgentRegistryLabels
   }>(),
   { sessionAgentId: null, canStartSession: true, prefill: null, labels: () => registryLabels() },
 )
 
-const emit = defineEmits<{ (event: 'new-session', agentId: string): void }>()
-
+const emit = defineEmits<{ 'new-session': [agentId: string]; 'readout-changed': [readout: AgentRegistryReadout | null] }>()
 const labels = computed<AgentRegistryLabels>(() => props.labels ?? registryLabels())
 const { readout, loadState, load } = useAgentRegistryReadout(() => props.client)
+watch([readout, loadState], () => {
+  if (loadState.value !== 'loading' || readout.value === null) emit('readout-changed', loadState.value === 'ready' ? readout.value : null)
+}, { immediate: true })
 const entries = computed(() => readout.value?.entries ?? [])
 const rowRefusals = reactive<Record<string, RegistryRefusal | null>>({})
-
 const busy = ref<string | null>(null)
 const actionFailed = ref(false)
 const deleting = ref<AgentRegistryEntry | null>(null)
-
 const form = reactive({ agentId: '', displayName: '', program: '', args: '', adapterId: 'generic-acp' })
 const edited = reactive<Record<DraftField, boolean>>({ agentId: false, displayName: false, program: false, args: false, adapterId: false })
 const submitted = ref(false)
@@ -53,9 +47,6 @@ watch(() => [form.displayName, form.program], () => {
 })
 const addRefusal = ref<RegistryRefusal | null>(null)
 const addedAgentId = ref<string | null>(null)
-const discovered = ref<readonly AgentDiscoveryCandidate[]>([])
-const discoveryBusy = ref(false)
-const discoveryFailed = ref(false)
 
 const draft = computed<AgentDraft>(() => ({
   agentId: form.agentId.trim(),
@@ -110,17 +101,6 @@ async function submit(): Promise<void> {
   }
 }
 
-async function discover(): Promise<void> {
-  discoveryBusy.value = true
-  discoveryFailed.value = false
-  try {
-    discovered.value = await props.client.discover?.() ?? []
-  } catch {
-    discoveryFailed.value = true
-  } finally {
-    discoveryBusy.value = false
-  }
-}
 
 function useCandidate(candidate: AgentDiscoveryCandidate): void {
   form.agentId = candidate.agentId
@@ -160,7 +140,7 @@ async function toggle(entry: AgentRegistryEntry, event: Event): Promise<void> {
 
 async function deleteRegistration(): Promise<void> {
   const entry = deleting.value
-  if (entry === null || busy.value !== null || blocked(entry) !== null) return
+  if (entry === null || busy.value !== null || deletionBlocked(entry) !== null) return
   busy.value = entry.agentId
   actionFailed.value = false
   rowRefusals[entry.agentId] = null
@@ -184,6 +164,12 @@ function blocked(entry: AgentRegistryEntry): RegistryRefusal | null {
   if (readout.value === null) return null
   const standing = disableStanding(entry, readout.value)
   return standing.allowed ? null : standing.refusal
+}
+
+function deletionBlocked(entry: AgentRegistryEntry): RegistryRefusal | null {
+  if (readout.value?.runningAgentIds.includes(entry.agentId)) return { kind: 'instance-running', agentId: entry.agentId }
+  if (entry.source === 'external') return null
+  return blocked(entry)
 }
 
 const selectedEngine = ref('')
@@ -307,6 +293,7 @@ function engineText(): string {
           :labels="labels"
           :busy="busy"
           :blocked="blocked(entry) ? refusalText(blocked(entry)) : null"
+          :deletion-blocked="deletionBlocked(entry) !== null"
           :refusal="refusalText(rowRefusals[entry.agentId] ?? null)"
           :version="versionText(entry)"
           @toggle="toggle(entry, $event)"
@@ -357,56 +344,11 @@ function engineText(): string {
         @submit="submit"
         @update="updateField"
       />
-      <div class="registry-discovery">
-        <div class="registry-discovery-heading">
-          <div>
-            <span class="settings-label">{{ labels.discovery.title }}</span>
-            <span class="settings-note">{{ labels.discovery.hint }}</span>
-          </div>
-          <button
-            type="button"
-            class="registry-button"
-            :disabled="discoveryBusy"
-            data-test="registry-discover"
-            @click="discover"
-          >
-            {{ discoveryBusy ? labels.discovery.scanning : labels.discovery.scan }}
-          </button>
-        </div>
-        <span
-          v-if="discoveryFailed"
-          class="settings-note is-error"
-        >{{ labels.discovery.failed }}</span>
-        <ul
-          v-else-if="discovered.length"
-          class="registry-discovery-list"
-        >
-          <li
-            v-for="candidate in discovered"
-            :key="candidate.agentId"
-            class="registry-discovery-row"
-          >
-            <div>
-              <strong>{{ candidate.displayName }}</strong>
-              <span class="settings-note">
-                {{ labels.discovery.acp }} · {{ candidate.available ? candidate.program : labels.discovery.unavailable }}
-              </span>
-            </div>
-            <button
-              type="button"
-              class="registry-button"
-              :disabled="!candidate.available"
-              @click="useCandidate(candidate)"
-            >
-              {{ labels.discovery.use }}
-            </button>
-          </li>
-        </ul>
-        <span
-          v-else
-          class="settings-note"
-        >{{ labels.discovery.empty }}</span>
-      </div>
+      <AgentRegistryDiscovery
+        :client="client"
+        :labels="labels"
+        @use="useCandidate"
+      />
       <div class="registry-engine">
         <span class="settings-label">{{ labels.engine.title }}</span>
         <span
@@ -454,27 +396,4 @@ function engineText(): string {
   </section>
 </template>
 
-<style scoped>
-/* The `.settings-*` classes are restated here, as they are in every section that renders them: a
-   scoped block belongs to the component that renders the element, and these are too small to
-   belong in the shared stylesheet. */
-.settings-section { display: flex; flex-direction: column; gap: 8px; }
-.settings-label { margin-top: 6px; font-size: 10px; font-weight: 600; letter-spacing: 0.04em; color: var(--app-muted); }
-.settings-note { font-size: 11px; line-height: 1.5; color: var(--app-muted); }
-.settings-note.is-warn { color: var(--app-warn); }
-.settings-note.is-error { color: var(--app-danger); }
-.settings-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--app-text); }
-.settings-field > span:first-child { color: var(--app-muted); font-size: 11px; }
-.registry-rows { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
-.registry-form, .registry-engine { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--app-border); }
-.registry-input { font: inherit; font-size: 12px; padding: 4px 6px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-elevated); color: var(--app-text); }
-.registry-actions { display: flex; align-items: center; gap: 8px; }
-.registry-button { align-self: flex-start; font: inherit; font-size: 11px; padding: 4px 10px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-accent); color: var(--app-accent-contrast); cursor: pointer; }
-.registry-button:disabled { opacity: 0.5; cursor: default; }
-.registry-confirm { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--app-danger); border-radius: var(--app-radius-sm); }
-.registry-discovery { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--app-border); }
-.registry-discovery-heading, .registry-discovery-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.registry-discovery-heading > div, .registry-discovery-row > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.registry-discovery-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.registry-discovery-row { padding: 7px 8px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-elevated); }
-</style>
+<style scoped src="./agent-registry-settings.css"></style>
