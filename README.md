@@ -14,7 +14,7 @@ A local-first desktop knowledge base: WYSIWYG writing, files that stay plain Mar
 
 **[功能](#核心能力)** · **[安装](#安装与版本)** · **[使用](#使用)** · **[从源码运行](#从源码运行)** · **[文档](#文档)** · **[贡献](#参与贡献)** · **[许可证](#许可证)**
 
-![NekoWite 编辑器界面](docs/assets/nekowite-editor.png)
+![NekoWite 编辑器、实时预览与智能体侧栏](docs/assets/nekowite-editor-preview.png)
 
 ## 为什么是 NekoWite
 
@@ -53,6 +53,15 @@ A local-first desktop knowledge base: WYSIWYG writing, files that stay plain Mar
 4. 需要 AI 时：设置 → AI，填写服务商、模型和密钥（密钥加密存在本机，界面只显示已配置）。
 
 「云同步」使用本机 Git：配置远端后手动提交、拉取和推送，不会后台自动同步。SSH 远程工作区需要本机安装 `sshfs`（实时挂载）或 `rsync`（复制导入）；详见[用户指南](docs/USER-GUIDE.md)。
+
+<details>
+<summary>查看远程工作区和设置界面</summary>
+
+![远程工作区连接设置](docs/assets/nekowite-remote-workspace.png)
+
+![主题和界面设置](docs/assets/nekowite-settings-preview.png)
+
+</details>
 
 更完整的界面说明见 [用户指南](docs/USER-GUIDE.md)，隐私边界见 [PRIVACY.md](docs/PRIVACY.md)。
 
@@ -97,7 +106,7 @@ pnpm package:arch:full       # Arch 包，含 OpenCode
 pnpm package:arch:acp        # Arch 包，使用本机 ACP 智能体
 ```
 
-ACP 版是单个应用 ELF，但仍依赖系统 GTK / WebKitGTK 和用户安装的 ACP 智能体。完全版的便携 ELF 需要旁边的 `opencode`，不能只复制应用文件。Arch 包在 Arch Linux 上用 `makepkg` 构建；deb / rpm / AppImage 的旧流程仍可用 `pnpm package:linux`。具体校验与产物见[发布指南](docs/RELEASING.md)。
+ACP 版提供单个应用 ELF，可直接使用用户安装的 ACP 智能体；仍依赖系统 GTK / WebKitGTK。完全版的便携 ELF 需要旁边的 `opencode`，不能只复制应用文件。Linux 发布提供 Arch ACP/完全版包、deb、rpm、ACP 单文件 ELF，以及自带 OpenCode 和不带 OpenCode 的两种 AppImage。具体命令、依赖与校验见[发布指南](docs/RELEASING.md)。
 
 当前 Linux 发布脚本面向 x86_64 / glibc；完全版附带的 OpenCode 引擎同样是 x86_64。不要把从其他架构自行构建的应用当成已验证的发行包。
 

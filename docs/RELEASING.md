@@ -62,7 +62,7 @@ instrument 与 e2e 都不在其中，所以先跑 §2 的命令，再打包。
 
 ### 完全版与 ACP 版
 
-先构建当前平台的 release 二进制，再运行对应发行脚本：
+先构建当前平台的 release 二进制，再运行对应发行脚本。ACP AppImage 必须在 `package:linux` 构建完整 AppDir 后生成：
 
 ```bash
 pnpm --filter @nekowite/desktop exec tauri build --no-bundle
@@ -72,12 +72,14 @@ pnpm package:arch:full      # release/nekowite-full-<version>-1-x86_64.pkg.tar.z
 pnpm package:arch:acp       # release/nekowite-<version>-1-x86_64.pkg.tar.zst
 ```
 
-ACP 版的应用文件可以单独分发，但仍要求系统 GTK / WebKitGTK 依赖，并需要用户安装可执行的 ACP 智能体。完全版把 OpenCode 一同交付；便携版的应用 ELF 本身并不包含引擎。Arch 脚本必须在提供 `makepkg` 和 `pacman` 的环境中运行，以预先生成的 `release/nekowite_<version>_x64` 为输入，完整包还读取旁边的 `release/opencode`；两种 Arch 包互相冲突，不能同时安装。`package:portable:acp` 会覆盖同名 ACP 目录，运行前核对 `release/` 中待替换的文件。
+ACP 版的应用 ELF 可以作为单个可执行文件分发，但仍要求系统 GTK / WebKitGTK 依赖，并需要用户安装可执行的 ACP 智能体。完全版把 OpenCode 一同交付；便携版的应用 ELF 本身并不包含引擎。Arch 脚本必须在提供 `makepkg` 和 `pacman` 的环境中运行，以预先生成的 `release/nekowite_<version>_x64` 为输入，完整包还读取旁边的 `release/opencode`；两种 Arch 包互相冲突，不能同时安装。`package:portable:acp` 会覆盖同名 ACP 目录，运行前核对 `release/` 中待替换的文件。
 
-### deb / rpm / AppImage（原有流程）
+### deb / rpm / AppImage
 
 ```bash
 pnpm package:linux        # 即 bash scripts/package-linux.sh
+pnpm test:package:appimage-acp
+pnpm package:appimage:acp # 从本次集成 AppDir 构建 ACP AppImage
 ```
 
 脚本自己会走七步，失败即停（`set -euo pipefail`，并用 flock 拒绝并发的第二次运行）：
@@ -105,15 +107,21 @@ pnpm package:linux        # 即 bash scripts/package-linux.sh
    `release/superseded/build.XXXXXX/`**（任何一次改名失败都会把上一代恢复回来），
    最后对每个发布的文件打印 `sha256sum`。
 
+`package:linux` 生成自带 OpenCode 的 deb、rpm 和 AppImage，以及完全版便携 ELF 与 OpenCode sidecar。完成后运行 `pnpm test:package:appimage-acp` 和 `pnpm package:appimage:acp`，从已验证的完整 AppDir 额外生成不带 OpenCode 的 ACP AppImage。ACP 镜像在独立临时 AppDir 中构建，并解包确认 sidecar 缺失。
+
 这条流程的产物（`release/`，已在 `.gitignore` 里，不入库）：
 
 | 文件 | 用途 |
 | --- | --- |
-| `nekowite_<version>_x64` | 便携二进制 |
+| `nekowite_<version>_x64` | 完全版便携二进制，需与 `opencode` 同目录 |
+| `nekowite-acp_<version>_x64/nekowite` | 不附带 OpenCode 的单个应用 ELF，上传时命名为 `nekowite-acp_<version>_x64` |
 | `opencode` | 内置智能体引擎，**必须与便携二进制放在同一目录** |
+| `nekowite-<arch-version>-1-x86_64.pkg.tar.zst` | Arch ACP 安装包，beta 版本的连字符按 Arch 规则规范化为点 |
+| `nekowite-full-<arch-version>-1-x86_64.pkg.tar.zst` | Arch 完全版安装包 |
 | `nekowite_<version>_amd64.deb` | Debian / Ubuntu 安装包 |
 | `nekowite-<version>-1.x86_64.rpm` | Fedora / RHEL 安装包 |
 | `nekowite_<version>_amd64.AppImage` | 免安装单体 |
+| `nekowite_<version>_amd64-acp.AppImage` | 不附带 OpenCode 的免安装 ACP 单体 |
 
 **为什么要强调引擎和便携二进制放在一起**：便携产物不是自包含的，应用启动智能体时会去找同目录的
 `opencode`。只复制 `nekowite_<version>_x64` 一个文件，装出来的应用其他功能都正常、只有智能体面板起不来
@@ -135,8 +143,7 @@ pnpm package:linux        # 即 bash scripts/package-linux.sh
 - 建议同时写进发布说明与 `CHANGELOG.md` 对应条目（仓库里有先例：`b4bb816 docs: pin the verified
   portable exe hash`）。
 - 分发时只发布 `release/` 里的产物。
-- **源码以 git tag 为准——但今天仓库里一个 tag 都没有**（`git tag` 输出为空）。所以发布时要么创建
-  `v<version>` 这个 tag 并推上去，要么在发布说明里写明源码对应哪个 commit；不要引用一个不存在的 tag。
+- 源码以 GitHub Release 对应的 `v<version>` tag 为准，发布前核对 tag 与附件来自同一次构建。
 
 ## 6. 人工验收（自动化覆盖不到）
 
@@ -176,7 +183,6 @@ PORTABLE=0 bash scripts/package-win.sh      # NSIS 安装包：release/nekowite_
 - **Linux 包的 GPG 签名**：见 §4；需要先决定密钥托管与公钥分发。
 - **Windows 代码签名证书**（OV/EV、时间戳服务）：见 §7；拿到证书后在 `bundle.windows` 里配置证书
   指纹或自定义签名命令。
-- **源码 tag**：仓库目前没有任何 tag（§5）。
 - **自动更新端点**：当前没有更新检查（没有 updater 插件、没有端点）。若要发布后可自动升级，
   需要先决定托管位置与更新签名密钥。
 - **macOS 构建**：图标资源已包含 `.icns`，但仓库没有对应的打包脚本，也没有 CI；需要单独的流水线。
