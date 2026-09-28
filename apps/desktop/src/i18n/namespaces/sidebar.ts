@@ -2,10 +2,13 @@
 export const sidebar = {
   en: {
     remote: {
-      add: 'Add remote workspace', title: 'Import over SSH',
-      hint: 'Copy a remote folder into a new folder in this vault using your SSH key. Requires rsync on both computers.',
+      add: 'Add remote workspace', title: 'Remote workspace',
+      hint: 'Open a remote directory with your SSH key. Live mode requires SSHFS; import makes a one-time copy with rsync.',
       user: 'SSH user', host: 'Host', port: 'Port', path: 'Remote directory', folder: 'Local folder',
       import: 'Import folder', importing: 'Importing...',
+      live: 'Live editing', copy: 'One-time import', connect: 'Connect', connecting: 'Connecting...',
+      connected: 'Connected directories', disconnect: 'Disconnect',
+      online: 'Online', offline: 'Offline',
     },
     sync: {
       title: 'Git sync', refresh: 'Refresh', loading: 'Reading repository',
@@ -67,10 +70,13 @@ export const sidebar = {
   },
   zh: {
     remote: {
-      add: '添加远程工作区', title: '通过 SSH 导入',
-      hint: '使用 SSH 密钥将远程目录复制到当前文库的新文件夹。两端均需安装 rsync。',
+      add: '添加远程工作区', title: '远程工作区',
+      hint: '使用 SSH 密钥打开远程目录。实时编辑需要 SSHFS；一次性导入需要两端安装 rsync。',
       user: 'SSH 用户', host: '主机', port: '端口', path: '远程目录', folder: '本地文件夹',
       import: '导入文件夹', importing: '导入中…',
+      live: '实时编辑', copy: '一次性导入', connect: '连接', connecting: '连接中…',
+      connected: '已连接目录', disconnect: '断开连接',
+      online: '在线', offline: '已断开',
     },
     sync: {
       title: 'Git 云同步', refresh: '刷新', loading: '读取仓库中',

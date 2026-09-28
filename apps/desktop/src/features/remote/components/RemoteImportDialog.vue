@@ -4,7 +4,7 @@ import { Server, X } from 'lucide-vue-next'
 import { useFocusTrap } from '../../../composables/use-focus-trap'
 import { useModalEscape } from '../../../composables/use-modal-escape'
 import { t } from '../../../i18n'
-import { remoteWorkspaceClient, type RemoteWorkspaceClient } from '../services/remote-workspace-client'
+import { remoteWorkspaceClient, type RemoteConnection, type RemoteWorkspaceClient } from '../services/remote-workspace-client'
 
 const props = withDefaults(defineProps<{ vault: string; client?: RemoteWorkspaceClient }>(), { client: () => remoteWorkspaceClient })
 const emit = defineEmits<{ close: []; imported: [path: string] }>()
@@ -17,19 +17,43 @@ const remotePath = ref('')
 const folder = ref('')
 const pending = ref(false)
 const error = ref('')
+const mode = ref<'live' | 'import'>('live')
+const connections = ref<RemoteConnection[]>([])
 useFocusTrap(dialog, active, { initialFocus: false })
 useModalEscape('remote-import', () => { if (!pending.value) emit('close') })
-onMounted(() => { void nextTick(() => dialog.value?.focus()) })
+onMounted(() => {
+  void nextTick(() => dialog.value?.focus())
+  void refreshConnections()
+})
+
+async function refreshConnections(): Promise<void> {
+  try { connections.value = await props.client.connections(props.vault) }
+  catch (cause) { error.value = String(cause) }
+}
+
+async function disconnect(path: string): Promise<void> {
+  if (pending.value) return
+  pending.value = true
+  error.value = ''
+  try {
+    await props.client.disconnect(props.vault, path.split('/').pop()!)
+    await refreshConnections()
+  } catch (cause) { error.value = String(cause) }
+  finally { pending.value = false }
+}
 
 async function submit(): Promise<void> {
   if (pending.value) return
   pending.value = true
   error.value = ''
   try {
-    const path = await props.client.import(props.vault, {
+    const spec = {
       user: user.value.trim(), host: host.value.trim(), port: Number(port.value),
       remotePath: remotePath.value.trim(), folder: folder.value.trim(),
-    })
+    }
+    const path = mode.value === 'live'
+      ? await props.client.connect(props.vault, spec)
+      : await props.client.import(props.vault, spec)
     emit('imported', path)
   } catch (cause) {
     error.value = String(cause)
@@ -72,6 +96,50 @@ async function submit(): Promise<void> {
       <p class="hint">
         {{ t('remote.hint') }}
       </p>
+      <div
+        class="remote-modes"
+        role="group"
+        :aria-label="t('remote.title')"
+      >
+        <button
+          type="button"
+          data-test="remote-mode-live"
+          :aria-pressed="mode === 'live'"
+          :disabled="pending"
+          @click="mode = 'live'"
+        >
+          {{ t('remote.live') }}
+        </button>
+        <button
+          type="button"
+          data-test="remote-mode-import"
+          :aria-pressed="mode === 'import'"
+          :disabled="pending"
+          @click="mode = 'import'"
+        >
+          {{ t('remote.copy') }}
+        </button>
+      </div>
+      <section
+        v-if="connections.length"
+        class="remote-connections"
+      >
+        <strong>{{ t('remote.connected') }}</strong>
+        <div
+          v-for="connection in connections"
+          :key="connection.path"
+          class="remote-connection"
+        >
+          <span :title="connection.path">{{ connection.path.split('/').pop() }} · {{ connection.connected ? t('remote.online') : t('remote.offline') }}</span>
+          <button
+            type="button"
+            :disabled="pending"
+            @click="disconnect(connection.path)"
+          >
+            {{ t('remote.disconnect') }}
+          </button>
+        </div>
+      </section>
       <div class="fields">
         <label>{{ t('remote.user') }}<input
           v-model="user"
@@ -126,10 +194,10 @@ async function submit(): Promise<void> {
         </button>
         <button
           type="submit"
-          data-test="remote-import"
+          :data-test="mode === 'live' ? 'remote-connect' : 'remote-import'"
           :disabled="pending || !user.trim() || !host.trim() || !remotePath.trim() || !folder.trim()"
         >
-          {{ pending ? t('remote.importing') : t('remote.import') }}
+          {{ mode === 'live' ? (pending ? t('remote.connecting') : t('remote.connect')) : (pending ? t('remote.importing') : t('remote.import')) }}
         </button>
       </footer>
     </form>
@@ -142,6 +210,13 @@ async function submit(): Promise<void> {
 .remote-head strong { flex: 1; }
 .close { display: grid; place-items: center; border: 0; background: transparent; color: var(--app-muted); cursor: pointer; }
 .hint { margin: 10px 0 14px; color: var(--app-muted); line-height: 1.5; font-size: 12px; }
+.remote-modes { display: flex; gap: 2px; padding: 3px; margin-bottom: 14px; background: var(--app-panel); border-radius: 5px; }
+.remote-modes button { flex: 1; border: 0; border-radius: 4px; background: transparent; color: var(--app-muted); padding: 7px; cursor: pointer; }
+.remote-modes button[aria-pressed="true"] { background: var(--app-elevated); color: var(--app-text); box-shadow: 0 1px 3px #0002; }
+.remote-connections { margin-bottom: 14px; font-size: 12px; }
+.remote-connection { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--app-border); }
+.remote-connection span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.remote-connection button { flex: none; border: 0; background: transparent; color: var(--app-accent); cursor: pointer; }
 .fields { display: grid; gap: 9px; }
 .fields label { display: grid; gap: 4px; font-size: 12px; color: var(--app-muted); }
 .fields input { width: 100%; min-width: 0; box-sizing: border-box; border: 1px solid var(--app-border); border-radius: 5px; padding: 8px; background: var(--app-elevated); color: var(--app-text); font: inherit; }

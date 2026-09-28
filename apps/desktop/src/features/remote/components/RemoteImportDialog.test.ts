@@ -9,7 +9,9 @@ const flush = async () => { await Promise.resolve(); await nextTick(); await Pro
 function mount(run: (vault: string, spec: unknown) => Promise<string>) {
   const host = document.createElement('div')
   document.body.append(host)
-  const app = createApp(RemoteImportDialog, { vault: '/notes', client: { import: run } })
+  const app = createApp(RemoteImportDialog, { vault: '/notes', client: {
+    import: run, connect: run, disconnect: vi.fn(), connections: vi.fn().mockResolvedValue([]),
+  } })
   app.mount(host)
   cleanups.push(() => { app.unmount(); host.remove() })
   return host
@@ -29,10 +31,28 @@ it('sends explicit SSH import fields and keeps failures visible', async () => {
   fill(host, 'path', '/home/writer/notes')
   fill(host, 'folder', 'remote-notes')
   await nextTick()
+  host.querySelector<HTMLButtonElement>('[data-test="remote-mode-import"]')!.click()
+  await nextTick()
   host.querySelector<HTMLButtonElement>('[data-test="remote-import"]')!.click()
   await flush()
   expect(run).toHaveBeenCalledWith('/notes', {
     user: 'writer', host: 'example.org', port: 22, remotePath: '/home/writer/notes', folder: 'remote-notes',
   })
   expect(host.textContent).toContain('SSH unavailable')
+})
+
+it('connects live over SSH by default and shows a failed connection', async () => {
+  const run = vi.fn().mockRejectedValueOnce(new Error('install sshfs'))
+  const host = mount(run)
+  fill(host, 'user', 'writer')
+  fill(host, 'host', 'example.org')
+  fill(host, 'path', '/home/writer/notes')
+  fill(host, 'folder', 'remote-notes')
+  await nextTick()
+  host.querySelector<HTMLButtonElement>('[data-test="remote-connect"]')!.click()
+  await flush()
+  expect(run).toHaveBeenCalledWith('/notes', {
+    user: 'writer', host: 'example.org', port: 22, remotePath: '/home/writer/notes', folder: 'remote-notes',
+  })
+  expect(host.textContent).toContain('install sshfs')
 })
