@@ -303,6 +303,12 @@
           "markdownDescription": "Enables the agent_registry_set_enabled command without any pre-configured scope."
         },
         {
+          "description": "Enables the agent_registry_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-registry-update",
+          "markdownDescription": "Enables the agent_registry_update command without any pre-configured scope."
+        },
+        {
           "description": "Enables the agent_runtime_read command without any pre-configured scope.",
           "type": "string",
           "const": "allow-agent-runtime-read",
@@ -615,6 +621,30 @@
           "markdownDescription": "Enables the register_vault command without any pre-configured scope."
         },
         {
+          "description": "Enables the remote_connect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-remote-connect",
+          "markdownDescription": "Enables the remote_connect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remote_connections command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-remote-connections",
+          "markdownDescription": "Enables the remote_connections command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remote_disconnect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-remote-disconnect",
+          "markdownDescription": "Enables the remote_disconnect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remote_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-remote-import",
+          "markdownDescription": "Enables the remote_import command without any pre-configured scope."
+        },
+        {
           "description": "Enables the rename_entry command without any pre-configured scope.",
           "type": "string",
           "const": "allow-rename-entry",
@@ -685,6 +715,12 @@
           "type": "string",
           "const": "allow-unlock-vault",
           "markdownDescription": "Enables the unlock_vault command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the vault_git command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-vault-git",
+          "markdownDescription": "Enables the vault_git command without any pre-configured scope."
         },
         {
           "description": "Enables the watch_folder command without any pre-configured scope.",
@@ -823,6 +859,12 @@
           "type": "string",
           "const": "deny-agent-registry-set-enabled",
           "markdownDescription": "Denies the agent_registry_set_enabled command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_registry_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-registry-update",
+          "markdownDescription": "Denies the agent_registry_update command without any pre-configured scope."
         },
         {
           "description": "Denies the agent_runtime_read command without any pre-configured scope.",
@@ -1137,6 +1179,30 @@
           "markdownDescription": "Denies the register_vault command without any pre-configured scope."
         },
         {
+          "description": "Denies the remote_connect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-remote-connect",
+          "markdownDescription": "Denies the remote_connect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remote_connections command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-remote-connections",
+          "markdownDescription": "Denies the remote_connections command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remote_disconnect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-remote-disconnect",
+          "markdownDescription": "Denies the remote_disconnect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remote_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-remote-import",
+          "markdownDescription": "Denies the remote_import command without any pre-configured scope."
+        },
+        {
           "description": "Denies the rename_entry command without any pre-configured scope.",
           "type": "string",
           "const": "deny-rename-entry",
@@ -1207,6 +1273,12 @@
           "type": "string",
           "const": "deny-unlock-vault",
           "markdownDescription": "Denies the unlock_vault command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the vault_git command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-vault-git",
+          "markdownDescription": "Denies the vault_git command without any pre-configured scope."
         },
         {
           "description": "Denies the watch_folder command without any pre-configured scope.",
