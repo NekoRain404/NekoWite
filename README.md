@@ -12,7 +12,7 @@ A local-first desktop knowledge base: WYSIWYG writing, files that stay plain Mar
 [![Vue 3](https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white)](https://vuejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 
-**[功能](#核心能力)** · **[使用](#使用)** · **[从源码运行](#从源码运行)** · **[文档](#文档)** · **[贡献](#参与贡献)** · **[许可证](#许可证)**
+**[功能](#核心能力)** · **[安装](#安装与版本)** · **[使用](#使用)** · **[从源码运行](#从源码运行)** · **[文档](#文档)** · **[贡献](#参与贡献)** · **[许可证](#许可证)**
 
 ![NekoWite 编辑器界面](docs/assets/nekowite-editor.png)
 
@@ -56,6 +56,21 @@ A local-first desktop knowledge base: WYSIWYG writing, files that stay plain Mar
 
 更完整的界面说明见 [用户指南](docs/USER-GUIDE.md)，隐私边界见 [PRIVACY.md](docs/PRIVACY.md)。
 
+## 安装与版本
+
+Linux 提供两个发行方向：
+
+- **完全版**：应用旁边附带经过校验的 OpenCode 引擎，适合第一次使用智能体的用户。
+- **ACP 版**：只包含应用本体，启动时调用用户已经安装并配置好的 ACP 智能体，适合已有本地 Agent 环境的用户。
+
+两种版本都需要系统提供 GTK / WebKitGTK。完全版的便携目录必须同时保留 `nekowite_*_x64` 与 `opencode`；ACP 版不包含智能体运行时。当前正式打包目标是 Linux x86_64，Arch 包、便携二进制以及 deb / rpm / AppImage 的构建命令见 [发布指南](docs/RELEASING.md)。
+
+### ACP 与远程工作区
+
+设置 → 智能体会扫描 PATH 和常见安装目录，识别可执行的 ACP 程序；扫描结果可以直接加入注册表，也可以手动填写绝对路径、启动参数和适配器。启动失败时界面会保留诊断信息，不会把普通 CLI 当成 ACP 静默使用。
+
+知识库支持两种远程工作流：Git 面板用于手动提交、拉取和推送；文件夹右键菜单用于添加 SSH 工作区。实时编辑依赖 `sshfs`，复制导入依赖 `rsync`；认证可使用 SSH Agent、私钥或密码。FTP/SFTP 图形化连接尚未作为独立协议提供，SFTP 请通过 SSH/sshfs 使用。
+
 ## 从源码运行
 
 环境：Node.js 22、pnpm 11。跑桌面应用还需要 Rust stable 和 [Tauri v2 系统依赖](https://v2.tauri.app/start/prerequisites/)。
@@ -88,7 +103,7 @@ ACP 版是单个应用 ELF，但仍依赖系统 GTK / WebKitGTK 和用户安装�
 
 ## 项目状态
 
-当前版本 **1.0.0**。Linux 是当前仓库的测试和打包目标，提供完全版与依赖本机智能体的 ACP 版。尚无自动更新；第三方 vault 插件在发行版中不加载。历史验证记录不代表当前功能状态。
+当前版本 **1.0.0**。Linux 是当前仓库的测试和打包目标，提供完全版与依赖本机智能体的 ACP 版。项目使用单一 `main` 分支；尚无自动更新，第三方 vault 插件在发行版中不加载。发布前仍需完成原生 WebKitGTK、真实 ACP 启动和远程工作区的人工验收。
 
 ## 开发
 
