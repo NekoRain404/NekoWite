@@ -256,6 +256,13 @@ fn a_graceful_quit_takes_the_engine_with_it() {
         started.elapsed().as_secs_f32()
     );
 
+    // The startup mask can still cover a registered vault. Its 2.5s maximum and 360ms exit
+    // transition must finish before a coordinate-based click can reach the rail toggle.
+    let mask_deadline = Duration::from_millis(3000);
+    if let Some(remaining) = mask_deadline.checked_sub(started.elapsed()) {
+        std::thread::sleep(remaining);
+    }
+
     // 3. The rail, and with it the engine. One click: a second would close the rail it just opened,
     //    and that close queues a teardown behind the start.
     assert!(
