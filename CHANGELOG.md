@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+后续改动将在这里累计。当前预览版本：**0.99 Beta**（构建版本 `0.99.0-beta.1`）。
+
+## [0.99.0-beta.1] - 2026-09-28
+
 ### Added
 
 - **AI 用量开始采集：每条回答下面写「本次消耗 N tokens」**：此前 `ai-done` 只带正文，三个服务商的用量字段在解析层被各自丢掉——用户看不到一次请求花了多少，而应用其实拿得到。现在 Rust 侧按方言解析：OpenAI 兼容端点声明 `stream_options.include_usage` 并从收尾帧读 `usage`，Anthropic 合并 `message_start` 与 `message_delta`（后者只带输出，按字段取最新值），Gemini 读 `usageMetadata`；SSE 帧守卫同步放宽——「`choices` 为空、只剩 `usage`」的收尾帧此前会被当成空帧丢掉，而它正是用量唯一的落点。`ai-done` 事件带上 `{ usage }`，服务商没报就是 `null`（绝不伪造 0）；TS 侧新增 `AiTokenUsage` 与 `usageTotal()`（缺总量时用输入 + 输出相加）；聊天面板在回答下方显示「本次消耗 N tokens」，并随消息一起持久化。
