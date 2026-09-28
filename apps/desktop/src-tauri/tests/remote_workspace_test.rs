@@ -13,6 +13,7 @@ fn spec() -> RemoteSpec {
         port: 22,
         remote_path: "/home/writer/notes".into(),
         folder: "remote-notes".into(),
+        auth: Default::default(),
     }
 }
 

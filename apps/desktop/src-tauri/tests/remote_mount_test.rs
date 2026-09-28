@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use nekowite_lib::commands::remote_mount::{
     connect_using, disconnect_using, is_mounted_in, RemoteMountState,
 };
+use nekowite_lib::commands::remote_mount_process::verify_remote_directory;
 use nekowite_lib::commands::remote_workspace::RemoteSpec;
 use nekowite_lib::domain::path_policy::resolve_within;
 use nekowite_lib::state::VaultRegistry;
@@ -15,6 +16,7 @@ fn spec() -> RemoteSpec {
         port: 22,
         remote_path: "/home/writer/notes".into(),
         folder: "live-notes".into(),
+        auth: Default::default(),
     }
 }
 
@@ -166,4 +168,56 @@ fn unmounted_placeholder_refuses_file_access() {
         .unwrap_err()
         .contains("remote connection is offline"));
     fs::remove_dir_all(folder).unwrap();
+}
+
+#[tokio::test]
+async fn readiness_refuses_the_offline_placeholder_and_missing_remote_directory() {
+    let folder = root("remote-mount-readiness");
+    fs::write(folder.join(".nekowite-remote-placeholder"), b"").unwrap();
+    assert!(verify_remote_directory(&folder).await.is_err());
+    fs::remove_dir_all(&folder).unwrap();
+    assert!(verify_remote_directory(&folder).await.is_err());
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated SSH daemon and REMOTE_AUTH_SMOKE_ROOT"]
+async fn private_key_authentication_can_edit_live_remote_files() {
+    let fixture = PathBuf::from(std::env::var("REMOTE_AUTH_SMOKE_ROOT").unwrap());
+    let vault = fixture.join("vault");
+    fs::create_dir_all(&vault).unwrap();
+    let registry = VaultRegistry::default();
+    let path = vault.to_str().unwrap();
+    registry.approve_pick(path).unwrap();
+    registry.register(path, None).unwrap();
+    let mut remote = spec();
+    remote.user = std::env::var("USER").unwrap();
+    remote.host = "127.0.0.1".into();
+    remote.port = 44339;
+    remote.remote_path = fixture.join("remote").to_str().unwrap().into();
+    remote.auth = nekowite_lib::commands::remote_auth::RemoteAuth::Key {
+        identity_file: fixture.join("client key").to_str().unwrap().into(),
+    };
+    let state = RemoteMountState::default();
+    let mount = connect_using(
+        &registry,
+        &state,
+        path,
+        remote,
+        fixture.join("sshfs-wrapper").to_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    let mounted = PathBuf::from(mount).join("smoke.md");
+    let original = fixture.join("remote/smoke.md");
+    let result = (|| -> Result<(), std::io::Error> {
+        fs::write(&mounted, "saved from editor")?;
+        assert_eq!(fs::read_to_string(&original)?, "saved from editor");
+        fs::write(&original, "changed on remote")?;
+        assert_eq!(fs::read_to_string(&mounted)?, "changed on remote");
+        Ok(())
+    })();
+    disconnect_using(&registry, &state, path, "live-notes", "fusermount3")
+        .await
+        .unwrap();
+    result.unwrap();
 }

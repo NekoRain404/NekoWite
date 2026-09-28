@@ -15,11 +15,21 @@ OUT="$ROOT/release"
 [ -x "$BIN" ] || { echo "FAIL: executable not found: $BIN" >&2; exit 1; }
 mkdir -p "$OUT"
 
+publish_binary() {
+  local source="$1" target="$2" staged
+  staged="$(mktemp "$OUT/.nekowite-publish.XXXXXX")"
+  if ! cp -p "$source" "$staged"; then
+    rm -f "$staged"
+    return 1
+  fi
+  mv -f "$staged" "$target"
+}
+
 case "$MODE" in
   full)
     [ -x "$ENGINE" ] || { echo "FAIL: engine not found: $ENGINE" >&2; exit 1; }
-    cp -p "$BIN" "$OUT/nekowite_${VERSION}_x64"
-    cp -p "$ENGINE" "$OUT/opencode"
+    publish_binary "$BIN" "$OUT/nekowite_${VERSION}_x64"
+    publish_binary "$ENGINE" "$OUT/opencode"
     echo "Published full edition: $OUT/nekowite_${VERSION}_x64"
     ;;
   lean)

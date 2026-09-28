@@ -56,3 +56,25 @@ it('connects live over SSH by default and shows a failed connection', async () =
   })
   expect(host.textContent).toContain('install sshfs')
 })
+
+it('offers password authentication and clears the secret after a failed attempt', async () => {
+  const run = vi.fn().mockRejectedValueOnce(new Error('authentication failed'))
+  const host = mount(run)
+  const select = host.querySelector<HTMLSelectElement>('[data-test="remote-auth"]')
+  expect(select).not.toBeNull()
+  select!.value = 'password'
+  select!.dispatchEvent(new Event('change', { bubbles: true }))
+  await nextTick()
+  fill(host, 'user', 'writer')
+  fill(host, 'host', 'example.org')
+  fill(host, 'path', '/notes')
+  fill(host, 'folder', 'remote-notes')
+  fill(host, 'password', 'test secret')
+  await nextTick()
+  host.querySelector<HTMLButtonElement>('[data-test="remote-connect"]')!.click()
+  await flush()
+  expect(run).toHaveBeenCalledWith('/notes', expect.objectContaining({
+    auth: { mode: 'password', password: 'test secret' },
+  }))
+  expect(host.querySelector<HTMLInputElement>('[data-test="remote-password"]')!.value).toBe('')
+})

@@ -3,7 +3,9 @@ export const sidebar = {
   en: {
     remote: {
       add: 'Add remote workspace', title: 'Remote workspace',
-      hint: 'Open a remote directory with your SSH key. Live mode requires SSHFS; import makes a one-time copy with rsync.',
+      hint: 'Live editing requires SSHFS. Import requires rsync; password import also requires sshpass.',
+      auth: 'Authentication', authAgent: 'SSH Agent / system configuration', authKey: 'Private key', authPassword: 'Password',
+      identityFile: 'Private-key path', password: 'Password',
       user: 'SSH user', host: 'Host', port: 'Port', path: 'Remote directory', folder: 'Local folder',
       import: 'Import folder', importing: 'Importing...',
       live: 'Live editing', copy: 'One-time import', connect: 'Connect', connecting: 'Connecting...',
@@ -71,7 +73,9 @@ export const sidebar = {
   zh: {
     remote: {
       add: '添加远程工作区', title: '远程工作区',
-      hint: '使用 SSH 密钥打开远程目录。实时编辑需要 SSHFS；一次性导入需要两端安装 rsync。',
+      hint: '实时编辑需要 SSHFS。导入需要 rsync；密码导入还需要 sshpass。',
+      auth: '认证方式', authAgent: 'SSH Agent / 系统配置', authKey: '私钥', authPassword: '密码',
+      identityFile: '私钥路径', password: '密码',
       user: 'SSH 用户', host: '主机', port: '端口', path: '远程目录', folder: '本地文件夹',
       import: '导入文件夹', importing: '导入中…',
       live: '实时编辑', copy: '一次性导入', connect: '连接', connecting: '连接中…',

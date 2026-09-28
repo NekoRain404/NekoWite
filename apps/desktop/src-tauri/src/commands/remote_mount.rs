@@ -10,6 +10,7 @@ use serde::Serialize;
 use tauri::{Emitter, State};
 use tokio::process::{Child, Command};
 
+use super::remote_mount_process::start_mount;
 use super::remote_workspace::{validate_remote, RemoteSpec};
 use crate::domain::path_policy::has_hidden_component;
 use crate::state::VaultRegistry;
@@ -59,7 +60,7 @@ pub fn is_mounted_in(mountinfo: &str, target: &Path) -> bool {
     })
 }
 
-fn is_mounted(target: &Path) -> Result<bool, String> {
+pub(crate) fn is_mounted(target: &Path) -> Result<bool, String> {
     let mounts = fs::read_to_string("/proc/self/mountinfo")
         .map_err(|error| format!("could not inspect mounts: {error}"))?;
     Ok(is_mounted_in(&mounts, target))
@@ -185,34 +186,6 @@ pub async fn connect_using(
     }
 }
 
-async fn start_mount(target: &Path, spec: &RemoteSpec, program: &str) -> Result<Child, String> {
-    let source = format!("{}@{}:{}", spec.user, spec.host, spec.remote_path);
-    let mut child = Command::new(program)
-        .args(["-f", "-o", "nonempty,reconnect,ServerAliveInterval=15,ServerAliveCountMax=3,BatchMode=yes,StrictHostKeyChecking=yes,ConnectTimeout=10,cache=no,dir_cache=no", "-p"])
-        .arg(spec.port.to_string())
-        .arg(source)
-        .arg(target)
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|error| format!("SSHFS could not start (install sshfs on Linux): {error}"))?;
-    for _ in 0..50 {
-        if is_mounted(target)? {
-            return Ok(child);
-        }
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| format!("SSHFS exited: {error}"))?
-        {
-            return Err(format!(
-                "SSHFS connection failed ({status}); check SSH access and the remote directory"
-            ));
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    let _ = child.kill().await;
-    Err("SSHFS connection timed out".into())
-}
-
 pub async fn disconnect_using(
     registry: &VaultRegistry,
     state: &RemoteMountState,
@@ -240,17 +213,25 @@ pub async fn disconnect_using(
         }
     }
     if is_mounted(&target)? {
-        let result = Command::new(unmount)
-            .arg("-u")
-            .arg(&target)
-            .output()
-            .await
-            .map_err(|error| format!("could not start unmount: {error}"))?;
-        if !result.status.success() || is_mounted(&target)? {
-            return Err(format!(
-                "could not disconnect remote mount: {}",
-                String::from_utf8_lossy(&result.stderr).trim()
-            ));
+        // FUSE may briefly retain a directory handle after the last read.
+        // Wait for it without detaching an active filesystem or losing ownership.
+        for attempt in 0..20 {
+            let result = Command::new(unmount)
+                .arg("-u")
+                .arg(&target)
+                .output()
+                .await
+                .map_err(|error| format!("could not start unmount: {error}"))?;
+            if !is_mounted(&target)? {
+                break;
+            }
+            if attempt == 19 || !String::from_utf8_lossy(&result.stderr).contains("busy") {
+                return Err(format!(
+                    "could not disconnect remote mount: {}",
+                    String::from_utf8_lossy(&result.stderr).trim()
+                ));
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
     state

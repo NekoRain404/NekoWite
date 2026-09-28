@@ -120,6 +120,7 @@ pub use live_notes::{
 };
 pub use permission_grants::{EngineHttp, GrantsReadout, SavedGrant};
 pub use process::{env_pairs, EngineLaunch, SYSTEM_CA_BUNDLE};
+pub(crate) use process::signal_group;
 pub use recovery::{Baseline, Recovery, RecoveryOutcome, RecoveryPlan, RecoveryRefusal};
 pub use session::{
     AgentRuntime, AgentRuntimeEvents, RuntimeEvent, SessionError, SessionInfo, INITIALIZE_BOUND,

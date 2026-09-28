@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref } from 'vue'
+import { nextTick, onMounted, ref, watch } from 'vue'
 import { Server, X } from 'lucide-vue-next'
 import { useFocusTrap } from '../../../composables/use-focus-trap'
 import { useModalEscape } from '../../../composables/use-modal-escape'
 import { t } from '../../../i18n'
-import { remoteWorkspaceClient, type RemoteConnection, type RemoteWorkspaceClient } from '../services/remote-workspace-client'
+import { remoteWorkspaceClient, type RemoteAuth, type RemoteConnection, type RemoteWorkspaceClient } from '../services/remote-workspace-client'
 
 const props = withDefaults(defineProps<{ vault: string; client?: RemoteWorkspaceClient }>(), { client: () => remoteWorkspaceClient })
 const emit = defineEmits<{ close: []; imported: [path: string] }>()
@@ -19,6 +19,10 @@ const pending = ref(false)
 const error = ref('')
 const mode = ref<'live' | 'import'>('live')
 const connections = ref<RemoteConnection[]>([])
+const authMode = ref<'agent' | 'key' | 'password'>('agent')
+const identityFile = ref('')
+const password = ref('')
+watch(authMode, () => { password.value = '' })
 useFocusTrap(dialog, active, { initialFocus: false })
 useModalEscape('remote-import', () => { if (!pending.value) emit('close') })
 onMounted(() => {
@@ -50,6 +54,9 @@ async function submit(): Promise<void> {
     const spec = {
       user: user.value.trim(), host: host.value.trim(), port: Number(port.value),
       remotePath: remotePath.value.trim(), folder: folder.value.trim(),
+      ...(authMode.value === 'agent' ? {} : { auth: authMode.value === 'key'
+        ? { mode: 'key', identityFile: identityFile.value.trim() } as RemoteAuth
+        : { mode: 'password', password: password.value } as RemoteAuth }),
     }
     const path = mode.value === 'live'
       ? await props.client.connect(props.vault, spec)
@@ -58,6 +65,7 @@ async function submit(): Promise<void> {
   } catch (cause) {
     error.value = String(cause)
   } finally {
+    password.value = ''
     pending.value = false
   }
 }
@@ -141,6 +149,31 @@ async function submit(): Promise<void> {
         </div>
       </section>
       <div class="fields">
+        <label>{{ t('remote.auth') }}<select
+          v-model="authMode"
+          data-test="remote-auth"
+          :disabled="pending"
+        >
+          <option value="agent">{{ t('remote.authAgent') }}</option>
+          <option value="key">{{ t('remote.authKey') }}</option>
+          <option value="password">{{ t('remote.authPassword') }}</option>
+        </select></label>
+        <label v-if="authMode === 'key'">{{ t('remote.identityFile') }}<input
+          v-model="identityFile"
+          data-test="remote-key"
+          required
+          :disabled="pending"
+          placeholder="/home/user/.ssh/id_ed25519"
+          spellcheck="false"
+        ></label>
+        <label v-if="authMode === 'password'">{{ t('remote.password') }}<input
+          v-model="password"
+          data-test="remote-password"
+          type="password"
+          required
+          :disabled="pending"
+          autocomplete="off"
+        ></label>
         <label>{{ t('remote.user') }}<input
           v-model="user"
           data-test="remote-user"
@@ -219,7 +252,7 @@ async function submit(): Promise<void> {
 .remote-connection button { flex: none; border: 0; background: transparent; color: var(--app-accent); cursor: pointer; }
 .fields { display: grid; gap: 9px; }
 .fields label { display: grid; gap: 4px; font-size: 12px; color: var(--app-muted); }
-.fields input { width: 100%; min-width: 0; box-sizing: border-box; border: 1px solid var(--app-border); border-radius: 5px; padding: 8px; background: var(--app-elevated); color: var(--app-text); font: inherit; }
+.fields input, .fields select { width: 100%; min-width: 0; box-sizing: border-box; border: 1px solid var(--app-border); border-radius: 5px; padding: 8px; background: var(--app-elevated); color: var(--app-text); font: inherit; }
 .error { color: var(--app-danger); font-size: 12px; overflow-wrap: anywhere; }
 .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 17px; }
 .actions button { border: 1px solid var(--app-border); border-radius: 5px; background: var(--app-elevated); color: var(--app-text); padding: 7px 12px; cursor: pointer; }

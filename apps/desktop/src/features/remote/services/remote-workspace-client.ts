@@ -6,7 +6,10 @@ export interface RemoteSpec {
   port: number
   remotePath: string
   folder: string
+  auth?: RemoteAuth
 }
+
+export type RemoteAuth = { mode: 'agent' } | { mode: 'key'; identityFile: string } | { mode: 'password'; password: string }
 
 export interface RemoteWorkspaceClient {
   import(vaultRoot: string, spec: RemoteSpec): Promise<string>

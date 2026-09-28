@@ -1,5 +1,7 @@
 //! Explicit SSH import into an authorized vault, without saved credentials.
 use std::fs;
+use std::os::unix::process::CommandExt;
+use std::process::{Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -7,9 +9,57 @@ use serde::Deserialize;
 use tauri::State;
 use tokio::process::Command;
 
+use super::remote_auth::RemoteAuth;
+use crate::agent_runtime::signal_group;
 use crate::state::VaultRegistry;
 
 static NEXT_IMPORT: AtomicU64 = AtomicU64::new(0);
+
+fn stop_transfer_group(pid: u32) {
+    // A timed-out sshpass may have spawned rsync and ssh. They share this
+    // dedicated group; killing only the wrapper leaves writers behind.
+    if let Ok(pid) = i32::try_from(pid) {
+        let _ = signal_group(pid, "-KILL");
+    }
+}
+
+pub async fn run_transfer(
+    mut command: Command,
+    auth: &RemoteAuth,
+    deadline: Duration,
+) -> Result<Output, String> {
+    command.as_std_mut().process_group(0);
+    command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    auth.prepare_stdin(&mut command);
+    let mut child = command.spawn().map_err(|error| {
+        if matches!(auth, RemoteAuth::Password { .. })
+            && error.kind() == std::io::ErrorKind::NotFound
+        {
+            "sshpass is required for password import; install sshpass".to_string()
+        } else {
+            format!("rsync could not start: {error}")
+        }
+    })?;
+    let pid = child.id().ok_or("SSH import process unavailable")?;
+    if let Err(error) = auth.send_password(&mut child).await {
+        stop_transfer_group(pid);
+        let _ = child.wait().await;
+        return Err(error);
+    }
+    let mut waiting = Box::pin(child.wait_with_output());
+    match tokio::time::timeout(deadline, &mut waiting).await {
+        Ok(result) => result.map_err(|error| format!("rsync failed: {error}")),
+        Err(_) => {
+            stop_transfer_group(pid);
+            // Reap after terminating the entire group, before staging cleanup.
+            let _ = waiting.await;
+            Err("SSH import timed out".into())
+        }
+    }
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,9 +69,12 @@ pub struct RemoteSpec {
     pub port: u16,
     pub remote_path: String,
     pub folder: String,
+    #[serde(default)]
+    pub auth: RemoteAuth,
 }
 
 pub fn validate_remote(spec: &RemoteSpec) -> Result<(), String> {
+    spec.auth.validate()?;
     let safe_name = |value: &str| {
         !value.is_empty()
             && value
@@ -85,14 +138,20 @@ pub async fn import_workspace_using(
 
     // rsync's secluded args keep the remote directory out of the remote shell;
     // the strict path check above also rejects option and shell syntax.
-    let transport = format!("ssh -oBatchMode=yes -oConnectTimeout=10 -p {}", spec.port);
+    let transport = spec.auth.import_transport(spec.port);
     let source = format!(
         "{}@{}:{}/",
         spec.user,
         spec.host,
         spec.remote_path.trim_end_matches('/')
     );
-    let mut command = Command::new(program);
+    let mut command = if matches!(spec.auth, RemoteAuth::Password { .. }) {
+        let mut wrapper = Command::new("sshpass");
+        wrapper.args(["-d", "0"]).arg(program);
+        wrapper
+    } else {
+        Command::new(program)
+    };
     command
         .args([
             "-a",
@@ -109,17 +168,14 @@ pub async fn import_workspace_using(
         ])
         .arg(source)
         .arg(&staging)
-        .env("RSYNC_RSH", &transport)
-        .kill_on_drop(true);
-    let outcome = tokio::time::timeout(Duration::from_secs(300), command.output()).await;
-    let result = match outcome {
-        Err(_) => Err("SSH import timed out".to_string()),
-        Ok(Err(error)) => Err(format!("rsync could not start: {error}")),
-        Ok(Ok(output)) if !output.status.success() => {
+        .env("RSYNC_RSH", &transport);
+    let result = match run_transfer(command, &spec.auth, Duration::from_secs(300)).await {
+        Err(error) => Err(error),
+        Ok(output) if !output.status.success() => {
             let message = String::from_utf8_lossy(&output.stderr[..output.stderr.len().min(2048)]);
             Err(format!("SSH import failed: {}", message.trim()))
         }
-        Ok(Ok(_)) => {
+        Ok(_) => {
             // Reserve the destination before renaming, so a failed transfer
             // never replaces a pre-existing vault folder.
             fs::create_dir(&target)
