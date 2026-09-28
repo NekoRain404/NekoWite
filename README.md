@@ -54,14 +54,11 @@ A local-first desktop knowledge base: WYSIWYG writing, files that stay plain Mar
 
 「云同步」使用本机 Git：配置远端后手动提交、拉取和推送，不会后台自动同步。SSH 远程工作区需要本机安装 `sshfs`（实时挂载）或 `rsync`（复制导入）；详见[用户指南](docs/USER-GUIDE.md)。
 
-<details>
-<summary>查看远程工作区和设置界面</summary>
+### 远程工作区与设置
 
-![远程工作区连接设置](docs/assets/nekowite-remote-workspace.png)
+<img src="docs/assets/nekowite-remote-workspace.png" alt="远程工作区连接设置" width="420">
 
 ![主题和界面设置](docs/assets/nekowite-settings-preview.png)
-
-</details>
 
 更完整的界面说明见 [用户指南](docs/USER-GUIDE.md)，隐私边界见 [PRIVACY.md](docs/PRIVACY.md)。
 
