@@ -166,8 +166,8 @@ watch(
   border-right: 1px solid var(--app-border);
   overflow: hidden;
   user-select: none;
-  transition: width var(--app-motion-fast) var(--app-ease),
-              min-width var(--app-motion-fast) var(--app-ease);
+  transition: width var(--app-motion) var(--app-ease),
+              min-width var(--app-motion) var(--app-ease);
 }
 .sidebar-scroll {
   flex: 1;
@@ -176,6 +176,7 @@ watch(
   padding: 8px 8px 12px;
   display: flex;
   flex-direction: column;
+  transition: padding-inline var(--app-motion) var(--app-ease);
 }
 .sidebar.compact .sidebar-scroll { padding-inline: 6px; }
 .sidebar.compact .sidebar-footer { justify-content: center; gap: 0; padding-inline: 2px; }

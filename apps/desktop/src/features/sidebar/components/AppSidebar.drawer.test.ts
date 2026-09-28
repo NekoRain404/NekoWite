@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, reactive, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import AppSidebar from './AppSidebar.vue'
 import { setLocale, t } from '../../../i18n'
 
@@ -47,7 +49,8 @@ describe('sidebar icon drawer', () => {
     expect(host.querySelector('.sidebar')?.classList.contains('compact')).toBe(true)
     expect(drawerButton().title).toBe(t('nav.expandDrawer'))
     expect(host.querySelector('.nav-group .nav-icon')).not.toBeNull()
-    expect(host.querySelector('.nav-group .nav-label')).toBeNull()
+    expect(host.querySelector('.nav-group .nav-label')).not.toBeNull()
+    expect(host.querySelector('.nav-group .nav-label')?.getAttribute('aria-hidden')).toBe('true')
     expect(host.querySelector('.nav-group .nav-item')?.getAttribute('title')).toBeTruthy()
 
     drawerButton().click()
@@ -55,5 +58,15 @@ describe('sidebar icon drawer', () => {
 
     expect(state.compact).toBe(false)
     expect(host.querySelector('.nav-group .nav-label')).not.toBeNull()
+  })
+
+  it('keeps drawer content mounted while width and vault-row position animate', () => {
+    const componentDir = resolve(process.cwd(), 'src/features/sidebar/components')
+    const sidebarStyles = readFileSync(resolve(componentDir, 'AppSidebar.vue'), 'utf8')
+    const navigationStyles = readFileSync(resolve(componentDir, 'SidebarNavigation.vue'), 'utf8')
+
+    expect(sidebarStyles).toMatch(/transition:\s*width var\(--app-motion\)/)
+    expect(navigationStyles).toMatch(/transition:\s*height var\(--app-motion\)/)
+    expect(navigationStyles).toMatch(/transition:\s*opacity var\(--app-motion-fast\)/)
   })
 })

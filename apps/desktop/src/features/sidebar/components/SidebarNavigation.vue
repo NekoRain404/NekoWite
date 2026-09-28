@@ -61,8 +61,8 @@ async function pickFolder(): Promise<void> {
         :stroke-width="1.8"
       />
       <span
-        v-if="!compact"
         class="nav-label"
+        :aria-hidden="compact"
       >{{ vaultName }}</span>
     </button>
     <button
@@ -112,8 +112,8 @@ async function pickFolder(): Promise<void> {
         :stroke-width="1.8"
       />
       <span
-        v-if="!compact"
         class="nav-label"
+        :aria-hidden="compact"
       >{{ t('daily.new') }}</span>
     </button>
     <button
@@ -127,8 +127,8 @@ async function pickFolder(): Promise<void> {
         :stroke-width="1.8"
       />
       <span
-        v-if="!compact"
         class="nav-label"
+        :aria-hidden="compact"
       >{{ t('template.pickTitle') }}</span>
     </button>
   </div>
@@ -154,12 +154,13 @@ async function pickFolder(): Promise<void> {
         :stroke-width="1.8"
       />
       <span
-        v-if="!compact"
         class="nav-label"
+        :aria-hidden="compact"
       >{{ entry.label }}</span>
       <span
-        v-if="!compact && typeof entry.count === 'number'"
+        v-if="typeof entry.count === 'number'"
         class="nav-count"
+        :aria-hidden="compact"
       >{{ entry.count }}</span>
     </button>
   </nav>
@@ -212,14 +213,17 @@ async function pickFolder(): Promise<void> {
 </template>
 
 <style scoped>
-.vault-row { display: flex; align-items: center; gap: 2px; min-width: 0; }
-.vault-row .vault-item { flex: 1; min-width: 0; }
-.drawer-toggle { display: grid; place-items: center; width: 28px; height: 30px; flex: none; padding: 0; border: 0; border-radius: var(--app-radius-sm); background: transparent; color: var(--app-muted); cursor: pointer; }
+.vault-row { position: relative; height: 34px; flex: none; min-width: 0; transition: height var(--app-motion) var(--app-ease); }
+.vault-row .vault-item { position: absolute; top: 0; left: 0; width: calc(100% - 30px); min-width: 0; transition: top var(--app-motion) var(--app-ease), width var(--app-motion) var(--app-ease); }
+.drawer-toggle { position: absolute; top: 2px; right: 0; display: grid; place-items: center; width: 28px; height: 30px; padding: 0; border: 0; border-radius: var(--app-radius-sm); background: transparent; color: var(--app-muted); cursor: pointer; }
 .drawer-toggle:hover { color: var(--app-text); background: var(--app-elevated); }
 .drawer-toggle:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 1px; }
-.vault-row.compact { flex-direction: column-reverse; }
-.vault-row.compact .vault-item { flex: none; }
+.vault-row.compact { height: 68px; }
+.vault-row.compact .vault-item { top: 34px; width: 100%; }
 .nav-group.compact .nav-item, .quick-actions.compact .nav-item, .vault-row.compact .vault-item { display: flex; justify-content: center; padding: 0; }
+.compact .nav-label, .compact .nav-count { position: absolute; opacity: 0; pointer-events: none; }
+.compact .nav-label { left: 34px; }
+.compact .nav-count { right: 10px; }
 .nav-group {
   display: flex;
   flex-direction: column;
@@ -241,6 +245,7 @@ async function pickFolder(): Promise<void> {
 }
 
 .nav-item {
+  position: relative;
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) auto;
   align-items: center;
@@ -292,12 +297,14 @@ async function pickFolder(): Promise<void> {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  transition: opacity var(--app-motion-fast) var(--app-ease);
 }
 .nav-count {
   font-size: 10px;
   font-weight: 400;
   color: var(--app-muted);
   font-variant-numeric: tabular-nums;
+  transition: opacity var(--app-motion-fast) var(--app-ease);
 }
 .nav-item.active .nav-count {
   color: color-mix(in srgb, var(--app-text) 54%, var(--app-muted));
