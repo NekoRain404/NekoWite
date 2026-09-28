@@ -41,8 +41,8 @@ use crate::agent_runtime::secret::Secret;
 
 #[path = "agent_settings/config_document.rs"]
 mod config_document;
-pub use config_document::{read_document, submit_document, EditSubmission};
 use config_document::document_message;
+pub use config_document::{read_document, submit_document, EditSubmission};
 
 /// What every command in this file needs: where the profiles are.
 ///

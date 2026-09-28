@@ -81,7 +81,9 @@ async fn successful_transfer_exposes_a_new_vault_folder() {
     let path = root.to_str().unwrap();
     registry.approve_pick(path).unwrap();
     registry.register(path, None).unwrap();
-    let imported = import_workspace_using(&registry, path, spec(), "true").await.unwrap();
+    let imported = import_workspace_using(&registry, path, spec(), "true")
+        .await
+        .unwrap();
     assert_eq!(PathBuf::from(imported), root.join("remote-notes"));
     assert!(root.join("remote-notes").is_dir());
     fs::remove_dir_all(root).unwrap();

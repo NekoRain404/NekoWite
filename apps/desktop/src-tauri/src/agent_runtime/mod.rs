@@ -119,8 +119,8 @@ pub use live_notes::{
     LIVE_NOTE_ATTACH_CHANNEL, LIVE_NOTE_BOUND, LIVE_NOTE_REQUEST_CHANNEL,
 };
 pub use permission_grants::{EngineHttp, GrantsReadout, SavedGrant};
-pub use process::{env_pairs, EngineLaunch, SYSTEM_CA_BUNDLE};
 pub(crate) use process::signal_group;
+pub use process::{env_pairs, EngineLaunch, SYSTEM_CA_BUNDLE};
 pub use recovery::{Baseline, Recovery, RecoveryOutcome, RecoveryPlan, RecoveryRefusal};
 pub use session::{
     AgentRuntime, AgentRuntimeEvents, RuntimeEvent, SessionError, SessionInfo, INITIALIZE_BOUND,

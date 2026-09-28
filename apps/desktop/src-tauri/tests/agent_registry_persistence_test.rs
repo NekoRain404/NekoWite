@@ -12,7 +12,9 @@ struct MemoryStorage(std::sync::Mutex<Option<String>>);
 #[test]
 fn bundled_snapshot_can_open_in_an_empty_acp_edition_then_add_an_agent() {
     let full = AgentRegistry::with_bundled("/opt/bundled/opencode");
-    let storage = MemoryStorage(std::sync::Mutex::new(Some(full.persisted_document().unwrap())));
+    let storage = MemoryStorage(std::sync::Mutex::new(Some(
+        full.persisted_document().unwrap(),
+    )));
     let mut lean = AgentRegistry::without_bundled();
     lean.load_persisted(&storage).unwrap();
     assert!(add_agent(&mut lean, draft()).is_none());

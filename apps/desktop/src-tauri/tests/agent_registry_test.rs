@@ -602,10 +602,7 @@ fn where_a_program_came_from_decides_who_may_replace_it_and_what_it_inherits() {
         .iter()
         .find(|(name, _)| name == "ANTHROPIC_API_KEY")
         .unwrap();
-    assert_eq!(
-        key.1.expose(),
-        "sk-ant-oat01-not-a-real-key"
-    );
+    assert_eq!(key.1.expose(), "sk-ant-oat01-not-a-real-key");
 }
 
 /// **A credential cannot move the roots this host isolated the engine into.**
