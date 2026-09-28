@@ -55,7 +55,7 @@ fn closing_the_selected_instance_does_not_reassign_an_explicit_extra() {
     host.close_own(&crate::support::caller(label.as_str()))
         .unwrap();
     apply(&mut host, &record(PetSettingsDomain::Character), "new");
-    assert_eq!(host.instances(), &[extra.clone()]);
+    assert_eq!(host.instances(), std::slice::from_ref(&extra));
     apply(&mut host, &record(PetSettingsDomain::General), "new");
     assert_eq!(host.instances().len(), 2);
     assert!(host.instances().iter().any(|instance| instance == &extra));
