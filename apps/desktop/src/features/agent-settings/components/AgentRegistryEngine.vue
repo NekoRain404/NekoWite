@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import SelectMenu from '../../../components/SelectMenu.vue'
 import { fillTemplate, planEngineSwitch, type AgentRegistryReadout, type RegistryRefusal } from '../services/agent-registry-policy'
 import type { AgentRegistryLabels } from './agent-registry-labels'
 
@@ -14,6 +15,7 @@ const props = defineProps<{
 const emit = defineEmits<{ 'new-session': [agentId: string] }>()
 const selectedEngine = ref('')
 const selectable = computed(() => props.readout?.entries.filter((entry) => entry.enabled) ?? [])
+const engineOptions = computed(() => selectable.value.map((entry) => ({ value: entry.agentId, label: entry.displayName || entry.agentId })))
 const nameOf = (agentId: string): string =>
   props.readout?.entries.find((entry) => entry.agentId === agentId)?.displayName || agentId
 watch([selectable, () => props.sessionAgentId], () => {
@@ -50,17 +52,13 @@ const engineText = computed(() => {
     <template v-else>
       <label class="settings-field">
         <span>{{ labels.engine.choose }}</span>
-        <select
-          v-model="selectedEngine"
+        <SelectMenu
+          :model-value="selectedEngine"
+          :options="engineOptions"
           class="registry-input"
           data-test="registry-engine-select"
-        >
-          <option
-            v-for="entry in selectable"
-            :key="entry.agentId"
-            :value="entry.agentId"
-          >{{ entry.displayName || entry.agentId }}</option>
-        </select>
+          @update:model-value="selectedEngine = String($event)"
+        />
       </label>
       <span class="settings-note registry-engine-plan">{{ engineText }}</span>
       <button

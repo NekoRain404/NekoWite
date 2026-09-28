@@ -143,9 +143,9 @@ it('refreshes the profile summary after saving permission rules', async () => {
     } }),
     edit: async () => { action = 'deny'; return { status: 'written', revision: 'r2' } },
   })
-  const select = el('permission-editor-edit') as HTMLSelectElement
-  select.value = 'deny'
-  select.dispatchEvent(new Event('change', { bubbles: true }))
+  el('permission-editor-edit')?.click()
+  await flush()
+  document.querySelector<HTMLButtonElement>('[role="option"][data-value="deny"]')?.click()
   await flush()
   el('permission-editor-save')?.click()
   await flush()

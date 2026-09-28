@@ -22,9 +22,9 @@ async function mount(port: AgentConfigClient, verifiedOpenCode = true) {
   return current
 }
 async function change() {
-  const select = element('permission-editor-edit') as HTMLSelectElement
-  select.value = 'deny'
-  select.dispatchEvent(new Event('change', { bubbles: true }))
+  element('permission-editor-edit')?.click()
+  await flush()
+  document.querySelector<HTMLButtonElement>('[role="option"][data-value="deny"]')?.click()
   await flush()
 }
 beforeEach(() => { setLocale('en') })
@@ -66,7 +66,7 @@ describe('permission editor', () => {
     element('permission-editor-save')?.click()
     await flush()
     expect(element('permission-editor-failed')?.textContent).toContain('disk full')
-    expect((element('permission-editor-edit') as HTMLSelectElement).value).toBe('deny')
+    expect(element('permission-editor-edit')?.textContent).toContain('Deny')
     expect((element('permission-editor-save') as HTMLButtonElement).disabled).toBe(false)
   })
   it('does not display a stale save result after changing clients', async () => {
@@ -83,7 +83,7 @@ describe('permission editor', () => {
     resolve({ status: 'written', revision: 'old-client-r2' })
     await flush()
     expect(element('permission-editor-saved')).toBeNull()
-    expect((element('permission-editor-edit') as HTMLSelectElement).value).toBe('ask')
+    expect(element('permission-editor-edit')?.textContent).toContain('Ask')
   })
   it('ignores a stale read and hides unsupported and readonly editors', async () => {
     let resolve!: (value: AgentConfigReadout) => void

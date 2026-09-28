@@ -60,10 +60,12 @@ it('connects live over SSH by default and shows a failed connection', async () =
 it('offers password authentication and clears the secret after a failed attempt', async () => {
   const run = vi.fn().mockRejectedValueOnce(new Error('authentication failed'))
   const host = mount(run)
-  const select = host.querySelector<HTMLSelectElement>('[data-test="remote-auth"]')
-  expect(select).not.toBeNull()
-  select!.value = 'password'
-  select!.dispatchEvent(new Event('change', { bubbles: true }))
+  expect(host.querySelector('select')).toBeNull()
+  const trigger = host.querySelector<HTMLButtonElement>('[data-test="remote-auth"]')!
+  trigger.click()
+  await nextTick()
+  expect(document.querySelector('[role="listbox"]')).not.toBeNull()
+  document.querySelector<HTMLButtonElement>('[role="option"][data-value="password"]')!.click()
   await nextTick()
   fill(host, 'user', 'writer')
   fill(host, 'host', 'example.org')

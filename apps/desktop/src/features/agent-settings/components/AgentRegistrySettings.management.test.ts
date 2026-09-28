@@ -105,6 +105,6 @@ describe('Agent registration management', () => {
   })
   it('selects the generic ACP adapter for a new registration', async () => {
     const { host } = await mount()
-    expect(host.querySelector<HTMLSelectElement>('[data-test="registry-field-adapter"]')?.value).toBe('generic-acp')
+    expect(host.querySelector('[data-test="registry-field-adapter"]')?.textContent).toContain('generic-acp')
   })
 })

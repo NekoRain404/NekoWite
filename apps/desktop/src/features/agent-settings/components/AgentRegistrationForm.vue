@@ -1,13 +1,16 @@
 <script setup lang="ts">
+import SelectMenu from '../../../components/SelectMenu.vue'
+import { computed } from 'vue'
 import { fillTemplate, type DraftField, type RegistryRefusal } from '../services/agent-registry-policy'
 import type { AgentRegistryLabels } from './agent-registry-labels'
-defineProps<{
+const props = defineProps<{
   form: Record<DraftField, string>; labels: AgentRegistryLabels; adapterIds: readonly string[]
   busy: string | null; addedAgentId: string | null; actionFailed: boolean; addRefusal: RegistryRefusal | null
   editing: boolean
   problem: (field: DraftField) => RegistryRefusal | null
   refusalText: (refusal: RegistryRefusal | null) => string
 }>()
+const adapterOptions = computed(() => [{ value: '', label: '—' }, ...props.adapterIds.map((id) => ({ value: id, label: id }))])
 const emit = defineEmits<{ submit: []; cancel: []; update: [field: DraftField, value: string] }>()
 function update(field: DraftField, event: Event): void {
   emit('update', field, (event.target as HTMLInputElement).value)
@@ -76,21 +79,13 @@ function update(field: DraftField, event: Event): void {
       </label>
       <label class="settings-field">
         <span>{{ labels.fields.adapter }}</span>
-        <select
-          :value="form.adapterId"
+        <SelectMenu
+          :model-value="form.adapterId"
+          :options="adapterOptions"
           class="registry-input"
           data-test="registry-field-adapter"
-          @change="update('adapterId', $event)"
-        >
-          <option value="">
-            —
-          </option>
-          <option
-            v-for="adapterId in adapterIds"
-            :key="adapterId"
-            :value="adapterId"
-          >{{ adapterId }}</option>
-        </select>
+          @update:model-value="emit('update', 'adapterId', String($event))"
+        />
         <span
           v-if="problem('adapterId')"
           class="settings-note is-error"

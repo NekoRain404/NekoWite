@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { Server, X } from 'lucide-vue-next'
+import SelectMenu from '../../../components/SelectMenu.vue'
 import { useFocusTrap } from '../../../composables/use-focus-trap'
 import { useModalEscape } from '../../../composables/use-modal-escape'
 import { t } from '../../../i18n'
@@ -22,6 +23,12 @@ const connections = ref<RemoteConnection[]>([])
 const authMode = ref<'agent' | 'key' | 'password'>('agent')
 const identityFile = ref('')
 const password = ref('')
+const authOptions = computed(() => [
+  { value: 'agent', label: t('remote.authAgent') },
+  { value: 'key', label: t('remote.authKey') },
+  { value: 'password', label: t('remote.authPassword') },
+])
+function setAuthMode(value: string | number): void { authMode.value = value as typeof authMode.value }
 watch(authMode, () => { password.value = '' })
 useFocusTrap(dialog, active, { initialFocus: false })
 useModalEscape('remote-import', () => { if (!pending.value) emit('close') })
@@ -149,15 +156,13 @@ async function submit(): Promise<void> {
         </div>
       </section>
       <div class="fields">
-        <label>{{ t('remote.auth') }}<select
-          v-model="authMode"
+        <label>{{ t('remote.auth') }}<SelectMenu
+          :model-value="authMode"
+          :options="authOptions"
           data-test="remote-auth"
           :disabled="pending"
-        >
-          <option value="agent">{{ t('remote.authAgent') }}</option>
-          <option value="key">{{ t('remote.authKey') }}</option>
-          <option value="password">{{ t('remote.authPassword') }}</option>
-        </select></label>
+          @update:model-value="setAuthMode"
+        /></label>
         <label v-if="authMode === 'key'">{{ t('remote.identityFile') }}<input
           v-model="identityFile"
           data-test="remote-key"
@@ -252,7 +257,7 @@ async function submit(): Promise<void> {
 .remote-connection button { flex: none; border: 0; background: transparent; color: var(--app-accent); cursor: pointer; }
 .fields { display: grid; gap: 9px; }
 .fields label { display: grid; gap: 4px; font-size: 12px; color: var(--app-muted); }
-.fields input, .fields select { width: 100%; min-width: 0; box-sizing: border-box; border: 1px solid var(--app-border); border-radius: 5px; padding: 8px; background: var(--app-elevated); color: var(--app-text); font: inherit; }
+.fields input, .fields .select-trigger { width: 100%; min-width: 0; box-sizing: border-box; border: 1px solid var(--app-border); border-radius: 5px; padding: 8px; background: var(--app-elevated); color: var(--app-text); font: inherit; }
 .error { color: var(--app-danger); font-size: 12px; overflow-wrap: anywhere; }
 .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 17px; }
 .actions button { border: 1px solid var(--app-border); border-radius: 5px; background: var(--app-elevated); color: var(--app-text); padding: 7px 12px; cursor: pointer; }

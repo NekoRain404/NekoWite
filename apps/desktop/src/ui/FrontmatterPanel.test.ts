@@ -3,6 +3,7 @@ import { createApp, nextTick, type App as VueApp } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import FrontmatterPanel from './FrontmatterPanel.vue'
 import { useTabsStore } from '../stores/tabs'
+import { useDocumentListStore } from '../stores/document-list'
 
 const readMock = vi.hoisted(() => vi.fn())
 const statMock = vi.hoisted(() => vi.fn())
@@ -102,6 +103,38 @@ describe('FrontmatterPanel', () => {
     const chips = Array.from(host.querySelectorAll('.fm-chip-text')).map((el) => el.textContent)
     expect(chips).toEqual(['数学', '随笔'])
     expect(host.textContent).toContain('数学')
+  })
+
+  it('uses the themed tag suggestion popup instead of a native datalist', async () => {
+    await openDoc('/vault/a.md', '---\ntitle: t\ntags:\n  - 数学\n---\n\nBody')
+    useDocumentListStore().setNotes([{ path: '/vault/b.md', name: 'b.md', title: 'B', tags: ['写作'], summary: '', mtime: 0, size: 0, dir: '', links: [] }])
+    const host = mountPanel()
+    await flush()
+    expect(host.querySelector('datalist')).toBeNull()
+    const input = host.querySelector<HTMLInputElement>('.fm-tag-input')!
+    expect(input.getAttribute('role')).toBe('combobox')
+    expect(input.hasAttribute('list')).toBe(false)
+    input.click()
+    await nextTick()
+    const suggestion = document.querySelector<HTMLButtonElement>('[role="option"]')
+    expect(suggestion?.textContent).toContain('写作')
+    suggestion!.click()
+    await nextTick()
+    expect(input.value).toBe('写作')
+  })
+
+  it('selects a tag suggestion with Enter before adding it', async () => {
+    await openDoc('/vault/a.md', '---\ntitle: t\n---\n\nBody')
+    useDocumentListStore().setNotes([{ path: '/vault/b.md', name: 'b.md', title: 'B', tags: ['写作'], summary: '', mtime: 0, size: 0, dir: '', links: [] }])
+    const host = mountPanel()
+    await flush()
+    const input = host.querySelector<HTMLInputElement>('.fm-tag-input')!
+    setInputValue(input, '写')
+    await nextTick()
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    await flush()
+    expect(input.value).toBe('写作')
+    expect(useTabsStore().activeTab?.content).not.toContain('  - 写\n')
   })
 
   it('shows add-properties when there is no frontmatter and creates one from the filename', async () => {

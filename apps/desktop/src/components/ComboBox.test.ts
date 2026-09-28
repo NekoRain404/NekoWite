@@ -100,6 +100,17 @@ async function press(key: string): Promise<void> {
 }
 
 describe('ComboBox', () => {
+  it('leaves IME candidate confirmation to the input while suggestions are open', async () => {
+    const value = mount({ options: ['写作'] })
+    await type('写')
+    expect(popup()).not.toBeNull()
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'isComposing', { value: true })
+    input().dispatchEvent(event)
+    await nextTick()
+    expect(event.defaultPrevented).toBe(false)
+    expect(value.value).toBe('写')
+  })
   it('is a text input with no native suggestion list behind it', () => {
     mount({ value: 'gpt-4o-mini' })
 

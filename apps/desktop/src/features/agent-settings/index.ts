@@ -49,7 +49,7 @@ export { default as AgentPermissionSettings } from './components/AgentPermission
 export { default as AgentRegistrySettings } from './components/AgentRegistrySettings.vue'
 
 export type { AgentRuntimeLabels } from './components/AgentRuntimeSettings.vue'
-export type { AgentProviderLabels } from './components/AgentProviderSettings.vue'
+export type { AgentProviderLabels } from './components/agent-provider-labels'
 export type { AgentSkillsLabels } from './components/AgentSkillsSettings.vue'
 export type { AgentCommandsLabels } from './components/AgentCommandsSettings.vue'
 export type { AgentMcpLabels } from './components/AgentMcpSettings.vue'

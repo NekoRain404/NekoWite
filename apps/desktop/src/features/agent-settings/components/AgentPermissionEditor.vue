@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RotateCcw, Save } from 'lucide-vue-next'
+import SelectMenu from '../../../components/SelectMenu.vue'
 import { t } from '../../../i18n'
 import type { AgentConfigClient } from '../services/agent-config-ipc'
 import type { ConfigRead } from '../services/agent-settings-policy'
@@ -18,6 +19,7 @@ let generation = 0
 const view = computed(() => held.value ? permissionEditor(held.value, props.verifiedOpenCode) : null)
 const edits = computed(() => view.value?.kind === 'editable' ? permissionEdits(view.value, draft.value) : [])
 const label = (key: string) => t(`agent.permissionEditor.${key}`)
+const actionOptions = computed(() => (['ask', 'allow', 'deny'] as const).map(value => ({ value, label: label(value) })))
 
 async function load(): Promise<void> {
   const token = ++generation
@@ -116,23 +118,15 @@ onBeforeUnmount(() => { generation++ })
           class="permission-rule"
         >
           <label :for="`permission-action-${rule.tool}`">{{ rule.tool }}</label>
-          <select
+          <SelectMenu
             v-if="rule.action !== null"
             :id="`permission-action-${rule.tool}`"
-            v-model="draft[rule.tool]"
+            :model-value="draft[rule.tool]"
+            :options="actionOptions"
             :disabled="busy || state === 'saved' || state === 'conflict'"
             :data-test="`permission-editor-${rule.tool}`"
-          >
-            <option value="ask">
-              {{ label('ask') }}
-            </option>
-            <option value="allow">
-              {{ label('allow') }}
-            </option>
-            <option value="deny">
-              {{ label('deny') }}
-            </option>
-          </select>
+            @update:model-value="draft[rule.tool] = $event as PermissionAction"
+          />
           <span v-else>{{ label('preserved') }}</span>
         </div>
         <div class="permission-actions">
@@ -188,7 +182,7 @@ onBeforeUnmount(() => { generation++ })
 .permission-rule { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .permission-rule label { overflow-wrap: anywhere; min-width: 0; }
 .permission-rule span { color: var(--app-muted); font-size: 11px; }
-.permission-editor select { background: var(--app-elevated); color: var(--app-text); padding: 4px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); }
+.permission-editor .select-trigger { background: var(--app-elevated); color: var(--app-text); padding: 4px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); }
 .permission-editor button { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); padding: 5px 8px; color: var(--app-text); background: var(--app-elevated); cursor: pointer; }
 .permission-editor button:disabled { opacity: .5; cursor: default; }
 </style>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Hash, Plus, X } from 'lucide-vue-next'
+import ComboBox from '../components/ComboBox.vue'
 // Cycle-blocked deep import (§13.11): `features/notes` cannot export this
 // composable. The model edits tags through `services/tags`, which imports the
 // frontmatter helpers back through the feature's entry, so an entry that took
@@ -27,6 +28,12 @@ const {
   onTagKeydown,
   onTitleKeydown,
 } = useFrontmatterPanel()
+
+function onTagSuggestionKeydown(e: KeyboardEvent): void {
+  // The first Enter accepts a highlighted suggestion; the next one adds the selected tag.
+  if (e.key === 'Enter' && (e.currentTarget as HTMLInputElement).getAttribute('aria-expanded') === 'true') return
+  onTagKeydown(e)
+}
 </script>
 
 <template>
@@ -94,22 +101,15 @@ const {
                   />
                 </button>
               </span>
-              <input
+              <ComboBox
                 v-model="tagInput"
                 class="fm-tag-input"
-                type="text"
-                list="fm-tag-suggestions"
+                :options="suggestions"
+                :list-label="t('frontmatter.tags')"
                 :placeholder="t('frontmatter.tagPlaceholder')"
-                @keydown="onTagKeydown"
+                @keydown="onTagSuggestionKeydown"
                 @blur="addTagRaw(tagInput)"
-              >
-              <datalist id="fm-tag-suggestions">
-                <option
-                  v-for="s in suggestions"
-                  :key="s"
-                  :value="s"
-                />
-              </datalist>
+              />
               <button
                 v-if="tagInput"
                 type="button"

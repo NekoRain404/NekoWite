@@ -14,7 +14,7 @@
  *    build, so the page states that and draws no switch — the same rule as §5.2's
  *    「不显示可点击但无效果的控件」.
  *
- * The cap is a `<select>` over the rule's own range rather than a number field, and that is a
+ * The cap is a `SelectMenu` over the rule's own range rather than a number field, and that is a
  * correctness choice, not a style one: D1's rule is an integer between 1 and 5, so every value
  * the user can pick is valid and an out-of-range write is unreachable. A free number field would
  * have to either send a value the store refuses — leaving a page that says "not saved" — or

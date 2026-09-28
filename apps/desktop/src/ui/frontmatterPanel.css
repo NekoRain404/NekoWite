@@ -158,9 +158,11 @@
   color: var(--app-danger);
   background: color-mix(in srgb, var(--app-danger) 14%, transparent);
 }
-.fm-tag-input {
+.fm-tags .combobox {
   flex: 1;
   min-width: 80px;
+}
+.fm-tag-input {
   height: 22px;
   border: none;
   background: transparent;
