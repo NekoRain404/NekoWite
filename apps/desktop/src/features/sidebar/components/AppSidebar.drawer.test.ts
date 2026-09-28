@@ -68,5 +68,7 @@ describe('sidebar icon drawer', () => {
     expect(sidebarStyles).toMatch(/transition:\s*width var\(--app-motion\)/)
     expect(navigationStyles).toMatch(/transition:\s*height var\(--app-motion\)/)
     expect(navigationStyles).toMatch(/transition:\s*opacity var\(--app-motion-fast\)/)
+    expect(navigationStyles).toMatch(/\.drawer-toggle\s*\{[^}]*transition:\s*right var\(--app-motion\)/)
+    expect(navigationStyles).toMatch(/\.vault-row\.compact \.drawer-toggle\s*\{\s*right:\s*8px/)
   })
 })

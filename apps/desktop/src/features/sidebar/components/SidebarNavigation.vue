@@ -215,10 +215,11 @@ async function pickFolder(): Promise<void> {
 <style scoped>
 .vault-row { position: relative; height: 34px; flex: none; min-width: 0; transition: height var(--app-motion) var(--app-ease); }
 .vault-row .vault-item { position: absolute; top: 0; left: 0; width: calc(100% - 30px); min-width: 0; transition: top var(--app-motion) var(--app-ease), width var(--app-motion) var(--app-ease); }
-.drawer-toggle { position: absolute; top: 2px; right: 0; display: grid; place-items: center; width: 28px; height: 30px; padding: 0; border: 0; border-radius: var(--app-radius-sm); background: transparent; color: var(--app-muted); cursor: pointer; }
+.drawer-toggle { position: absolute; top: 2px; right: 0; display: grid; place-items: center; width: 28px; height: 30px; padding: 0; border: 0; border-radius: var(--app-radius-sm); background: transparent; color: var(--app-muted); cursor: pointer; transition: right var(--app-motion) var(--app-ease); }
 .drawer-toggle:hover { color: var(--app-text); background: var(--app-elevated); }
 .drawer-toggle:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 1px; }
 .vault-row.compact { height: 68px; }
+.vault-row.compact .drawer-toggle { right: 8px; }
 .vault-row.compact .vault-item { top: 34px; width: 100%; }
 .nav-group.compact .nav-item, .quick-actions.compact .nav-item, .vault-row.compact .vault-item { display: flex; justify-content: center; padding: 0; }
 .compact .nav-label, .compact .nav-count { position: absolute; opacity: 0; pointer-events: none; }
