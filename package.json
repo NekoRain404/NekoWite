@@ -19,6 +19,8 @@
     "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm perf && pnpm build && pnpm --filter @nekowite/desktop check:export-css",
     "tauri": "pnpm --filter @nekowite/desktop tauri",
     "package:linux": "bash scripts/package-linux.sh",
+    "package:appimage:acp": "bash scripts/package-appimage-acp.sh",
+    "test:package:appimage-acp": "bash scripts/package-appimage-acp.test.sh",
     "package:portable:full": "BUNDLE_MODE=full bash scripts/package-portable.sh",
     "package:portable:acp": "BUNDLE_MODE=lean bash scripts/package-portable.sh",
     "package:arch": "BUNDLE_MODE=full bash scripts/package-arch.sh",
