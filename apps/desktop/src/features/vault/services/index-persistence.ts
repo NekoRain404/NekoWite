@@ -90,6 +90,11 @@ export function createIndexPersistence(deps: IndexPersistenceDeps): IndexPersist
   /** The fs-change subscription is missing, so nothing here can prove the
    *  mirror still matches the disk (see `setWatcherDown`). */
   let watcherDown = false
+  let saveEpoch = 0
+  let pendingSave: {
+    epoch: number
+    waiters: Array<{ resolve: () => void; reject: (error: unknown) => void }>
+  } | null = null
 
   /** The state a reader may act on. A completed build under a missing fs
    *  subscription is NOT `up-to-date`: the build only proves the mirror matched
@@ -100,6 +105,37 @@ export function createIndexPersistence(deps: IndexPersistenceDeps): IndexPersist
 
   function fire(): void {
     deps.onState?.(reportedState(), progress)
+  }
+
+  function scheduleSave(): Promise<void> {
+    if (!pendingSave) {
+      pendingSave = { epoch: saveEpoch, waiters: [] }
+      const batch = pendingSave
+      queueMicrotask(async () => {
+        if (pendingSave !== batch) return
+        pendingSave = null
+        if (batch.epoch !== saveEpoch || !currentIndex) {
+          batch.waiters.forEach(({ resolve }) => resolve())
+          return
+        }
+        try {
+          await deps.save(currentIndex)
+          batch.waiters.forEach(({ resolve }) => resolve())
+        } catch (error) {
+          batch.waiters.forEach(({ reject }) => reject(error))
+        }
+      })
+    }
+    return new Promise<void>((resolve, reject) => {
+      pendingSave!.waiters.push({ resolve, reject })
+    })
+  }
+
+  function invalidatePendingSave(): void {
+    saveEpoch += 1
+    const batch = pendingSave
+    pendingSave = null
+    batch?.waiters.forEach(({ resolve }) => resolve())
   }
 
   async function build(vault: string, paths: string[], opts: { force?: boolean } = {}): Promise<void> {
@@ -153,6 +189,7 @@ export function createIndexPersistence(deps: IndexPersistenceDeps): IndexPersist
   function reset(vault: string): void {
     seq += 1
     cancel()
+    invalidatePendingSave()
     currentIndex = null
     state = 'idle'
     progress = null
@@ -163,6 +200,7 @@ export function createIndexPersistence(deps: IndexPersistenceDeps): IndexPersist
   async function rebuild(vault: string, paths: string[]): Promise<void> {
     const mySeq = ++seq
     abort?.abort()
+    invalidatePendingSave()
     const controller = new AbortController()
     abort = controller
     await deps.clear(vault)
@@ -209,13 +247,13 @@ export function createIndexPersistence(deps: IndexPersistenceDeps): IndexPersist
     }
     const text = buildSearchText(path, content, vault, mtime, size)
     currentIndex.notes[path] = { token: docToken(mtime, size), text, mtime, size }
-    await deps.save(currentIndex)
+    await scheduleSave()
   }
 
   async function remove(path: string): Promise<void> {
     if (!currentIndex || !currentIndex.notes[path]) return
     delete currentIndex.notes[path]
-    await deps.save(currentIndex)
+    await scheduleSave()
   }
 
   function entryFor(path: string): IndexLookupResult | null {
@@ -250,6 +288,7 @@ export function createIndexPersistence(deps: IndexPersistenceDeps): IndexPersist
   function detach(): void {
     seq += 1
     cancel()
+    invalidatePendingSave()
     currentIndex = null
     state = 'idle'
     progress = null

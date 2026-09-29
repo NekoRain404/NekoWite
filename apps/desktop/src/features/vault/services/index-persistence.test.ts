@@ -67,6 +67,34 @@ describe('createIndexPersistence', () => {
     expect(persistence.candidatePaths('新内容')).toEqual([])
   })
 
+  it('coalesces concurrent note updates into one persisted write', async () => {
+    const gateway = createMemoryFsGateway({ 'a.md': '旧 A', 'b.md': '旧 B' })
+    let saves = 0
+    const persistence = createIndexPersistence({
+      load: (v) => loadIndex(v, storage),
+      save: async (index) => {
+        saves += 1
+        await saveIndex(index, storage)
+      },
+      clear: (v) => clearIndex(v, storage),
+      stat: (path) => gateway.stat(VAULT, path).catch(() => null),
+      read: (path) => gateway.read(VAULT, path),
+      getStat: () => undefined,
+      onState: () => {},
+    })
+    await persistence.build(VAULT, ['a.md', 'b.md'])
+    const buildSaves = saves
+
+    await Promise.all([
+      persistence.upsert(VAULT, 'a.md', '新 A', 2, 3),
+      persistence.upsert(VAULT, 'b.md', '新 B', 2, 3),
+    ])
+
+    expect(saves - buildSaves).toBe(1)
+    expect(persistence.candidatePaths('新 A')).toEqual(['a.md'])
+    expect(persistence.candidatePaths('新 B')).toEqual(['b.md'])
+  })
+
   it('rebuild clears the persisted blob and re-builds from scratch', async () => {
     const gateway = createMemoryFsGateway({ 'a.md': '# Alpha\n\n关于图论' })
     const persistence = makePersistence(gateway)
