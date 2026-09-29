@@ -155,6 +155,17 @@ describe('snippets and concurrency (through the live entry point)', () => {
     expect(hits[0]!.snippet.endsWith('…')).toBe(false)
   })
 
+  it('matches literal punctuation without treating it as a pattern', async () => {
+    const reads: string[] = []
+    const hits = await searchWithIndex(
+      [factory('/v/a.md', 'Use C++ (fast) in production')(reads)],
+      'c++ (fast)',
+      () => null,
+    )
+    expect(hits).toHaveLength(1)
+    expect(hits[0]!.snippet).toContain('C++ (fast)')
+  })
+
   it('never reads more bodies at once than the concurrency limit allows', async () => {
     // The bound is what keeps a content search over a large vault from opening
     // every note at once; it used to have its own helper, now it is internal.

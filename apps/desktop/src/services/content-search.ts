@@ -37,6 +37,11 @@ const SNIPPET_RADIUS = 40
 /** Max concurrent body reads / matches during a content search. */
 export const CONTENT_SEARCH_CONCURRENCY = 8
 
+/** Escape user input before using the browser's native case-insensitive scan. */
+function escapeSearchPattern(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 /** Build a one-line plain-text snippet around a hit. `q` must be the folded
  *  (lowercased, trimmed) query and `idx` its index inside the folded body. We
  *  slice the *original* `content` so case/punctuation survives round-trip. */
@@ -114,6 +119,10 @@ export async function searchWithIndex(
   const q = query.trim().toLowerCase()
   if (!q) return []
   if (signal?.aborted) return []
+  // Searching with a literal regular expression avoids allocating a complete
+  // lowercased copy of every matching body while keeping case-insensitive
+  // matching and the original text needed for snippets.
+  const matcher = new RegExp(escapeSearchPattern(q), 'i')
 
   const hits = await mapWithConcurrency(
     candidates,
@@ -126,8 +135,7 @@ export async function searchWithIndex(
       if (entry && entry.upToDate && !entry.text.includes(q)) return null
       const content = await c.readContent()
       if (content === null || signal?.aborted) return null
-      const folded = content.toLowerCase()
-      const idx = folded.indexOf(q)
+      const idx = matcher.exec(content)?.index ?? -1
       if (idx < 0) return null
       return {
         path: c.path,
