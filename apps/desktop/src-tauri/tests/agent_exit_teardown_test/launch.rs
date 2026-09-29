@@ -196,8 +196,30 @@ pub fn launch_app(
     tree: &Path,
     log: &Path,
 ) -> Launch {
+    // The build artifact has no sidecar beside it until a package is assembled. Stage the
+    // packaged executable and the shipped engine together so current_exe() exercises the same
+    // resolution as an installed integrated edition, inside this test's isolated tree.
+    let bundle = tree.join("bundle");
+    fs::create_dir_all(&bundle).expect("a private bundle directory");
+    let staged_app = bundle.join("nekowite");
+    let shipped_engine =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries/opencode-x86_64-unknown-linux-gnu");
+    let engine = app
+        .parent()
+        .map(|dir| dir.join("opencode"))
+        .filter(|path| path.is_file())
+        .unwrap_or(shipped_engine);
+    let staged_engine = bundle.join("opencode");
+    for (source, destination) in [
+        (app, staged_app.as_path()),
+        (engine.as_path(), staged_engine.as_path()),
+    ] {
+        fs::hard_link(source, destination)
+            .or_else(|_| fs::copy(source, destination).map(|_| ()))
+            .expect("the packaged app and engine are launchable together");
+    }
     let file = File::create(log).expect("a log file for a launch");
-    let child = Command::new(app)
+    let child = Command::new(&staged_app)
         .arg(note)
         .envs(env.iter().map(|(k, v)| (k.clone(), v.clone())))
         .current_dir(tree)

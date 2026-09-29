@@ -428,6 +428,12 @@ async function main() {
       readings.url = await run('GET', '/url').catch(detail)
       return 0
     })
+    // The shell can mount while its startup veil still intercepts native pointer input.
+    await until(
+      async () =>
+        run('POST', '/execute/sync', script('return !document.querySelector(".startup-overlay")')),
+      { timeout: 30_000, what: 'the startup veil to leave before clicking' },
+    )
     // The note is asserted by its **title**, not by its file name: the tree lists what the note says it
     // is (`# drive-probe-note`), and the first version of this probe failed on that difference while the
     // vault was in fact open — the page text it samples below is what showed it.

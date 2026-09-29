@@ -57,7 +57,23 @@ export async function walkSettingsDialog({ run, script, findElement, readings })
     // The nth row, clicked natively: the nav is rendered from one list, so its order is the app's.
     const row = await findElement('xpath', `(//button[contains(@class, "nav-row")])[${index + 1}]`)
     if (!row) continue
-    await run('POST', `/element/${row}/click`, {})
+    // An expanded agents tree pushes the last row below the nav's scrollport. WebDriver's
+    // click can otherwise land on the dialog scrim while reporting success.
+    const point = await run('POST', '/execute/sync', script(`
+      const row = document.querySelectorAll('.nav-row')[${index}]
+      row.scrollIntoView({ block: 'center' })
+      const rect = row.getBoundingClientRect()
+      return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }
+    `))
+    await run('POST', '/actions', { actions: [{
+      type: 'pointer', id: 'settings-nav-pointer', parameters: { pointerType: 'mouse' },
+      actions: [
+        { type: 'pointerMove', origin: 'viewport', x: point.x, y: point.y },
+        { type: 'pointerDown', button: 0 },
+        { type: 'pointerUp', button: 0 },
+      ],
+    }] })
+    await run('DELETE', '/actions')
     const settled = await until(
       async () => {
         const active = await run(

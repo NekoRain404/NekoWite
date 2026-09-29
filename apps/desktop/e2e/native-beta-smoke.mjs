@@ -71,7 +71,10 @@ async function selectMainWindow() {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ handle }),
       })
       assert.ok(switched.ok, 'Cannot switch native window')
-      if (await wd.execute('return !!document.querySelector(".tab-bar")')) return true
+      if (await wd.execute('return !!document.querySelector(".tab-bar")')) {
+        await until(() => wd.execute('return !document.querySelector(".startup-overlay")'), { what: 'startup mask dismissed' })
+        return true
+      }
     }
     return false
   }, { what: 'main application window' })
