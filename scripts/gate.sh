@@ -237,7 +237,8 @@ if [ "$WITH_E2E" -eq 1 ]; then
     fi
     export PLAYWRIGHT_BROWSERS_PATH="$found"
     echo "playwright browsers: $PLAYWRIGHT_BROWSERS_PATH"
-    pnpm --filter @nekowite/desktop e2e
+    # Two workers keeps Chromium and the frozen Vite server within the release gate's four-thread budget.
+    pnpm --filter @nekowite/desktop e2e --workers=2
   }
   step e2e "the Playwright suite" \
     e2e_step

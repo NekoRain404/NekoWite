@@ -708,6 +708,7 @@ test.describe('agent panel — the composer at the rail’s narrow end', () => {
    */
   test('the bar fits and the send button is reachable at the narrowest rail', async ({ page }) => {
     await mount(page)
+    await expect(page.locator('.startup-overlay')).toBeHidden({ timeout: 5000 })
     await page.locator('.agent-composer-field').fill('go')
     await resizePanel(page, 220)
 
