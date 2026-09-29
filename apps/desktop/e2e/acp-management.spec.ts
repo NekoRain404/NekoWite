@@ -75,7 +75,8 @@ for (const width of [1280, 390]) {
     await expect(page.locator('[data-test="registry-delete-opencode"]')).toBeDisabled()
 
     await mount(page, 'permissions')
-    await page.locator('[data-test="permission-editor-edit"]').selectOption('deny')
+    await page.locator('[data-test="permission-editor-edit"]').click()
+    await page.locator('.select-popup [data-value="deny"]').click()
     await page.locator('[data-test="permission-editor-save"]').click()
     await expect(page.locator('[data-test="permission-editor-saved"]')).toBeVisible()
     await expect(page.locator('[data-test="permission-editor-read"]')).toHaveCount(0)

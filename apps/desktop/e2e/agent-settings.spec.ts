@@ -785,7 +785,7 @@ test.describe('what a permission prompt can and cannot promise', () => {
       grants: { kind: 'listed', grants: [] },
     })
 
-    await expect(row(page, '[data-test="permission-state"]')).toContainText('asks before it changes your files')
+    await expect(row(page, '[data-test="permission-state"]')).toContainText('not a report of the running process’s effective permissions')
     await expect(row(page, '[data-test="permission-rule-edit"]')).toContainText('ask')
     // §6.3: the options come from the engine, and this app adds none of its own.
     await expect(row(page, '[data-test="permission-no-invention"]')).toContainText('no option of its own')

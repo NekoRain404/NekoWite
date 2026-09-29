@@ -264,7 +264,8 @@ async function submitDraft(
   await page.locator('[data-test="registry-field-displayName"]').fill(draft.displayName)
   await page.locator('[data-test="registry-field-program"]').fill(draft.program)
   await page.locator('[data-test="registry-field-args"]').fill(draft.args ?? '')
-  await page.locator('[data-test="registry-field-adapter"]').selectOption(draft.adapterId)
+  await page.locator('[data-test="registry-field-adapter"]').click()
+  await page.locator(`.select-popup [data-value="${draft.adapterId}"]`).click()
   await page.locator('[data-test="registry-add"]').click()
 }
 
@@ -404,7 +405,7 @@ test.describe('switching a registration on and off', () => {
 })
 
 test.describe('updating a program', () => {
-  test('states the provenance rule, and offers nothing that acts on a version', async ({ page }) => {
+  test('states the provenance rule, and permits editing only an external registration', async ({ page }) => {
     await open(
       page,
       readout({
@@ -422,10 +423,10 @@ test.describe('updating a program', () => {
     await expect(row(page, 'acme').locator('.registry-update')).toContainText(
       'never replaces a program you installed',
     )
-    // The version is a fact about the user's own installation, shown as a fact: no control in the
-    // row acts on it, and there is no update anywhere in the section for one to act with.
+    // Editing launch details must not claim to update the installed program itself.
     await expect(row(page, 'acme').locator('.registry-version')).toContainText('0.9.0')
-    await expect(row(page, 'acme').locator('button:not([data-test="registry-delete-acme"])')).toHaveCount(0)
+    await expect(row(page, 'acme').locator('[data-test="registry-edit-acme"]')).toBeEnabled()
+    await expect(row(page, 'bundled-engine').locator('[data-test="registry-edit-bundled-engine"]')).toHaveCount(0)
     await expect(row(page, 'bundled-engine').locator('.registry-version')).toContainText('1.18.29')
   })
 })
@@ -442,7 +443,8 @@ test.describe('choosing the engine for a new session', () => {
     await expect(page.locator('.registry-engine-plan')).toContainText('already the engine')
     await expect(page.locator('[data-test="registry-new-session"]')).toHaveCount(0)
 
-    await page.locator('[data-test="registry-engine-select"]').selectOption('acme')
+    await page.locator('[data-test="registry-engine-select"]').click()
+    await page.locator('.select-popup [data-value="acme"]').click()
     // §3.4.2: the old session is left exactly as it is, and the page says so before the user acts.
     await expect(page.locator('.registry-engine-plan')).toContainText(
       'A new session will be started on Acme',
@@ -459,7 +461,8 @@ test.describe('choosing the engine for a new session', () => {
     await open(page, readout({ entries: [entry(), external()] }), {
       sessionAgentId: 'bundled-engine',
     })
-    await page.locator('[data-test="registry-engine-select"]').selectOption('acme')
+    await page.locator('[data-test="registry-engine-select"]').click()
+    await page.locator('.select-popup [data-value="acme"]').click()
     await expect(page.locator('.registry-engine-plan')).toContainText('belongs to bundled-engine')
     await expect(page.locator('[data-test="registry-new-session"]')).toHaveCount(0)
   })

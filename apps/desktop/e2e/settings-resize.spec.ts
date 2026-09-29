@@ -49,6 +49,7 @@ interface Geometry {
   dialog: { left: number; top: number; width: number; height: number; right: number; bottom: number }
   grip: { x: number; y: number; width: number; height: number; right: number; bottom: number }
   overlay: { left: number; top: number; width: number; height: number; right: number; bottom: number }
+  overlayInsets: { width: number; height: number }
   /** The size the model reports, off the grip's own ARIA value rather than off the box. */
   reported: { width: number; height: number; min: number; max: number }
   transition: { property: string; duration: string }
@@ -67,6 +68,7 @@ async function geometry(page: Page): Promise<Geometry> {
     const d = box(dialog)
     const g = box(grip)
     const style = getComputedStyle(dialog)
+    const overlayStyle = getComputedStyle(overlay)
     return {
       dialog: d,
       grip: {
@@ -78,6 +80,10 @@ async function geometry(page: Page): Promise<Geometry> {
         bottom: g.bottom,
       },
       overlay: box(overlay),
+      overlayInsets: {
+        width: parseFloat(overlayStyle.paddingLeft) + parseFloat(overlayStyle.paddingRight),
+        height: parseFloat(overlayStyle.paddingTop) + parseFloat(overlayStyle.paddingBottom),
+      },
       reported: {
         width: Number(grip.getAttribute('aria-valuenow')),
         height: Number(
@@ -206,8 +212,8 @@ test.describe('the settings dialog’s size', () => {
     // constant written here.
     await dragGripTo(page, { x: centre.x + 3000, y: centre.y + 3000 })
     const big = await geometry(page)
-    const roomW = big.overlay.width - 48
-    const roomH = big.overlay.height - 48
+    const roomW = big.overlay.width - big.overlayInsets.width
+    const roomH = big.overlay.height - big.overlayInsets.height
     expect(big.dialog.width).toBeCloseTo(roomW, 0)
     expect(big.dialog.height).toBeCloseTo(roomH, 0)
     expect(big.dialog.right).toBeLessThanOrEqual(big.overlay.right + 1)

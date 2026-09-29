@@ -95,6 +95,7 @@ interface Density {
   box: number
   /** The page the rail says is selected, measured on its own. */
   drawn: number
+  frame: number
   drawnPage: string | null
   /** What the stacked column would have been: every page's own height, added up. */
   stacked: number
@@ -112,6 +113,9 @@ async function density(page: Page): Promise<Density> {
     return {
       box: Math.round(box.getBoundingClientRect().height),
       drawn: shown.length === 1 ? Math.round(shown[0].getBoundingClientRect().height) : -1,
+      frame: Math.round(box.getBoundingClientRect().height - box.clientHeight)
+        + parseFloat(getComputedStyle(box).paddingTop)
+        + parseFloat(getComputedStyle(box).paddingBottom),
       drawnPage: shown.length === 1 ? (shown[0].dataset.page ?? null) : null,
       // Every page's own height, read off the element itself whether or not it is drawn — that is
       // what the stacked column was, because every one of them was drawn then.
@@ -174,7 +178,7 @@ test.describe('the agents section, one page at a time', () => {
     // The equality: two elements, measured independently, that must agree. A box that kept the
     // other six pages' height — which is what `v-show` would do if the claim were "hidden" rather
     // than "not drawn" — fails this and nothing else does.
-    expect(read.box).toBe(read.drawn)
+    expect(read.box).toBe(read.drawn + read.frame)
     // And the density, as a ratio with both numbers in it. The stack was 2131px in a 467px
     // viewport; what is on screen now is one page.
     expect(read.stacked).toBeGreaterThan(read.box * 3)
@@ -190,7 +194,7 @@ test.describe('the agents section, one page at a time', () => {
       await page.locator(`.agents-rail [role="tab"][data-page="${id}"]`).click()
       await page.waitForTimeout(160)
       const read = await density(page)
-      seen.push(`${read.drawnPage}:${read.box === read.drawn}`)
+      seen.push(`${read.drawnPage}:${read.box === read.drawn + read.frame}`)
 
       const selected = await page
         .locator('.agents-rail [role="tab"][aria-selected="true"]')
@@ -199,7 +203,7 @@ test.describe('the agents section, one page at a time', () => {
       // a rail that lit a row for a page it never opened passes either assertion alone.
       expect(selected).toBe(id)
       expect(read.drawnPage).toBe(id)
-      expect(read.box).toBe(read.drawn)
+      expect(read.box).toBe(read.drawn + read.frame)
     }
     expect(seen).toEqual(RAIL.map((id) => `${id}:true`))
   })
