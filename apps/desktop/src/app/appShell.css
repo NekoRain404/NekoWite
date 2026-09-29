@@ -123,6 +123,16 @@
   transition: opacity var(--app-motion-exit) var(--app-ease-exit),
               translate var(--app-motion-exit) var(--app-ease-travel);
 }
+/* AppSidebar's scoped width transition has higher specificity than .col-*-active.
+   Give the drawer motion precedence only while it enters or leaves. */
+.layout-col.sidebar.col-enter-active {
+  transition: opacity var(--app-motion) var(--app-ease),
+              translate var(--app-motion) var(--app-ease-travel);
+}
+.layout-col.sidebar.col-leave-active {
+  transition: opacity var(--app-motion-exit) var(--app-ease-exit),
+              translate var(--app-motion-exit) var(--app-ease-travel);
+}
 
 /* ---- Which of the two is in front, while either of them is moving --------
    The mechanism above was correct and its effect was invisible, which the user
