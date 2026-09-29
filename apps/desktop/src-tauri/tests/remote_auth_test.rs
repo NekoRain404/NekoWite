@@ -70,8 +70,16 @@ async fn password_travels_only_through_stdin() {
 
 #[tokio::test]
 async fn a_timed_out_import_stops_the_entire_transfer_group() {
+    let marker = std::env::temp_dir().join(format!(
+        "nekowite-remote-timeout-marker-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&marker);
     let mut command = Command::new("/bin/sh");
-    command.args(["-c", "sleep 60 & wait"]);
+    command.args([
+        "-c",
+        &format!("(sleep 1; touch '{}') & wait", marker.display()),
+    ]);
     let result = run_transfer(
         command,
         &RemoteAuth::Agent,
@@ -79,6 +87,11 @@ async fn a_timed_out_import_stops_the_entire_transfer_group() {
     )
     .await;
     assert!(result.unwrap_err().contains("timed out"));
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+    assert!(
+        !marker.exists(),
+        "a child of the timed-out transfer survived process-group teardown"
+    );
 }
 
 #[tokio::test]
@@ -93,6 +106,7 @@ async fn missing_password_import_dependency_has_an_actionable_error() {
     )
     .await;
     let error = result.unwrap_err();
-    assert!(error.contains("install sshpass"));
+    assert!(error.contains("sudo apt install sshpass"));
+    assert!(error.contains("sudo dnf install sshpass"));
     assert!(!error.contains("secret"));
 }

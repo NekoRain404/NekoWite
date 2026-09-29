@@ -38,7 +38,7 @@ pub async fn run_transfer(
         if matches!(auth, RemoteAuth::Password { .. })
             && error.kind() == std::io::ErrorKind::NotFound
         {
-            "sshpass is required for password import; install sshpass".to_string()
+            "sshpass is required for password import; install it with `sudo apt install sshpass` (Debian/Ubuntu) or `sudo dnf install sshpass` (Fedora/RHEL), then retry".to_string()
         } else {
             format!("rsync could not start: {error}")
         }

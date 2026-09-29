@@ -54,7 +54,10 @@ cp -p "$BIN" "$WORK/src/nekowite"
 if [ "$MODE" = full ]; then
   cp -p "$ENGINE" "$WORK/src/opencode"
 fi
-cp -p "$ROOT/apps/desktop/src-tauri/icons/128x128.png" "$WORK/src/nekowite.png"
+cp -p "$ROOT/apps/desktop/src-tauri/icons/32x32.png" "$WORK/src/nekowite-32x32.png"
+cp -p "$ROOT/apps/desktop/src-tauri/icons/128x128.png" "$WORK/src/nekowite-128x128.png"
+cp -p "$ROOT/apps/desktop/src-tauri/icons/128x128@2x.png" "$WORK/src/nekowite-256x256.png"
+cp -p "$ROOT/apps/desktop/src-tauri/icons/icon.png" "$WORK/src/nekowite-512x512.png"
 cp -p "$ROOT/apps/desktop/src-tauri/THIRD-PARTY-NOTICES.txt" "$WORK/src/THIRD-PARTY-NOTICES.txt"
 
 cat > "$WORK/src/nekowite.desktop" <<'EOF'
@@ -81,15 +84,18 @@ license=('MIT')
 depends=('gtk3' 'webkit2gtk-4.1')
 conflicts=($CONFLICTS)
 provides=($PROVIDES)
-source=('nekowite' $ENGINE_SOURCE'nekowite.desktop' 'nekowite.png' 'THIRD-PARTY-NOTICES.txt')
-sha256sums=('SKIP' $ENGINE_SUM'SKIP' 'SKIP' 'SKIP')
+source=('nekowite' $ENGINE_SOURCE'nekowite.desktop' 'nekowite-32x32.png' 'nekowite-128x128.png' 'nekowite-256x256.png' 'nekowite-512x512.png' 'THIRD-PARTY-NOTICES.txt')
+sha256sums=('SKIP' $ENGINE_SUM'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 options=('!strip' '!debug')
 
 package() {
   install -Dm755 "\$srcdir/nekowite" "\$pkgdir/usr/bin/nekowite"
 $ENGINE_INSTALL
   install -Dm644 "\$srcdir/nekowite.desktop" "\$pkgdir/usr/share/applications/nekowite.desktop"
-  install -Dm644 "\$srcdir/nekowite.png" "\$pkgdir/usr/share/icons/hicolor/128x128/apps/nekowite.png"
+  install -Dm644 "\$srcdir/nekowite-32x32.png" "\$pkgdir/usr/share/icons/hicolor/32x32/apps/nekowite.png"
+  install -Dm644 "\$srcdir/nekowite-128x128.png" "\$pkgdir/usr/share/icons/hicolor/128x128/apps/nekowite.png"
+  install -Dm644 "\$srcdir/nekowite-256x256.png" "\$pkgdir/usr/share/icons/hicolor/256x256/apps/nekowite.png"
+  install -Dm644 "\$srcdir/nekowite-512x512.png" "\$pkgdir/usr/share/icons/hicolor/512x512/apps/nekowite.png"
   install -Dm644 "\$srcdir/THIRD-PARTY-NOTICES.txt" "\$pkgdir/usr/share/licenses/nekowite/THIRD-PARTY-NOTICES.txt"
 }
 EOF
